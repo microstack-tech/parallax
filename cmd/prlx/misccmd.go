@@ -33,7 +33,7 @@ var (
 	VersionCheckUrlFlag = cli.StringFlag{
 		Name:  "check.url",
 		Usage: "URL to use when checking vulnerabilities",
-		Value: "https://parallaxchain.org/vulnerabilities/vulnerabilities.json",
+		Value: "https://parallaxprotocol.org/vulnerabilities/vulnerabilities.json",
 	}
 	VersionCheckVersionFlag = cli.StringFlag{
 		Name:  "check.version",

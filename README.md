@@ -8,11 +8,11 @@ Reference Golang implementation of the **Parallax protocol**.
 
 ## More on Parallax
 
-- Website: [https://parallaxchain.org](https://parallaxchain.org)
-- Technical Documentation: [https://docs.parallaxchain.org](https://docs.parallaxchain.org)
-- Whitepaper: [https://parallaxchain.org/introduction/whitepaper](https://parallaxchain.org/introduction/whitepaper)
+- Website: [https://parallaxprotocol.org](https://parallaxprotocol.org)
+- Technical Documentation: [https://docs.parallaxprotocol.org](https://docs.parallaxprotocol.org)
+- Whitepaper: [https://parallaxprotocol.org/introduction/whitepaper](https://parallaxprotocol.org/introduction/whitepaper)
 
-We have beginner guides on how to run a Parallax node and mining. These can be found [here](https://docs.parallaxchain.org/guides).
+We have beginner guides on how to run a Parallax node and mining. These can be found [here](https://docs.parallaxprotocol.org/guides).
 
 ---
 
