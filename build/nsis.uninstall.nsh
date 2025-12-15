@@ -17,9 +17,9 @@ Section "Uninstall"
   rmDir "$SMPROGRAMS\${APPNAME}"
 
   # Firewall - remove rules if exists
-  SimpleFC::AdvRemoveRule "Prlx incoming peers (TCP:30303)"
-  SimpleFC::AdvRemoveRule "Prlx outgoing peers (TCP:30303)"
-  SimpleFC::AdvRemoveRule "Prlx UDP discovery (UDP:30303)"
+  SimpleFC::AdvRemoveRule "Prlx incoming peers (TCP:32110)"
+  SimpleFC::AdvRemoveRule "Prlx outgoing peers (TCP:32110)"
+  SimpleFC::AdvRemoveRule "Prlx UDP discovery (UDP:32120)"
 
   # Remove IPC endpoint (https://github.com/ethereum/EIPs/issues/147)
   ${un.EnvVarUpdate} $0 "PARALLAX_SOCKET" "R" "HKLM" "\\.\pipe\prlx.ipc"

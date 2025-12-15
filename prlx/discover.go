@@ -49,10 +49,10 @@ type Enode struct {
 // query parameter "discport".
 //
 // In the following example, the node URL describes
-// a node with IP address 10.3.58.6, TCP listening port 30303
-// and UDP discovery port 30301.
+// a node with IP address 10.3.58.6, TCP listening port 32110
+// and UDP discovery port 32110.
 //
-//	enode://<hex node id>@10.3.58.6:30303?discport=30301
+//	enode://<hex node id>@10.3.58.6:32110?discport=32110
 func NewEnode(rawurl string) (*Enode, error) {
 	node, err := enode.Parse(enode.ValidSchemes, rawurl)
 	if err != nil {

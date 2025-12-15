@@ -22,7 +22,7 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /parallax/build/bin/prlx /usr/local/bin/
 
-EXPOSE 8545 8546 30303 30303/udp
+EXPOSE 8545 8546 32110 32110/udp
 ENTRYPOINT ["prlx"]
 
 # Add some metadata labels to help programatic image consumption

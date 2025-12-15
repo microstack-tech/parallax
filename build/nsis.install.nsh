@@ -24,14 +24,14 @@ Section "Prlx" PRLX_IDX
   createShortCut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
   # Firewall - remove rules (if exists)
-  SimpleFC::AdvRemoveRule "Prlx incoming peers (TCP:30303)"
-  SimpleFC::AdvRemoveRule "Prlx outgoing peers (TCP:30303)"
-  SimpleFC::AdvRemoveRule "Prlx UDP discovery (UDP:30303)"
+  SimpleFC::AdvRemoveRule "Prlx incoming peers (TCP:32110)"
+  SimpleFC::AdvRemoveRule "Prlx outgoing peers (TCP:32110)"
+  SimpleFC::AdvRemoveRule "Prlx UDP discovery (UDP:32110)"
 
   # Firewall - add rules
-  SimpleFC::AdvAddRule "Prlx incoming peers (TCP:30303)" ""  6 1 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" 30303 "" "" ""
-  SimpleFC::AdvAddRule "Prlx outgoing peers (TCP:30303)" ""  6 2 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" "" 30303 "" ""
-  SimpleFC::AdvAddRule "Prlx UDP discovery (UDP:30303)" "" 17 2 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" "" 30303 "" ""
+  SimpleFC::AdvAddRule "Prlx incoming peers (TCP:32110)" ""  6 1 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" 32110 "" "" ""
+  SimpleFC::AdvAddRule "Prlx outgoing peers (TCP:32110)" ""  6 2 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" "" 32110 "" ""
+  SimpleFC::AdvAddRule "Prlx UDP discovery (UDP:32110)" "" 17 2 1 2147483647 1 "$INSTDIR\prlx.exe" "" "" "Parallax" "" 32110 "" ""
 
   # Set default IPC endpoint (https://github.com/ethereum/EIPs/issues/147)
   ${EnvVarUpdate} $0 "PARALLAX_SOCKET" "R" "HKLM" "\\.\pipe\prlx.ipc"
