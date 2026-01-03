@@ -9,10 +9,10 @@ Reference Golang implementation of the **Parallax protocol**.
 ## More on Parallax
 
 - Website: [https://parallaxprotocol.org](https://parallaxprotocol.org)
+- The Parallax Doctrine: [https://github.com/ParallaxProtocol/parallax-doctrine](https://github.com/ParallaxProtocol/parallax-doctrine)
+- Beginner Guides: [https://docs.parallaxprotocol.org/guides](https://docs.parallaxprotocol.org/guides)
 - Technical Documentation: [https://docs.parallaxprotocol.org](https://docs.parallaxprotocol.org)
 - Whitepaper: [https://parallaxprotocol.org/introduction/whitepaper](https://parallaxprotocol.org/introduction/whitepaper)
-
-We have beginner guides on how to run a Parallax node and mining. These can be found [here](https://docs.parallaxprotocol.org/guides).
 
 ---
 
@@ -50,16 +50,10 @@ Binaries are located under `build/bin`:
 
 ## Running a Node
 
-Mainnet (interactive console):
+Interactive console:
 
 ```bash
-prlx console
-```
-
-Testnet:
-
-```bash
-prlx --testnet console
+./prlx console
 ```
 
 ### Hardware Recommendations
