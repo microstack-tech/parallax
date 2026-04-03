@@ -40,21 +40,18 @@ var V5Bootnodes = []string{
 	// "enr:-KG4QDyytgmE4f7AnvW-ZaUOIi9i79qX4JwjRAiXBZCU65wOfBu-3Nb5I7b_Rmg3KCOcZM_C3y5pg7EBU5XGrcLTduQEhGV0aDKQ9aX9QgAAAAD__________4JpZIJ2NIJpcIQ2_DUbiXNlY3AyNTZrMaEDKnz_-ps3UUOfHWVYaskI5kWYO_vtYMGYCQRAR3gHDouDdGNwgiMog3VkcIIjKA",
 }
 
-// const dnsPrefix = "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@"
+const dnsPrefix = "enrtree://AJCNZNPUXUUJASCE35AIA2FFLGBQBF2SKWBUVXHTZLJCJZFHMJHII@"
 
 // KnownDNSNetwork returns the address of a public DNS-based node list for the given
-// genesis hash and protocol. See https://github.com/ethereum/discv4-dns-lists for more
+// genesis hash and protocol. See https://github.com/ParallaxProtocol/parallax-dns-lists for more
 // information.
 func KnownDNSNetwork(genesis common.Hash, protocol string) string {
-	return ""
-	// var net string
-	// switch genesis {
-	// case MainnetGenesisHash:
-	// 	net = "mainnet"
-	// case TestnetGenesisHash:
-	// 	net = "testnet"
-	// default:
-	// 	return ""
-	// }
-	// return dnsPrefix + protocol + "." + net + ".ethdisco.net"
+	var net string
+	switch genesis {
+	case MainnetGenesisHash:
+		net = "mainnet"
+	default:
+		return ""
+	}
+	return dnsPrefix + protocol + "." + net + ".nodes.parallaxprotocol.org"
 }
