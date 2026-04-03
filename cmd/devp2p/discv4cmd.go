@@ -74,7 +74,7 @@ var (
 		Name:   "crawl",
 		Usage:  "Updates a nodes.json file with random nodes found in the DHT",
 		Action: discv4Crawl,
-		Flags:  []cli.Flag{bootnodesFlag, crawlTimeoutFlag},
+		Flags:  []cli.Flag{bootnodesFlag, crawlTimeoutFlag, listenAddrFlag},
 	}
 	discv4TestCommand = cli.Command{
 		Name:   "test",
