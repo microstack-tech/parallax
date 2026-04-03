@@ -104,7 +104,7 @@ func (s *Suite) dialSnap() (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial failed: %v", err)
 	}
-	conn.caps = append(conn.caps, p2p.Cap{Name: "snap", Version: 1})
+	conn.caps = append(conn.caps, p2p.Cap{Name: "parallax-snap", Version: 1})
 	conn.ourHighestSnapProtoVersion = 1
 	return conn, nil
 }
@@ -167,7 +167,7 @@ func (c *Conn) negotiateParallaxProtocol(caps []p2p.Cap) {
 			if capability.Version > highestParallaxVersion && capability.Version <= c.ourHighestProtoVersion {
 				highestParallaxVersion = capability.Version
 			}
-		case "snap":
+		case "parallax-snap":
 			if capability.Version > highestSnapVersion && capability.Version <= c.ourHighestSnapProtoVersion {
 				highestSnapVersion = capability.Version
 			}
