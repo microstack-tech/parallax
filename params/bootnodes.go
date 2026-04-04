@@ -46,6 +46,7 @@ const dnsPrefix = "enrtree://AJCNZNPUXUUJASCE35AIA2FFLGBQBF2SKWBUVXHTZLJCJZFHMJH
 // genesis hash and protocol. See https://github.com/ParallaxProtocol/parallax-dns-lists for more
 // information.
 func KnownDNSNetwork(genesis common.Hash, protocol string) string {
+	return ""
 	var net string
 	switch genesis {
 	case MainnetGenesisHash:
@@ -53,5 +54,5 @@ func KnownDNSNetwork(genesis common.Hash, protocol string) string {
 	default:
 		return ""
 	}
-	return dnsPrefix + protocol + "." + net + ".nodes.parallaxprotocol.org"
+	return dnsPrefix + protocol + "." + net + ".prlxdisc.org"
 }
