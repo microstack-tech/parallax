@@ -23,7 +23,15 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/log"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/rlp"
 )
+
+// parallaxENREntry is used to check for the "parallax" key in ENR records.
+type parallaxENREntry struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (e parallaxENREntry) ENRKey() string { return "parallax" }
 
 type crawler struct {
 	input     nodeSet
@@ -191,6 +199,12 @@ func (c *crawler) updateNode(n *enode.Node) int {
 		}
 		node.Score /= 2
 	} else {
+		// Filter out nodes that don't advertise the "parallax" protocol.
+		var prlEntry parallaxENREntry
+		if nn.Load(&prlEntry) != nil {
+			log.Debug("Skipping non-Parallax node", "id", n.ID())
+			return nodeSkipIncompat
+		}
 		node.N = nn
 		node.Seq = nn.Seq()
 		node.Score++
