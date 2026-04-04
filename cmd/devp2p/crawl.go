@@ -207,7 +207,6 @@ func (c *crawler) updateNode(n *enode.Node) int {
 	if node.Score <= 0 {
 		log.Debug("Removing node", "id", n.ID())
 		delete(c.output, n.ID())
-	} else {
 		return nodeRemoved
 	}
 	log.Debug("Updating node", "id", n.ID(), "seq", n.Seq(), "score", node.Score)
