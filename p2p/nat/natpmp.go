@@ -44,14 +44,17 @@ func (n *pmp) ExternalIP() (net.IP, error) {
 	return response.ExternalIPAddress[:], nil
 }
 
-func (n *pmp) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) error {
+func (n *pmp) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) (uint16, error) {
 	if lifetime <= 0 {
-		return fmt.Errorf("lifetime must not be <= 0")
+		return 0, fmt.Errorf("lifetime must not be <= 0")
 	}
 	// Note order of port arguments is switched between our
 	// AddMapping and the client's AddPortMapping.
-	_, err := n.c.AddPortMapping(strings.ToLower(protocol), intport, extport, int(lifetime/time.Second))
-	return err
+	res, err := n.c.AddPortMapping(strings.ToLower(protocol), intport, extport, int(lifetime/time.Second))
+	if err != nil {
+		return 0, err
+	}
+	return res.MappedExternalPort, nil
 }
 
 func (n *pmp) DeleteMapping(protocol string, extport, intport int) (err error) {

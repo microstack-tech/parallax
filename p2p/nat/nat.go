@@ -38,7 +38,7 @@ type Interface interface {
 	// protocol is "UDP" or "TCP". Some implementations allow setting
 	// a display name for the mapping. The mapping may be removed by
 	// the gateway when its lifetime ends.
-	AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) error
+	AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) (uint16, error)
 	DeleteMapping(protocol string, extport, intport int) error
 
 	// This method should return the external (Internet-facing)
@@ -101,11 +101,11 @@ func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, 
 	refresh := time.NewTimer(mapTimeout)
 	defer func() {
 		refresh.Stop()
-		log.Debug("Deleting port mapping")
+		log.Info("Deleting port mapping")
 		m.DeleteMapping(protocol, extport, intport)
 	}()
-	if err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
-		log.Debug("Couldn't add port mapping", "err", err)
+	if _, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
+		log.Warn("Couldn't add port mapping", "err", err)
 	} else {
 		log.Info("Mapped network port")
 	}
@@ -116,9 +116,9 @@ func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, 
 				return
 			}
 		case <-refresh.C:
-			log.Trace("Refreshing port mapping")
-			if err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
-				log.Debug("Couldn't add port mapping", "err", err)
+			log.Debug("Refreshing port mapping")
+			if _, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
+				log.Warn("Couldn't refresh port mapping", "err", err)
 			}
 			refresh.Reset(mapTimeout)
 		}
@@ -135,7 +135,9 @@ func (n ExtIP) String() string              { return fmt.Sprintf("ExtIP(%v)", ne
 
 // These do nothing.
 
-func (ExtIP) AddMapping(string, int, int, string, time.Duration) error { return nil }
+func (ExtIP) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) (uint16, error) {
+	return uint16(extport), nil
+}
 func (ExtIP) DeleteMapping(string, int, int) error                     { return nil }
 
 // Any returns a port mapper that tries to discover any supported
@@ -193,9 +195,9 @@ func startautodisc(what string, doit func() Interface) Interface {
 	return &autodisc{what: what, doit: doit}
 }
 
-func (n *autodisc) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) error {
+func (n *autodisc) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) (uint16, error) {
 	if err := n.wait(); err != nil {
-		return err
+		return 0, err
 	}
 	return n.found.AddMapping(protocol, extport, intport, name, lifetime)
 }
@@ -226,9 +228,13 @@ func (n *autodisc) String() string {
 // wait blocks until auto-discovery has been performed.
 func (n *autodisc) wait() error {
 	n.once.Do(func() {
+		log.Info("Starting NAT device discovery", "mechanism", n.what)
 		n.mu.Lock()
 		n.found = n.doit()
 		n.mu.Unlock()
+		if n.found != nil {
+			log.Info("NAT device discovered", "mechanism", n.what, "device", n.found)
+		}
 	})
 	if n.found == nil {
 		return fmt.Errorf("no %s router discovered", n.what)

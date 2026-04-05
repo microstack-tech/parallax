@@ -513,19 +513,24 @@ func (srv *Server) setupLocalNode() error {
 	}
 	switch srv.NAT.(type) {
 	case nil:
-		// No NAT interface, do nothing.
+		srv.log.Debug("NAT disabled, no port mapping will be performed")
 	case nat.ExtIP:
 		// ExtIP doesn't block, set the IP right away.
 		ip, _ := srv.NAT.ExternalIP()
+		srv.log.Info("Using static external IP for NAT", "ip", ip)
 		srv.localnode.SetStaticIP(ip)
 	default:
 		// Ask the router about the IP. This takes a while and blocks startup,
 		// do it in the background.
+		srv.log.Info("NAT enabled, discovering external IP in background", "mechanism", srv.NAT)
 		srv.loopWG.Add(1)
 		go func() {
 			defer srv.loopWG.Done()
 			if ip, err := srv.NAT.ExternalIP(); err == nil {
+				srv.log.Info("NAT external IP discovered", "ip", ip)
 				srv.localnode.SetStaticIP(ip)
+			} else {
+				srv.log.Warn("NAT external IP discovery failed", "err", err)
 			}
 		}()
 	}
@@ -561,11 +566,14 @@ func (srv *Server) setupDiscovery() error {
 	srv.log.Debug("UDP listener up", "addr", realaddr)
 	if srv.NAT != nil {
 		if !realaddr.IP.IsLoopback() {
+			srv.log.Info("Setting up NAT port mapping for UDP discovery", "port", realaddr.Port)
 			srv.loopWG.Add(1)
 			go func() {
-				nat.Map(srv.NAT, srv.quit, "udp", realaddr.Port, realaddr.Port, "ethereum discovery")
+				nat.Map(srv.NAT, srv.quit, "udp", realaddr.Port, realaddr.Port, "parallax discovery")
 				srv.loopWG.Done()
 			}()
+		} else {
+			srv.log.Debug("Skipping NAT mapping for loopback UDP address", "addr", realaddr)
 		}
 	}
 	srv.localnode.SetFallbackUDP(realaddr.Port)
@@ -668,11 +676,14 @@ func (srv *Server) setupListening() error {
 	if tcp, ok := listener.Addr().(*net.TCPAddr); ok {
 		srv.localnode.Set(enr.TCP(tcp.Port))
 		if !tcp.IP.IsLoopback() && srv.NAT != nil {
+			srv.log.Info("Setting up NAT port mapping for TCP p2p", "port", tcp.Port)
 			srv.loopWG.Add(1)
 			go func() {
 				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "parallax p2p")
 				srv.loopWG.Done()
 			}()
+		} else if srv.NAT == nil {
+			srv.log.Debug("NAT not configured, skipping TCP port mapping")
 		}
 	}
 
