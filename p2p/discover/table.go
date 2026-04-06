@@ -79,7 +79,8 @@ type Table struct {
 	closeReq   chan struct{}
 	closed     chan struct{}
 
-	nodeAddedHook func(*node) // for testing
+	nodeAddedHook  func(*node) // for testing
+	nodeFilter     func(*enode.Node) bool
 }
 
 // transport is implemented by the UDP transports.
@@ -99,7 +100,7 @@ type bucket struct {
 	ips          netutil.DistinctNetSet
 }
 
-func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger) (*Table, error) {
+func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, nodeFilter func(*enode.Node) bool, log log.Logger) (*Table, error) {
 	tab := &Table{
 		net:        t,
 		db:         db,
@@ -110,6 +111,7 @@ func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger
 		rand:       mrand.New(mrand.NewSource(0)),
 		ips:        netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
 		log:        log,
+		nodeFilter: nodeFilter,
 	}
 	if err := tab.setFallbackNodes(bootnodes); err != nil {
 		return nil, err
@@ -298,6 +300,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	for i := 0; i < 3; i++ {
 		tab.net.lookupRandom()
 	}
+
 }
 
 func (tab *Table) loadSeedNodes() {
@@ -310,6 +313,7 @@ func (tab *Table) loadSeedNodes() {
 		tab.addSeenNode(seed)
 	}
 }
+
 
 // doRevalidate checks that the last node in a random bucket is still live and replaces or
 // deletes the node if it isn't.

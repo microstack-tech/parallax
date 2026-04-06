@@ -163,10 +163,27 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 
 	// Grab as many nodes as possible. Some of them might not be alive anymore, but we'll
 	// just remove those again during revalidation.
+	var filtered []*node
 	for _, n := range r {
+		if it.tab.nodeFilter != nil {
+			nn, err := it.tab.net.RequestENR(unwrapNode(n))
+			if err != nil {
+				it.tab.log.Debug("Lookup ENR request failed", "id", n.ID(), "addr", n.addr(), "err", err)
+				continue
+			}
+			if !it.tab.nodeFilter(nn) {
+				it.tab.log.Debug("Lookup filtered node", "id", n.ID(), "addr", n.addr())
+				continue
+			}
+		}
 		it.tab.addSeenNode(n)
+		filtered = append(filtered, n)
 	}
-	reply <- r
+	if it.tab.nodeFilter != nil {
+		reply <- filtered
+	} else {
+		reply <- r
+	}
 }
 
 // lookupIterator performs lookup operations and iterates over all seen nodes.

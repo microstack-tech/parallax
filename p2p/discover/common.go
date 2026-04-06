@@ -47,6 +47,7 @@ type Config struct {
 	Log          log.Logger         // if set, log messages go here
 	ValidSchemes enr.IdentityScheme // allowed identity schemes
 	Clock        mclock.Clock
+	NodeFilter   func(*enode.Node) bool // if set, nodes failing this check are evicted during revalidation
 }
 
 func (cfg Config) withDefaults() Config {

@@ -152,6 +152,11 @@ type Config struct {
 	// whenever a message is sent to or received from a peer
 	EnableMsgEvents bool
 
+	// NodeFilter is an optional function for filtering discovery nodes.
+	// If set, nodes that don't pass this filter are evicted from the
+	// discovery routing table during revalidation.
+	NodeFilter func(*enode.Node) bool `toml:"-"`
+
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger log.Logger `toml:",omitempty"`
 
@@ -592,6 +597,7 @@ func (srv *Server) setupDiscovery() error {
 			Bootnodes:   srv.BootstrapNodes,
 			Unhandled:   unhandled,
 			Log:         srv.log,
+			NodeFilter:  srv.NodeFilter,
 		}
 		ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
 		if err != nil {
