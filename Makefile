@@ -213,5 +213,7 @@ release:
 	rm -rf $(CROSSDIR) $(PACKAGEDIR)
 	@echo "==> Cross-compiling CLI binaries: $(CMDS)"
 	$(MAKE) package
-	@echo "==> Cross-building Parallax Desktop GUI"
-	$(MAKE) prlx-gui-package
+	@echo
+	@echo "CLI bundles in $(PACKAGEDIR)/"
+	@echo "Note: the desktop GUI is built and packaged by .github/workflows/release.yml"
+	@echo "      (run \`make prlx-gui-package\` locally if you want to build it by hand)."
