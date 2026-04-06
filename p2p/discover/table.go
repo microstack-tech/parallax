@@ -71,16 +71,15 @@ type Table struct {
 	rand    *mrand.Rand       // source of randomness, periodically reseeded
 	ips     netutil.DistinctNetSet
 
-	log        log.Logger
-	db         *enode.DB // database of known nodes
-	net        transport
-	refreshReq chan chan struct{}
-	initDone   chan struct{}
-	closeReq   chan struct{}
-	closed     chan struct{}
-
-	nodeAddedHook  func(*node) // for testing
-	nodeFilter     func(*enode.Node) bool
+	log           log.Logger
+	db            *enode.DB // database of known nodes
+	net           transport
+	refreshReq    chan chan struct{}
+	initDone      chan struct{}
+	closeReq      chan struct{}
+	closed        chan struct{}
+	nodeAddedHook func(*node) // for testing
+	nodeFilter    func(*enode.Node) bool
 }
 
 // transport is implemented by the UDP transports.
@@ -300,7 +299,6 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	for i := 0; i < 3; i++ {
 		tab.net.lookupRandom()
 	}
-
 }
 
 func (tab *Table) loadSeedNodes() {
@@ -313,7 +311,6 @@ func (tab *Table) loadSeedNodes() {
 		tab.addSeenNode(seed)
 	}
 }
-
 
 // doRevalidate checks that the last node in a random bucket is still live and replaces or
 // deletes the node if it isn't.
