@@ -1,0 +1,199 @@
+name: Release
+
+# Builds the same artifacts as `make release` (CLI bundles + Parallax
+# Desktop GUI) for every supported OS / arch and attaches them to a
+# draft GitHub Release.
+#
+#   * CLI bundles use the same `make package` path as the local release,
+#     so the resulting parallax-<os>-<arch>.{tar.gz,zip} files are byte
+#     identical to what `make release` would produce locally. They are
+#     CGO-disabled, so a single Linux runner cross-compiles all targets.
+#
+#   * GUI bundles run on native runners (one per OS) because Wails GUI
+#     cross-compilation is not reliable from a single host.
+#
+# The release is published as a DRAFT so a maintainer can review the
+# uploaded artifacts and notes before clicking "Publish release". Re-runs
+# against `main` via workflow_dispatch only build artifacts; the release
+# job is gated on a tag push.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # CLI: parallax / clef / parallaxkey for every TARGETS entry         #
+  # ------------------------------------------------------------------ #
+  build-cli:
+    name: CLI bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Install packaging deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zip
+
+      - name: Cross-compile and package CLI
+        env:
+          # Same default set as `release: export CMDS := $(CMDS_RELEASE)`
+          # in the Makefile. Keep these two in sync.
+          CMDS: "clef parallaxkey prlx"
+        run: |
+          make package
+          ls -lh build/package/
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-bundles
+          path: |
+            build/package/parallax-*.tar.gz
+            build/package/parallax-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  # GUI: one native runner per OS / arch                               #
+  # ------------------------------------------------------------------ #
+  build-gui:
+    name: GUI ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            target: linux/amd64
+            runner: ubuntu-latest
+            wails_tags: webkit2_41
+          - os: linux
+            arch: arm64
+            target: linux/arm64
+            runner: ubuntu-24.04-arm
+            wails_tags: webkit2_41
+          - os: darwin
+            arch: amd64
+            target: darwin/amd64
+            runner: macos-13
+            wails_tags: ""
+          - os: darwin
+            arch: arm64
+            target: darwin/arm64
+            runner: macos-latest
+            wails_tags: ""
+          - os: windows
+            arch: amd64
+            target: windows/amd64
+            runner: windows-latest
+            wails_tags: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Wails CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Linux build deps
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config \
+            zip
+
+      - name: Build GUI bundle
+        shell: bash
+        env:
+          WAILS_TAGS: ${{ matrix.wails_tags }}
+        run: |
+          make prlx-gui-package GUI_TARGETS="${{ matrix.target }}"
+
+      - name: Verify artifact exists
+        shell: bash
+        run: |
+          ls -lh build/package/parallax-gui-${{ matrix.os }}-${{ matrix.arch }}.zip
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-gui-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/package/parallax-gui-${{ matrix.os }}-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  # Release: collect everything, regenerate checksums, draft release   #
+  # ------------------------------------------------------------------ #
+  release:
+    name: Publish draft release
+    needs: [build-cli, build-gui]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout (for release notes generation)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage release directory
+        run: |
+          mkdir -p release
+          # Copy every per-platform bundle, regardless of which artifact
+          # group it came from, into a flat release/ directory.
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) \
+            -exec cp {} release/ \;
+          cd release
+          ls -lh
+          # One canonical SHA256SUMS over CLI + GUI together.
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/parallax-*.tar.gz
+            release/parallax-*.zip
+            release/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

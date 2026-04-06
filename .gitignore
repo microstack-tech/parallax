@@ -51,3 +51,14 @@ profile.cov
 /dashboard/assets/package-lock.json
 
 **/yarn-error.log
+
+# prlx-gui (Wails desktop app)
+/cmd/prlx-gui/build/bin/
+/cmd/prlx-gui/frontend/node_modules/
+/cmd/prlx-gui/frontend/dist/*
+!/cmd/prlx-gui/frontend/dist/.gitkeep
+/cmd/prlx-gui/frontend/wailsjs/
+/cmd/prlx-gui/frontend/.vite/
+/cmd/prlx-gui/frontend/*.tsbuildinfo
+**/npm-debug.log*
+

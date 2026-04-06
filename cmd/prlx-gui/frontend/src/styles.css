@@ -1,0 +1,238 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  /* Solid near-black. Earlier revisions used layered radial gradients
+     with background-attachment: fixed for atmosphere, but webkit2gtk
+     repaints fixed gradients on every scroll frame which tanks FPS in
+     the embedded webview. A flat color is the right choice here. */
+  background: oklch(0.06 0.015 265);
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Headings use Newsreader serif — same as the marketing site. We bias
+   towards the lighter weights and let opsz pick a display cut for big
+   sizes. */
+h1, h2, h3, h4 {
+  font-family: "Newsreader", ui-serif, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+::selection {
+  background: rgb(247 147 26 / 0.35);
+  color: white;
+}
+
+/* Native <select> dropdowns can't be styled with Tailwind utilities — the
+   <option> popup is rendered by the OS chrome (in webkit2gtk's case, GTK).
+   Force the dark surface + light text directly so the dropdown matches the
+   rest of the app instead of inheriting GTK's white default. */
+select {
+  color-scheme: dark;
+}
+select option {
+  background-color: oklch(0.12 0.012 265);
+  color: oklch(0.93 0.005 80);
+}
+
+/* Subtle scrollbars that match the dark surface. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 0.06);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 0.12); }
+
+/* Respect users who prefer reduced motion: kill the marquee/pulse
+   animations and let everything just appear. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Component primitives                                                */
+/* ------------------------------------------------------------------ */
+
+@layer components {
+  /* Eyebrow / kicker text — used above every section title, mirroring
+     "ECONOMICS" / "AT A GLANCE" on the marketing site. */
+  .eyebrow {
+    @apply text-[11px] uppercase text-muted font-medium;
+    letter-spacing: 0.18em;
+  }
+
+  /* Display headline — Newsreader serif at editorial scale. */
+  .display {
+    @apply font-serif text-[2.75rem] md:text-[3.25rem] text-fg;
+    line-height: 1.04;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+
+  .display-sm {
+    @apply font-serif text-[1.75rem] md:text-2xl text-fg;
+    line-height: 1.15;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+  }
+
+  /* Gold accent rule — small horizontal bar that sits ABOVE eyebrow text,
+     matching the small orange line above section titles on the website.
+     Animated to "draw" in on first paint via the draw-line keyframe. */
+  .accent-rule {
+    @apply block h-[2px] w-10 bg-gold rounded-full origin-left;
+    animation: draw-line 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+  }
+
+  /* Standard card — flat dark surface, hairline border. Intentionally
+     static: no hover lift, no glow, no transitions, no backdrop blur
+     (webkit2gtk renders backdrop filters very slowly). */
+  .card {
+    @apply rounded border border-border bg-bg-elev p-6;
+  }
+
+  /* Featured card — gold left accent bar, used for the most important
+     stat / call-out per page (mirrors the website's hero feature cards). */
+  .card-featured {
+    @apply card relative pl-7;
+    border-left: 3px solid #f7931a;
+    border-radius: 0 calc(theme(borderRadius.DEFAULT)) calc(theme(borderRadius.DEFAULT)) 0;
+  }
+
+  .card-title {
+    @apply eyebrow;
+  }
+
+  /* Buttons. Gold is the primary CTA, ghost is the secondary. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded px-5 py-2.5 text-sm font-medium
+           transition-all duration-200 ease-out disabled:opacity-50 disabled:cursor-not-allowed
+           tracking-wide active:scale-[0.98];
+  }
+  .btn-primary {
+    @apply btn bg-gold text-gold-fg hover:brightness-110 hover:shadow-gold-glow-lg
+           shadow-gold-glow;
+  }
+  .btn-ghost {
+    @apply btn border border-border-strong text-fg hover:bg-bg-elev hover:border-fg/30;
+  }
+  .btn-danger {
+    @apply btn bg-danger/15 text-danger hover:bg-danger/25 border border-danger/40;
+  }
+
+  .input {
+    @apply w-full rounded border border-border bg-bg-elev px-3 py-2.5 text-sm
+           transition-all duration-200
+           focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/40
+           placeholder:text-muted/60;
+  }
+
+  .label {
+    @apply eyebrow block mb-2;
+  }
+
+  /* Top-bar nav links — text-only with hover and a subtle gold underline
+     on the active route. The underline draws in via a left-anchored
+     scaleX so it feels intentional rather than instant. */
+  .top-nav-link {
+    @apply relative px-4 py-2 text-sm text-fg/65 hover:text-fg
+           transition-colors duration-200 tracking-wide;
+  }
+  .top-nav-link::after {
+    content: "";
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    bottom: -1px;
+    height: 2px;
+    background-color: #f7931a;
+    border-radius: 2px;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .top-nav-link-active {
+    @apply text-fg;
+  }
+  .top-nav-link-active::after {
+    transform: scaleX(1);
+  }
+
+  .stat-label {
+    @apply eyebrow;
+  }
+  .stat-value {
+    @apply font-serif text-[2rem] text-fg tabular-nums;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  /* Pills with optional pulsing live dot. */
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5
+           text-[11px] font-medium tracking-wider uppercase;
+  }
+  .pill-ok    { @apply pill bg-success/15 text-success; }
+  .pill-warn  { @apply pill bg-gold-muted text-gold; }
+  .pill-err   { @apply pill bg-danger/15 text-danger; }
+
+  .live-dot {
+    @apply inline-block w-1.5 h-1.5 rounded-full;
+  }
+  .live-dot-warn    { @apply live-dot bg-gold animate-pulse-soft; }
+  .live-dot-success { @apply live-dot bg-success animate-pulse-soft; }
+  .live-dot-err     { @apply live-dot bg-danger; }
+
+  /* Subtle divider used between page sections. */
+  .hairline {
+    @apply h-px w-full bg-border;
+  }
+
+  /* Animated progress bar with a moving sheen. */
+  .progress-track {
+    @apply relative h-1.5 rounded-full bg-bg-elev-2 overflow-hidden;
+  }
+  .progress-fill {
+    @apply h-full bg-gold rounded-full transition-[width] duration-700 ease-out
+           relative overflow-hidden;
+  }
+  .progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.35),
+      transparent
+    );
+    animation: shimmer 2.2s linear infinite;
+  }
+
+  /* Table row with a one-shot gold flash to highlight just-added rows. */
+  .row-flash {
+    animation: row-flash 1.6s ease-out both;
+  }
+
+  /* Inline link with arrow that slides on hover. */
+  .link-arrow {
+    @apply inline-flex items-center gap-1 text-[11px] uppercase tracking-wider
+           text-gold transition-all duration-200 hover:gap-2;
+  }
+}

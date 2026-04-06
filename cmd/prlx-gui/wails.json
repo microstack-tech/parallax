@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "prlx-gui",
+  "outputfilename": "prlx-gui",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Parallax Protocol"
+  },
+  "info": {
+    "companyName": "Parallax Protocol",
+    "productName": "Parallax",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright \u00a9 2026 Parallax Protocol",
+    "comments": "Desktop wallet and node manager for the Parallax network"
+  }
+}
