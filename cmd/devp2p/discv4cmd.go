@@ -199,7 +199,16 @@ func discv4Crawl(ctx *cli.Context) error {
 		inputSet = loadNodesJSON(nodesFile)
 	}
 
-	disc := startV4(ctx)
+	ln, config := makeDiscoveryConfig(ctx)
+	config.NodeFilter = func(n *enode.Node) bool {
+		var entry parallaxENREntry
+		return n.Load(&entry) == nil
+	}
+	socket := listen(ln, ctx.String(listenAddrFlag.Name))
+	disc, err := discover.ListenV4(socket, ln, config)
+	if err != nil {
+		return err
+	}
 	defer disc.Close()
 	c := newCrawler(inputSet, disc, disc.RandomNodes())
 	c.revalidateInterval = 10 * time.Minute

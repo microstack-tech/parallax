@@ -202,9 +202,10 @@ func (c *crawler) updateNode(n *enode.Node) int {
 		// Filter out nodes that don't advertise the "parallax" protocol.
 		var prlEntry parallaxENREntry
 		if nn.Load(&prlEntry) != nil {
-			log.Debug("Skipping non-Parallax node", "id", n.ID())
+			log.Info("Skipping non-Parallax node", "id", n.ID(), "ip", n.IP(), "enr_keys", enrKeys(nn))
 			return nodeSkipIncompat
 		}
+		log.Info("Found Parallax node", "id", n.ID(), "ip", n.IP(), "enr", nn.Record())
 		node.N = nn
 		node.Seq = nn.Seq()
 		node.Score++
@@ -230,4 +231,17 @@ func (c *crawler) updateNode(n *enode.Node) int {
 
 func truncNow() time.Time {
 	return time.Now().UTC().Truncate(1 * time.Second)
+}
+
+// enrKeys returns the list of key names in a node's ENR record.
+func enrKeys(n *enode.Node) []string {
+	elems := n.Record().AppendElements(nil)
+	var keys []string
+	// AppendElements returns [seq, k1, v1, k2, v2, ...].
+	for i := 1; i < len(elems); i += 2 {
+		if k, ok := elems[i].(string); ok {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }

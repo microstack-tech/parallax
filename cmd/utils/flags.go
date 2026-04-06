@@ -56,6 +56,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/rlp"
 	"github.com/ParallaxProtocol/parallax/params"
 	"github.com/ParallaxProtocol/parallax/prl"
 	"github.com/ParallaxProtocol/parallax/prl/downloader"
@@ -1249,7 +1250,24 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 		cfg.NoDiscovery = true
 		cfg.DiscoveryV5 = false
 	}
+
+	// Filter out non-Parallax nodes from discovery lookups.
+	// This only affects the lookup worker path, not ping/pong handling.
+	cfg.NodeFilter = parallaxNodeFilter
 }
+
+// parallaxNodeFilter checks that a node advertises the "parallax" ENR key.
+func parallaxNodeFilter(n *enode.Node) bool {
+	var entry parallaxENREntry
+	return n.Load(&entry) == nil
+}
+
+// parallaxENREntry is used to check for the "parallax" key in ENR records.
+type parallaxENREntry struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (e parallaxENREntry) ENRKey() string { return "parallax" }
 
 // SetNodeConfig applies node-related command line flags to the config.
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
