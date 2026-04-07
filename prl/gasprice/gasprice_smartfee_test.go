@@ -397,7 +397,7 @@ func TestEstimateSmartFeeIntegration(t *testing.T) {
 		sim.mineBlock(block)
 	}
 
-	floor := big.NewInt(1)                     // configured Default
+	floor := big.NewInt(1)                             // configured Default
 	ceil := big.NewInt(20*btcBasefee + 10*btcDeltaFee) // top tier + slack
 	for _, target := range []int{2, 4, 6, 8, 12, 24, 48} {
 		got, _, err := o.EstimateSmartFee(context.Background(), target)
