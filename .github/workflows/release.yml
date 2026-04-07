@@ -47,7 +47,12 @@ jobs:
 
       - name: Install packaging deps
         run: |
-          sudo apt-get update
+          for i in 1 2 3 4; do
+            sudo apt-get update -o Acquire::Retries=3 && break
+            echo "::warning::apt-get update attempt $i failed, retrying"
+            sudo rm -rf /var/lib/apt/lists/partial/*
+            sleep $((i * 15))
+          done
           sudo apt-get install -y --no-install-recommends zip
 
       - name: Cross-compile and package CLI
@@ -132,7 +137,17 @@ jobs:
       - name: Install Linux build deps
         if: matrix.os == 'linux'
         run: |
-          sudo apt-get update
+          # The Ubuntu ports arm64 mirror occasionally serves
+          # partially-synced index files, which makes `apt-get update`
+          # fail with a hash mismatch on dep11/Components-arm64.yml.xz.
+          # Retry with progressive backoff and clear the partial cache
+          # between attempts so a fresh fetch picks up the synced files.
+          for i in 1 2 3 4; do
+            sudo apt-get update -o Acquire::Retries=3 && break
+            echo "::warning::apt-get update attempt $i failed, retrying"
+            sudo rm -rf /var/lib/apt/lists/partial/*
+            sleep $((i * 15))
+          done
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
