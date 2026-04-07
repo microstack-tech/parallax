@@ -192,6 +192,17 @@ func (oracle *Oracle) resolveBlockRange(ctx context.Context, lastBlock rpc.Block
 //
 // Note: baseFee includes the next block after the newest of the returned range, because this
 // value can be derived from the newest block.
+//
+// IMPORTANT: this RPC intentionally bypasses the Bitcoin Core-style smart fee
+// estimator (EnableSmartFeeEstimator). The reward arrays returned here are
+// computed directly from per-block transaction tips, matching the original
+// go-ethereum semantics, so wallets and tools that derive fee suggestions
+// from eth_feeHistory will see raw historical percentiles rather than
+// smart-fee output. The smart-fee-aware paths are eth_gasPrice,
+// eth_maxPriorityFeePerGas, and the Parallax-specific eth_estimateSmartFee.
+// If a downstream client (e.g. a non-MetaMask wallet) shows fee values that
+// disagree with eth_estimateSmartFee, it is almost certainly consuming
+// eth_feeHistory and this divergence is the cause.
 func (oracle *Oracle) FeeHistory(ctx context.Context, blocks int, unresolvedLastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	if blocks < 1 {
 		return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
