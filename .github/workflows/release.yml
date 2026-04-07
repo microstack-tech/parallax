@@ -83,27 +83,27 @@ jobs:
             arch: amd64
             target: linux/amd64
             runner: ubuntu-latest
-            wails_tags: webkit2_41
+            wails_tags: "embedfrontend webkit2_41"
           - os: linux
             arch: arm64
             target: linux/arm64
             runner: ubuntu-24.04-arm
-            wails_tags: webkit2_41
+            wails_tags: "embedfrontend webkit2_41"
           - os: darwin
             arch: amd64
             target: darwin/amd64
             runner: macos-13
-            wails_tags: ""
+            wails_tags: "embedfrontend"
           - os: darwin
             arch: arm64
             target: darwin/arm64
             runner: macos-latest
-            wails_tags: ""
+            wails_tags: "embedfrontend"
           - os: windows
             arch: amd64
             target: windows/amd64
             runner: windows-latest
-            wails_tags: ""
+            wails_tags: "embedfrontend"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -18,10 +18,18 @@ prlx:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/prlx\" to launch parallax."
 
-# On Linux, Wails 2.x defaults to webkit2gtk-4.0 but Arch (and recent
-# Debian/Ubuntu) only ship 4.1. The webkit2_41 build tag selects the
-# newer ABI. Override with `make prlx-gui WAILS_TAGS=` to opt out.
-WAILS_TAGS ?= webkit2_41
+# Build tags applied to every Parallax Desktop build:
+#
+#   * embedfrontend — compiles the real go:embed of frontend/dist (see
+#     cmd/prlx-gui/embed.go). Without this tag the build falls back to an
+#     empty embed.FS stub so plain `go test ./...` from CI doesn't fail
+#     on a fresh checkout where frontend/dist hasn't been populated yet.
+#   * webkit2_41   — selects the modern WebKit2GTK ABI on Linux. Wails
+#     2.x defaults to 4.0 but Arch and recent Debian/Ubuntu only ship
+#     4.1. Harmless on macOS / Windows.
+#
+# Override with `make prlx-gui WAILS_TAGS=` to opt out of either.
+WAILS_TAGS ?= embedfrontend webkit2_41
 
 prlx-gui:
 	@command -v wails >/dev/null 2>&1 || { \
