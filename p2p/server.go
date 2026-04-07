@@ -574,7 +574,17 @@ func (srv *Server) setupDiscovery() error {
 			srv.log.Info("Setting up NAT port mapping for UDP discovery", "port", realaddr.Port)
 			srv.loopWG.Add(1)
 			go func() {
-				nat.Map(srv.NAT, srv.quit, "udp", realaddr.Port, realaddr.Port, "parallax discovery")
+				nat.Map(srv.NAT, srv.quit, "udp", realaddr.Port, realaddr.Port, "parallax discovery", func(extport uint16) {
+					// The router may have remapped our requested port to a
+					// different external one (IGDv2 AddAnyPortMapping or our
+					// random-port retry path). Update the local node so the
+					// ENR advertises the actually-reachable UDP port.
+					if int(extport) != realaddr.Port {
+						srv.log.Info("NAT remapped UDP discovery port",
+							"intport", realaddr.Port, "extport", extport)
+					}
+					srv.localnode.SetFallbackUDP(int(extport))
+				})
 				srv.loopWG.Done()
 			}()
 		} else {
@@ -685,7 +695,16 @@ func (srv *Server) setupListening() error {
 			srv.log.Info("Setting up NAT port mapping for TCP p2p", "port", tcp.Port)
 			srv.loopWG.Add(1)
 			go func() {
-				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "parallax p2p")
+				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "parallax p2p", func(extport uint16) {
+					// The router may have remapped our requested port to a
+					// different external one. Update the ENR's TCP entry so
+					// remote peers dial the reachable port.
+					if int(extport) != tcp.Port {
+						srv.log.Info("NAT remapped TCP p2p port",
+							"intport", tcp.Port, "extport", extport)
+					}
+					srv.localnode.Set(enr.TCP(int(extport)))
+				})
 				srv.loopWG.Done()
 			}()
 		} else if srv.NAT == nil {

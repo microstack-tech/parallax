@@ -96,18 +96,43 @@ const (
 
 // Map adds a port mapping on m and keeps it alive until c is closed.
 // This function is typically invoked in its own goroutine.
-func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, name string) {
+//
+// onMapped, if non-nil, is invoked with the actual external port assigned by
+// the router whenever it differs from the last reported value (including the
+// initial mapping). This is required because IGDv2's AddAnyPortMapping and
+// the random-port retry path may assign an external port different from the
+// requested intport, and the caller needs to advertise the assigned port in
+// its node record so that remote peers can reach it.
+func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, name string, onMapped func(uint16)) {
 	log := log.New("proto", protocol, "extport", extport, "intport", intport, "interface", m)
 	refresh := time.NewTimer(mapTimeout)
+	var lastMapped uint16
+	notify := func(p uint16) {
+		if p == 0 || p == lastMapped {
+			return
+		}
+		lastMapped = p
+		if onMapped != nil {
+			onMapped(p)
+		}
+	}
 	defer func() {
 		refresh.Stop()
-		log.Info("Deleting port mapping")
-		m.DeleteMapping(protocol, extport, intport)
+		// Use the last successfully-mapped external port for the delete; if no
+		// mapping was ever established, fall back to the originally requested
+		// external port (DeleteMapping is harmless on a non-existent entry).
+		delPort := int(lastMapped)
+		if delPort == 0 {
+			delPort = extport
+		}
+		log.Info("Deleting port mapping", "extport", delPort)
+		m.DeleteMapping(protocol, delPort, intport)
 	}()
-	if _, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
+	if p, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
 		log.Warn("Couldn't add port mapping", "err", err)
 	} else {
-		log.Info("Mapped network port")
+		log.Info("Mapped network port", "actual_extport", p)
+		notify(p)
 	}
 	for {
 		select {
@@ -117,8 +142,10 @@ func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, 
 			}
 		case <-refresh.C:
 			log.Debug("Refreshing port mapping")
-			if _, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
+			if p, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
 				log.Warn("Couldn't refresh port mapping", "err", err)
+			} else {
+				notify(p)
 			}
 			refresh.Reset(mapTimeout)
 		}
