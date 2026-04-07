@@ -26,6 +26,14 @@ on:
 permissions:
   contents: write
 
+# GitHub is deprecating Node.js 20 for JS-based actions; the official
+# replacements (actions/checkout v5, setup-go v6, etc.) haven't shipped
+# yet, so opt into the Node 24 runtime via the documented env var until
+# they do. Drop this once every action used here advertises Node 24
+# support natively.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # ------------------------------------------------------------------ #
   # CLI: parallax / clef / parallaxkey for every TARGETS entry         #
