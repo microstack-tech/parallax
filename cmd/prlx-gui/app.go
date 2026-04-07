@@ -93,17 +93,17 @@ func (a *App) SaveBootstrap(cfg backend.GUIConfig) error {
 	return a.cfg.Save(cfg)
 }
 
-func (a *App) GetConfig() backend.GUIConfig            { return a.cfg.Get() }
-func (a *App) UpdateConfig(c backend.GUIConfig) error  { return a.cfg.Save(c) }
+func (a *App) GetConfig() backend.GUIConfig           { return a.cfg.Get() }
+func (a *App) UpdateConfig(c backend.GUIConfig) error { return a.cfg.Save(c) }
 
 // ---------------------------------------------------------------------------
 // Node lifecycle
 // ---------------------------------------------------------------------------
 
-func (a *App) StartNode() error                    { return a.node.Start(a.ctx) }
-func (a *App) StopNode() error                     { return a.node.Stop() }
-func (a *App) NodeStatus() backend.NodeStatus      { return a.node.Status() }
-func (a *App) Peers() []backend.PeerView           { return a.node.Peers() }
+func (a *App) StartNode() error               { return a.node.Start(a.ctx) }
+func (a *App) StopNode() error                { return a.node.Stop() }
+func (a *App) NodeStatus() backend.NodeStatus { return a.node.Status() }
+func (a *App) Peers() []backend.PeerView      { return a.node.Peers() }
 func (a *App) RecentBlocks(n int) []backend.BlockView {
 	return a.node.RecentBlocks(n)
 }

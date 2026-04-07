@@ -19,10 +19,10 @@ type GUIConfig struct {
 	// us. Stored as the negative ("block") so that the JSON zero value
 	// (false = allow inbound) is the safe network-friendly default for
 	// configs persisted before this field existed.
-	BlockInbound bool `json:"blockInbound"`
-	MaxPeers     int  `json:"maxPeers"`
-	Theme          string `json:"theme"` // "system" | "light" | "dark"
-	AutoStartNode  bool   `json:"autoStartNode"`
+	BlockInbound  bool   `json:"blockInbound"`
+	MaxPeers      int    `json:"maxPeers"`
+	Theme         string `json:"theme"` // "system" | "light" | "dark"
+	AutoStartNode bool   `json:"autoStartNode"`
 
 	// Advanced (only meaningful when AdvancedUnlocked is true in the UI).
 	DatabaseCacheMB  int `json:"databaseCacheMB"`
@@ -69,9 +69,9 @@ type LogLine struct {
 // Trusted, Static, and Protocols (per-subprotocol metadata such as the
 // peer's head hash and total difficulty for the prl protocol).
 type PeerView struct {
-	ID         string                 `json:"id"`         // 8-char short id
-	FullID     string                 `json:"fullId"`     // full hex node id
-	Enode      string                 `json:"enode"`      // full enode:// URL
+	ID         string                 `json:"id"`     // 8-char short id
+	FullID     string                 `json:"fullId"` // full hex node id
+	Enode      string                 `json:"enode"`  // full enode:// URL
 	Name       string                 `json:"name"`
 	RemoteAddr string                 `json:"remoteAddr"`
 	LocalAddr  string                 `json:"localAddr"`
@@ -88,22 +88,22 @@ type TxView struct {
 	Block     uint64 `json:"block"`
 	Timestamp int64  `json:"timestamp"`
 	From      string `json:"from"`
-	To        string `json:"to"`        // empty for contract creation
+	To        string `json:"to"` // empty for contract creation
 	ValueWei  string `json:"valueWei"`
-	GasUsed   uint64 `json:"gasUsed"`   // gas the tx requested (limit)
-	Kind      string `json:"kind"`      // "transfer" | "contract" | "call"
+	GasUsed   uint64 `json:"gasUsed"` // gas the tx requested (limit)
+	Kind      string `json:"kind"`    // "transfer" | "contract" | "call"
 }
 
 // BlockView is one row of the dashboard's recent-blocks table.
 type BlockView struct {
-	Number      uint64 `json:"number"`
-	Hash        string `json:"hash"`
-	Timestamp   int64  `json:"timestamp"`
-	TxCount     int    `json:"txCount"`
-	GasUsed     uint64 `json:"gasUsed"`
-	GasLimit    uint64 `json:"gasLimit"`
-	SizeBytes   uint64 `json:"sizeBytes"`
-	Coinbase    string `json:"coinbase"`
-	RewardWei   string `json:"rewardWei"`   // base subsidy for this height
-	Difficulty  string `json:"difficulty"`
+	Number     uint64 `json:"number"`
+	Hash       string `json:"hash"`
+	Timestamp  int64  `json:"timestamp"`
+	TxCount    int    `json:"txCount"`
+	GasUsed    uint64 `json:"gasUsed"`
+	GasLimit   uint64 `json:"gasLimit"`
+	SizeBytes  uint64 `json:"sizeBytes"`
+	Coinbase   string `json:"coinbase"`
+	RewardWei  string `json:"rewardWei"` // base subsidy for this height
+	Difficulty string `json:"difficulty"`
 }
