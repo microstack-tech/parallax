@@ -24,6 +24,13 @@ type GUIConfig struct {
 	Theme         string `json:"theme"` // "system" | "light" | "dark"
 	AutoStartNode bool   `json:"autoStartNode"`
 
+	// EnableSmartFee turns on the Bitcoin Core-style smart fee estimator
+	// in the gas-price oracle (gasprice.Config.EnableSmartFeeEstimator).
+	// Off by default — same default as the CLI's --gpo.smartfee flag.
+	// Requires a node restart to take effect because the oracle is built
+	// once at prl.New() time.
+	EnableSmartFee bool `json:"enableSmartFee"`
+
 	// Advanced (only meaningful when AdvancedUnlocked is true in the UI).
 	DatabaseCacheMB  int `json:"databaseCacheMB"`
 	TrieCleanCacheMB int `json:"trieCleanCacheMB"`

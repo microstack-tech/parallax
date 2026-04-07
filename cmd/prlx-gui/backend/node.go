@@ -340,6 +340,13 @@ func buildConfigs(g GUIConfig) (node.Config, prlconfig.Config, error) {
 		prlCfg.SnapshotCache = g.SnapshotCacheMB
 	}
 
+	// Smart fee estimator toggle. Mirrors --gpo.smartfee on the CLI: when
+	// enabled the gas-price oracle uses the Bitcoin Core-style algorithm
+	// instead of the legacy percentile estimator. The oracle is constructed
+	// once inside prl.New(), so this only takes effect after a fresh node
+	// start — the Settings UI flags it as restart-required.
+	prlCfg.GPO.EnableSmartFeeEstimator = g.EnableSmartFee
+
 	// DNS discovery: same default the CLI applies for mainnet. Without
 	// these URLs the prl handler does not bootstrap a discovery iterator,
 	// so peers are only ever found via the static bootstrap nodes above.

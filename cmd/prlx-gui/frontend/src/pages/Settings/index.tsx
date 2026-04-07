@@ -15,6 +15,7 @@ const RESTART_FIELDS: (keyof GUIConfig)[] = [
   "httpRpcPort",
   "blockInbound",
   "maxPeers",
+  "enableSmartFee",
   "databaseCacheMB",
   "trieCleanCacheMB",
   "trieDirtyCacheMB",
@@ -38,8 +39,8 @@ export default function Settings() {
       setCfg(c);
       setOrig(c);
     });
-    api.version().then(setAppVersion).catch(() => {});
-    api.clientVersion().then(setClientVersion).catch(() => {});
+    api.version().then(setAppVersion).catch(() => { });
+    api.clientVersion().then(setClientVersion).catch(() => { });
   }, []);
 
   if (!cfg) return null;
@@ -199,6 +200,36 @@ export default function Settings() {
               </motion.div>
             )}
           </AnimatePresence>
+        </section>
+      </StaggerItem>
+
+      <StaggerItem>
+        <section className="card space-y-5">
+          <div className="card-title">Fee estimation</div>
+          <p className="text-sm text-muted leading-relaxed">
+            The gas price oracle has two algorithms. The default uses a
+            percentile of recent block tips — fast and well-trodden. The
+            Smart Fee option ports Bitcoin Core's{" "}
+            <span className="font-mono text-fg/80">estimateSmartFee</span>{" "}
+            algorithm, which buckets observed confirmations and back-solves
+            for a fee that hits a target confirmation depth.
+          </p>
+          <p className="text-sm text-muted leading-relaxed">
+            <span className="text-gold">Recommended: leave this off.</span>{" "}
+            Smart Fee needs a long, continuous window of observed
+            confirmations to produce accurate estimates. Parallax Desktop is
+            designed to be started and stopped on demand rather than left
+            running 24/7, so the oracle rarely accumulates enough data and
+            falls back to the default minimum. Always-on operators (CLI
+            nodes, validators) are the intended audience for this option.
+          </p>
+
+          <Field label="Smart fee estimator">
+            <Toggle
+              checked={cfg.enableSmartFee}
+              onChange={(v) => update({ enableSmartFee: v })}
+            />
+          </Field>
         </section>
       </StaggerItem>
 

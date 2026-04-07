@@ -43,6 +43,7 @@ export type GUIConfig = {
   maxPeers: number;
   theme: "system" | "light" | "dark";
   autoStartNode: boolean;
+  enableSmartFee: boolean;
   databaseCacheMB: number;
   trieCleanCacheMB: number;
   trieDirtyCacheMB: number;

@@ -105,6 +105,7 @@ func defaultGUIConfig() GUIConfig {
 		MaxPeers:         100,
 		Theme:            "system",
 		AutoStartNode:    true,
+		EnableSmartFee:   false, // opt-in via Settings → Fee estimation.
 		DatabaseCacheMB:  cacheTotalMB * 50 / 100, // 2048 MB
 		TrieCleanCacheMB: cacheTotalMB * 15 / 100, //  614 MB
 		TrieDirtyCacheMB: cacheTotalMB * 25 / 100, // 1024 MB
