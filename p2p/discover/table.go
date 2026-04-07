@@ -313,7 +313,6 @@ func (tab *Table) loadSeedNodes() {
 	// the node filter. This drops stale non-Parallax entries that may have
 	// been cached before the filter was introduced.
 	for _, seed := range wrapNodes(tab.db.QuerySeeds(seedCount, seedMaxAge)) {
-		seed := seed
 		age := log.Lazy{Fn: func() any { return time.Since(tab.db.LastPongReceived(seed.ID(), seed.IP())) }}
 		tab.log.Trace("Found seed node in database", "id", seed.ID(), "addr", seed.addr(), "age", age)
 		tab.addSeenNode(seed)
