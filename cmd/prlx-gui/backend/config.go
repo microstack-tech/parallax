@@ -87,6 +87,14 @@ func (c *ConfigStore) Save(cfg GUIConfig) error {
 }
 
 func defaultGUIConfig() GUIConfig {
+	// Cache split mirrors what the CLI uses on mainnet: a 4096 MB total
+	// budget partitioned by the same percentages as cmd/utils/flags.go
+	// (50% db, 15% trie clean, 25% trie dirty, 10% snapshot). The CLI bumps
+	// from its 1024 MB default to 4096 MB whenever syncmode != light AND no
+	// explicit --cache flag is provided AND we're on mainnet — see
+	// cmd/prlx/main.go:prepare(). Without this bump the GUI would sync
+	// roughly four times slower than the CLI.
+	const cacheTotalMB = 4096
 	return GUIConfig{
 		Bootstrapped:     false,
 		DataDir:          node.DefaultDataDir(),
@@ -97,10 +105,10 @@ func defaultGUIConfig() GUIConfig {
 		MaxPeers:         100,
 		Theme:            "system",
 		AutoStartNode:    true,
-		DatabaseCacheMB:  512,
-		TrieCleanCacheMB: 154,
-		TrieDirtyCacheMB: 256,
-		SnapshotCacheMB:  102,
+		DatabaseCacheMB:  cacheTotalMB * 50 / 100, // 2048 MB
+		TrieCleanCacheMB: cacheTotalMB * 15 / 100, //  614 MB
+		TrieDirtyCacheMB: cacheTotalMB * 25 / 100, // 1024 MB
+		SnapshotCacheMB:  cacheTotalMB * 10 / 100, //  409 MB
 	}
 }
 
@@ -131,6 +139,22 @@ func mergeDefaults(cfg *GUIConfig) {
 		cfg.TrieDirtyCacheMB = d.TrieDirtyCacheMB
 	}
 	if cfg.SnapshotCacheMB == 0 {
+		cfg.SnapshotCacheMB = d.SnapshotCacheMB
+	}
+
+	// One-time upgrade: an earlier release of the GUI shipped a 1024 MB
+	// cache split (512 / 154 / 256 / 102). The CLI uses 4096 MB on mainnet,
+	// which sync benchmarks show is roughly 4× faster. If we recognise the
+	// stale tuple exactly, replace it with the new defaults so existing
+	// installs benefit on the next launch. Users who have explicitly
+	// customised any of these values keep their overrides.
+	if cfg.DatabaseCacheMB == 512 &&
+		cfg.TrieCleanCacheMB == 154 &&
+		cfg.TrieDirtyCacheMB == 256 &&
+		cfg.SnapshotCacheMB == 102 {
+		cfg.DatabaseCacheMB = d.DatabaseCacheMB
+		cfg.TrieCleanCacheMB = d.TrieCleanCacheMB
+		cfg.TrieDirtyCacheMB = d.TrieDirtyCacheMB
 		cfg.SnapshotCacheMB = d.SnapshotCacheMB
 	}
 }

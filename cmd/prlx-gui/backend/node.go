@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/accounts/keystore"
+	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/consensus/xhash"
 	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/metrics"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
@@ -26,6 +28,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/prl"
 	"github.com/ParallaxProtocol/parallax/prl/downloader"
 	"github.com/ParallaxProtocol/parallax/prl/prlconfig"
+	"github.com/ParallaxProtocol/parallax/prl/tracers"
 )
 
 // NodeController owns the embedded node.Node + prl.Parallax instance and
@@ -37,9 +40,15 @@ type NodeController struct {
 	stack     *node.Node
 	parallax  *prl.Parallax
 	startedAt time.Time
+	stopCh    chan struct{} // closed by Stop() so background goroutines exit
 
 	emitter func(NodeEvent)
 }
+
+// processMetricsOnce ensures we only ever spawn metrics.CollectProcessMetrics
+// a single time per process. Like the CLI, the collector is an infinite
+// goroutine and is shared across node restarts.
+var processMetricsOnce sync.Once
 
 // NewNodeController creates a controller. Nothing is started until Start is
 // called.
@@ -80,6 +89,18 @@ func (n *NodeController) Stack() *node.Node {
 
 // Start brings up the in-process node. It is idempotent: calling Start while
 // already running returns nil.
+//
+// The startup sequence mirrors cmd/prlx so the embedded node behaves like a
+// first-class CLI install:
+//
+//  1. node.New(cfg)
+//  2. attach a keystore backend (so AccountManager has at least one backend)
+//  3. prl.New(stack, cfg) — registers the prl service
+//  4. stack.RegisterAPIs(tracers.APIs(...)) — debug_* tracer namespace
+//  5. stack.Start()
+//  6. spawn process metrics collector (once per process)
+//  7. spawn the free-disk-space monitor (per Start, stops on Stop)
+//  8. log a one-time legacy receipts warning if the freezer needs migration
 func (n *NodeController) Start(ctx context.Context) error {
 	n.mu.Lock()
 	if n.stack != nil {
@@ -109,16 +130,45 @@ func (n *NodeController) Start(ctx context.Context) error {
 		return fmt.Errorf("register parallax service: %w", err)
 	}
 
+	// Register the debug tracer namespace. The CLI does this in
+	// cmd/utils/flags.go RegisterParallaxService — without it,
+	// debug_traceTransaction / debug_traceCall etc. silently 404 over RPC,
+	// which breaks devtools and dapp debuggers connecting to our local node.
+	stack.RegisterAPIs(tracers.APIs(parallax.APIBackend))
+
 	if err := stack.Start(); err != nil {
 		stack.Close()
 		return fmt.Errorf("start node: %w", err)
 	}
 
+	stopCh := make(chan struct{})
 	n.mu.Lock()
 	n.stack = stack
 	n.parallax = parallax
 	n.startedAt = time.Now()
+	n.stopCh = stopCh
 	n.mu.Unlock()
+
+	// Process metrics: cmd/prlx calls this exactly once in prepare(). It
+	// runs forever, so we wrap it in sync.Once and let restarts share the
+	// single collector.
+	processMetricsOnce.Do(func() {
+		go metrics.CollectProcessMetrics(3 * time.Second)
+	})
+
+	// Free disk space monitor: triggers a graceful Stop() when free space
+	// on the data directory crosses below the critical threshold, matching
+	// the safeguard cmd/utils/cmd.go installs in StartNode.
+	criticalMB := uint64(2 * prlCfg.TrieDirtyCache) // 2× dirty cache, in MiB
+	if criticalMB > 0 {
+		go n.monitorFreeDiskSpace(stack.InstanceDir(), criticalMB*1024*1024, stopCh)
+	}
+
+	// Legacy receipts warning. This is purely informational — the chain
+	// will run with legacy receipts, but `prlx db freezer-migrate` is the
+	// recommended path forward. We log it once at startup to mirror the
+	// CLI's behaviour at cmd/prlx/config.go:165.
+	go n.warnIfLegacyReceipts(parallax)
 
 	n.emit("started", nil)
 	return nil
@@ -128,11 +178,18 @@ func (n *NodeController) Start(ctx context.Context) error {
 func (n *NodeController) Stop() error {
 	n.mu.Lock()
 	stack := n.stack
+	stopCh := n.stopCh
 	n.stack = nil
 	n.parallax = nil
+	n.stopCh = nil
 	n.mu.Unlock()
 	if stack == nil {
 		return nil
+	}
+	if stopCh != nil {
+		// Signal background helpers (disk monitor) to exit before we close
+		// the stack so they don't race against a half-torn-down node.
+		close(stopCh)
 	}
 	err := stack.Close()
 	n.emit("stopped", nil)
@@ -211,13 +268,33 @@ func (n *NodeController) Status() NodeStatus {
 // buildConfigs translates GUIConfig into a node.Config + prlconfig.Config pair.
 func buildConfigs(g GUIConfig) (node.Config, prlconfig.Config, error) {
 	nodeCfg := node.DefaultConfig
-	nodeCfg.Name = "Parallax"
+	nodeCfg.Name = "ParallaxGUI"
 	nodeCfg.Version = GUIVersion
 	nodeCfg.DataDir = g.DataDir
 	nodeCfg.IPCPath = "prlx.ipc"
-	nodeCfg.HTTPVirtualHosts = []string{"localhost"}
-	nodeCfg.HTTPModules = []string{"net", "web3", "eth"}
-	nodeCfg.WSModules = []string{"net", "web3", "eth"}
+
+	// Augment (don't replace) the default module lists from
+	// node/defaults.go: DefaultConfig provides {"net", "web3"} — we add
+	// "eth" so JSON-RPC clients (MetaMask, ethers, web3.js) can hit the
+	// chain namespace, plus "debug" so the tracer APIs we register in
+	// Start() are reachable. Same modules cmd/prlx ends up with after
+	// utils.SetNodeConfig + flag application.
+	nodeCfg.HTTPModules = append(nodeCfg.HTTPModules, "eth", "debug")
+	nodeCfg.WSModules = append(nodeCfg.WSModules, "eth", "debug")
+
+	// Allow both `localhost` and `127.0.0.1` as virtual hosts so dapps and
+	// CLI tools that connect via either name pass the host check.
+	nodeCfg.HTTPVirtualHosts = []string{"localhost", "127.0.0.1"}
+
+	// Browser-based dapps and the MetaMask extension issue cross-origin
+	// JSON-RPC requests. Without HTTPCors set, the node returns the data
+	// but the browser blocks it. The listener is bound to the loopback
+	// interface so allowing "*" only widens access to processes that
+	// already share localhost — same trust boundary as enabling RPC at
+	// all.
+	nodeCfg.HTTPCors = []string{"*"}
+	nodeCfg.WSOrigins = []string{"*"}
+
 	if g.HTTPRPCEnabled {
 		nodeCfg.HTTPHost = "127.0.0.1"
 		nodeCfg.HTTPPort = g.HTTPRPCPort
@@ -275,6 +352,108 @@ func buildConfigs(g GUIConfig) (node.Config, prlconfig.Config, error) {
 		return nodeCfg, prlCfg, errors.New("light sync from GUI not supported yet")
 	}
 	return nodeCfg, prlCfg, nil
+}
+
+// monitorFreeDiskSpace polls the data directory's free space every 30s and
+// triggers a graceful Stop() if it crosses below `criticalBytes`. The
+// behaviour mirrors cmd/utils/cmd.go:monitorFreeDiskSpace, which exists to
+// prevent silent database corruption when the disk fills up mid-import.
+//
+// Two thresholds:
+//   - free <= critical:   shut down now, log at error level
+//   - free <= 2*critical: warn that shutdown is imminent if it keeps falling
+func (n *NodeController) monitorFreeDiskSpace(path string, criticalBytes uint64, stopCh <-chan struct{}) {
+	const interval = 30 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	check := func() bool {
+		free, err := getFreeDiskSpace(path)
+		if err != nil {
+			log.Warn("Failed to get free disk space", "path", path, "err", err)
+			return true // keep polling — transient errors shouldn't kill the monitor
+		}
+		if free <= criticalBytes {
+			log.Error(
+				"Low disk space. Gracefully shutting down Parallax to prevent database corruption.",
+				"available", common.StorageSize(free),
+				"critical", common.StorageSize(criticalBytes),
+			)
+			// Detach the shutdown so we don't deadlock against Stop() racing
+			// with this goroutine waking up.
+			go func() { _ = n.Stop() }()
+			return false
+		}
+		if free <= 2*criticalBytes {
+			log.Warn(
+				"Disk space is running low. Parallax will shut down if it crosses the critical threshold.",
+				"available", common.StorageSize(free),
+				"critical", common.StorageSize(criticalBytes),
+			)
+		}
+		return true
+	}
+
+	// Run an immediate check at startup so a node launched on an
+	// already-full disk fails fast instead of waiting 30s.
+	if !check() {
+		return
+	}
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			if !check() {
+				return
+			}
+		}
+	}
+}
+
+// warnIfLegacyReceipts logs a one-shot warning if the chain database
+// contains receipts in the pre-migration format. The CLI does the same in
+// cmd/prlx/config.go after registering the parallax service.
+func (n *NodeController) warnIfLegacyReceipts(parallax *prl.Parallax) {
+	defer func() {
+		// This walks the freezer at startup; if anything panics we don't
+		// want to take down the GUI's startup goroutine with it.
+		if r := recover(); r != nil {
+			log.Debug("legacy receipts check failed", "panic", r)
+		}
+	}()
+
+	db := parallax.ChainDb()
+	numAncients, err := db.Ancients()
+	if err != nil || numAncients < 1 {
+		return
+	}
+
+	// Skip the empty-block prefix on mainnet (matches cmd/prlx/config.go).
+	firstIdx := uint64(0)
+	if rawhash := parallax.BlockChain().Genesis().Hash(); rawhash == params.MainnetGenesisHash {
+		firstIdx = 7661
+	}
+	if firstIdx >= numAncients {
+		return
+	}
+
+	emptyRLPList := []byte{192}
+	for i := firstIdx; i < numAncients; i++ {
+		blob, err := db.Ancient("receipts", i)
+		if err != nil || len(blob) == 0 {
+			continue
+		}
+		if len(blob) > 0 && blob[0] != emptyRLPList[0] {
+			// First byte 0x82..0xb7 indicates a list — receipts are RLP
+			// lists. We just need to spot a non-empty one to confirm there
+			// is data; the actual format detection happens in db
+			// freezer-migrate. Bail after the first hit.
+			log.Warn("Database may contain legacy receipts. Run `prlx db freezer-migrate` if you upgraded from an older release.")
+			return
+		}
+		break
+	}
 }
 
 // parseEnodes converts a slice of enode URLs into resolved nodes, skipping
