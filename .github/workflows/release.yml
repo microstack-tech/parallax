@@ -154,6 +154,15 @@ jobs:
             pkg-config \
             zip
 
+      - name: Install Windows zip
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          # The runner image ships 7z but not the `zip` binary that the
+          # Makefile's packaging step calls via git-bash. choco install
+          # is fast and adds it to PATH for subsequent shell: bash steps.
+          choco install zip -y --no-progress
+
       - name: Build GUI bundle
         shell: bash
         env:
