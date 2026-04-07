@@ -80,6 +80,27 @@ func (s *PublicParallaxAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.
 	return (*hexutil.Big)(tipcap), err
 }
 
+// SmartFeeResult represents the result of a smart fee estimation.
+type SmartFeeResult struct {
+	GasPrice    *hexutil.Big `json:"gasPrice"`
+	ConfTarget  int          `json:"confTarget"`
+	SuccessRate float64      `json:"successRate"`
+}
+
+// EstimateSmartFee returns a gas price recommendation for a transaction to be
+// confirmed within confTarget blocks, using a Bitcoin Core-style fee estimation algorithm.
+func (s *PublicParallaxAPI) EstimateSmartFee(ctx context.Context, confTarget int) (*SmartFeeResult, error) {
+	gasPrice, meta, err := s.b.EstimateSmartFee(ctx, confTarget)
+	if err != nil {
+		return nil, err
+	}
+	return &SmartFeeResult{
+		GasPrice:    (*hexutil.Big)(gasPrice),
+		ConfTarget:  confTarget,
+		SuccessRate: meta.SuccessRate,
+	}, nil
+}
+
 type feeHistoryResult struct {
 	OldestBlock  *hexutil.Big     `json:"oldestBlock"`
 	Reward       [][]*hexutil.Big `json:"reward,omitempty"`

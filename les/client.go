@@ -171,7 +171,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.Miner.GasPrice
 	}
-	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, gpoParams)
+	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, leth.txPool, gpoParams)
 
 	leth.handler = newClientHandler(config.UltraLightServers, config.UltraLightFraction, checkpoint, leth)
 	if leth.handler.ulc != nil {

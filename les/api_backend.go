@@ -274,6 +274,10 @@ func (b *LesApiBackend) FeeHistory(ctx context.Context, blockCount int, lastBloc
 	return b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
+func (b *LesApiBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *gasprice.EstimateMeta, error) {
+	return b.gpo.EstimateSmartFee(ctx, confTarget)
+}
+
 func (b *LesApiBackend) ChainDb() prldb.Database {
 	return b.prl.chainDb
 }

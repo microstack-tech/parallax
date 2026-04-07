@@ -300,6 +300,10 @@ func (b *PrlAPIBackend) FeeHistory(ctx context.Context, blockCount int, lastBloc
 	return b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
+func (b *PrlAPIBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *gasprice.EstimateMeta, error) {
+	return b.gpo.EstimateSmartFee(ctx, confTarget)
+}
+
 func (b *PrlAPIBackend) ChainDb() prldb.Database {
 	return b.eth.ChainDb()
 }

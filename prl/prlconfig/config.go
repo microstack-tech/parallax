@@ -59,6 +59,10 @@ var LightClientGPO = gasprice.Config{
 	IgnorePrice:      gasprice.DefaultIgnorePrice,
 }
 
+// Note: The new Bitcoin Core-style fee estimation fields (NumBuckets, BucketMultiplier,
+// MinBucketFee, MaxConfTarget, SuccessThreshold, ShortDecay, MediumDecay, LongDecay)
+// use sensible defaults defined in the gasprice package when left at zero values.
+
 // Defaults contains default settings for use on the Parallax main net.
 var Defaults = Config{
 	SyncMode: downloader.SnapSync,

@@ -240,7 +240,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.Miner.GasPrice
 	}
-	prl.APIBackend.gpo = gasprice.NewOracle(prl.APIBackend, gpoParams)
+	prl.APIBackend.gpo = gasprice.NewOracle(prl.APIBackend, prl.txPool, gpoParams)
 
 	// Setup DNS discovery iterators.
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
@@ -558,6 +558,7 @@ func (s *Parallax) Stop() error {
 	s.handler.Stop()
 
 	// Then stop everything else.
+	s.APIBackend.gpo.Close()
 	s.bloomIndexer.Close()
 	close(s.closeBloomHandler)
 	s.txPool.Stop()
