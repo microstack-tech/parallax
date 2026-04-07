@@ -210,7 +210,11 @@ func discv4Crawl(ctx *cli.Context) error {
 		return err
 	}
 	defer disc.Close()
-	c := newCrawler(inputSet, disc, disc.RandomNodes())
+	// Use a BFS iterator that walks the Parallax network via direct FINDNODE
+	// queries. This bypasses the lookup machinery (which leaks polluted local
+	// bucket entries via startQueries) and is immune to handlePing pollution.
+	bfs := newParallaxBFSIterator(disc, config.Bootnodes, inputSet)
+	c := newCrawler(inputSet, disc, bfs)
 	c.revalidateInterval = 10 * time.Minute
 	output := c.run(ctx.Duration(crawlTimeoutFlag.Name),
 		ctx.Int(crawlParallelismFlag.Name))
