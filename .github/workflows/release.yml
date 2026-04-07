@@ -36,11 +36,51 @@ env:
 
 jobs:
   # ------------------------------------------------------------------ #
-  # CLI: parallax / clef / parallaxkey for every TARGETS entry         #
+  # CLI: parallax / clef / parallaxkey                                 #
+  # One runner per target so each platform produces its own artifact   #
+  # instead of being lumped together. The CLI is CGO-disabled so every #
+  # target cross-compiles cleanly from a single ubuntu host — no need  #
+  # for native runners like the GUI matrix below.                      #
   # ------------------------------------------------------------------ #
   build-cli:
-    name: CLI bundles
+    name: CLI ${{ matrix.target }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux/amd64
+            os: linux
+            arch: amd64
+            ext: tar.gz
+          - target: linux/arm64
+            os: linux
+            arch: arm64
+            ext: tar.gz
+          - target: linux/armv7
+            os: linux
+            arch: armv7
+            ext: tar.gz
+          - target: linux/386
+            os: linux
+            arch: "386"
+            ext: tar.gz
+          - target: darwin/amd64
+            os: darwin
+            arch: amd64
+            ext: tar.gz
+          - target: darwin/arm64
+            os: darwin
+            arch: arm64
+            ext: tar.gz
+          - target: windows/amd64
+            os: windows
+            arch: amd64
+            ext: zip
+          - target: windows/386
+            os: windows
+            arch: "386"
+            ext: zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,16 +109,14 @@ jobs:
           # in the Makefile. Keep these two in sync.
           CMDS: "clef parallaxkey prlx"
         run: |
-          make package
+          make package TARGETS="${{ matrix.target }}"
           ls -lh build/package/
 
-      - name: Upload CLI artifacts
+      - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cli-bundles
-          path: |
-            build/package/parallax-*.tar.gz
-            build/package/parallax-*.zip
+          name: parallax-cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/package/parallax-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}
           if-no-files-found: error
           retention-days: 14
 
