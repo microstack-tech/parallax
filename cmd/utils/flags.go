@@ -701,27 +701,27 @@ var (
 	// Gas price oracle settings
 	GpoBlocksFlag = cli.IntFlag{
 		Name:  "gpo.blocks",
-		Usage: "Number of recent blocks to check for gas prices",
+		Usage: "Number of recent blocks sampled by the legacy percentile gas price oracle (ignored when --gpo.smartfee is enabled)",
 		Value: prlconfig.Defaults.GPO.Blocks,
 	}
 	GpoPercentileFlag = cli.IntFlag{
 		Name:  "gpo.percentile",
-		Usage: "Suggested gas price is the given percentile of a set of recent transaction gas prices",
+		Usage: "Percentile of recent-block transaction gas prices used by the legacy oracle (ignored when --gpo.smartfee is enabled)",
 		Value: prlconfig.Defaults.GPO.Percentile,
 	}
 	GpoMaxGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.maxprice",
-		Usage: "Maximum transaction priority fee (or gasprice before London fork) to be recommended by gpo",
+		Usage: "Maximum gas price (in wei) the oracle will ever recommend; caps both the legacy and smart-fee estimators",
 		Value: prlconfig.Defaults.GPO.MaxPrice.Int64(),
 	}
 	GpoIgnoreGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.ignoreprice",
-		Usage: "Gas price below which gpo will ignore transactions",
+		Usage: "Gas price (in wei) below which the legacy oracle ignores sampled transactions (ignored when --gpo.smartfee is enabled)",
 		Value: prlconfig.Defaults.GPO.IgnorePrice.Int64(),
 	}
-	GpoEnableSmartFeeFlag = cli.BoolFlag{
+	GpoEnableSmartFeeFlag = cli.BoolTFlag{
 		Name:  "gpo.smartfee",
-		Usage: "Enable EXPERIMENTAL Bitcoin Core-style smart fee estimation algorithm (default: false)",
+		Usage: "Enable the Bitcoin Core-style smart fee estimator (replaces the legacy percentile oracle and exposes eth_estimateSmartFee). Pass --gpo.smartfee=false to use the legacy oracle.",
 	}
 
 	// Metrics flags
