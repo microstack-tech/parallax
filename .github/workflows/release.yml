@@ -89,15 +89,19 @@ jobs:
             target: linux/arm64
             runner: ubuntu-24.04-arm
             wails_tags: "embedfrontend webkit2_41"
+          # Both darwin entries run on Apple Silicon — GitHub deprecated
+          # the macos-13 (Intel) runner. Wails uses the universal SDK
+          # that ships on the M-series runners to cross-compile the
+          # x86_64 binary from the arm64 host.
           - os: darwin
             arch: amd64
             target: darwin/amd64
-            runner: macos-13
+            runner: macos-14
             wails_tags: "embedfrontend"
           - os: darwin
             arch: arm64
             target: darwin/arm64
-            runner: macos-latest
+            runner: macos-14
             wails_tags: "embedfrontend"
           - os: windows
             arch: amd64
