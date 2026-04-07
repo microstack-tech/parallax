@@ -7,6 +7,7 @@
 package main
 
 import (
+	_ "embed"
 	"log"
 
 	// Side-effect imports — register the JS and native tracer factories
@@ -20,13 +21,23 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 )
+
+// appIcon is the master PNG used as the window/taskbar icon on Linux at
+// runtime. On Windows the icon is supplied by build/windows/icon.ico (which
+// wails embeds into the .exe via rsrc) and on macOS wails auto-generates
+// build/darwin/icons.icns from this same file during `wails build`, so this
+// embed only matters for the Linux side of the build.
+//
+//go:embed build/appicon.png
+var appIcon []byte
 
 func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:     "Parallax",
+		Title:     "Parallax Desktop",
 		Width:     1280,
 		Height:    820,
 		MinWidth:  1024,
@@ -39,6 +50,11 @@ func main() {
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
 			app,
+		},
+		Linux: &linux.Options{
+			Icon:                appIcon,
+			WindowIsTranslucent: false,
+			ProgramName:         "Parallax Desktop",
 		},
 	})
 	if err != nil {
