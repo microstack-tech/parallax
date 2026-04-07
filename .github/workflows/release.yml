@@ -115,7 +115,11 @@ jobs:
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-cli-${{ matrix.os }}-${{ matrix.arch }}
+          # The artifact name matches the file inside it (sans extension)
+          # so the workflow UI label, the file inside, and the eventual
+          # release asset name all line up — `parallax-linux-amd64.tar.gz`
+          # for unix targets and `parallax-windows-amd64.zip` for windows.
+          name: parallax-${{ matrix.os }}-${{ matrix.arch }}
           path: build/package/parallax-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}
           if-no-files-found: error
           retention-days: 14
