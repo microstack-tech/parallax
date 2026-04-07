@@ -32,8 +32,23 @@ import (
 )
 
 const (
-	// IP tracker configuration
-	iptrackMinStatements = 10
+	// IP tracker configuration.
+	//
+	// iptrackMinStatements is the number of distinct remote hosts that must
+	// agree on our external endpoint before the predictor commits to it. The
+	// upstream geth default of 10 is impractical for small networks: with
+	// fewer than 10 reachable peers it's impossible to ever reach the
+	// threshold, so the local node's ENR stays stuck at the bind IP and is
+	// rejected by remote CheckRelayIP checks (e.g. "loopback address from
+	// non-loopback host"), which in turn breaks bond establishment via
+	// RequestENR and stops the routing table from being populated.
+	//
+	// 3 is the smallest practical value: a fresh node bonds with the 3
+	// hardcoded bootnodes during its first refresh, gets 3 statements
+	// pointing at the same external endpoint, and immediately commits. The
+	// time window (iptrackWindow) still prevents flapping when network
+	// conditions change.
+	iptrackMinStatements = 3
 	iptrackWindow        = 5 * time.Minute
 	iptrackContactWindow = 10 * time.Minute
 

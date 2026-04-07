@@ -464,8 +464,13 @@ func TestUDPv4_EIP868(t *testing.T) {
 	test.udp.localNode.Set(enr.WithEntry("foo", "bar"))
 	wantNode := test.udp.localNode.Node()
 
-	// ENR requests aren't allowed before endpoint proof.
+	// ENR requests aren't allowed before endpoint proof. The verify path
+	// returns errUnknownNode AND triggers a recovery Ping so a peer that has
+	// lost its bond state (e.g. after restart) can re-bond on the next round.
 	test.packetIn(errUnknownNode, &v4wire.ENRRequest{Expiration: futureExp})
+	test.waitPacketOut(func(p *v4wire.Ping, addr *net.UDPAddr, hash []byte) {
+		// Recovery ping triggered by the unbonded ENRRequest above.
+	})
 
 	// Perform endpoint proof and check for sequence number in packet tail.
 	test.packetIn(nil, &v4wire.Ping{Expiration: futureExp})

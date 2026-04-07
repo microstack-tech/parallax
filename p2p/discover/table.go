@@ -80,7 +80,13 @@ type Table struct {
 	closed        chan struct{}
 	nodeAddedHook func(*node) // for testing
 	nodeFilter    func(*enode.Node) bool
+	verifySlots   chan struct{} // bounds concurrent async ENR verifications
 }
+
+// maxConcurrentVerifications caps the number of in-flight RequestENR
+// verifications spawned by verifyAndAdd. It prevents a flood of incoming
+// pings from spawning unbounded goroutines on a busy bootnode.
+const maxConcurrentVerifications = 32
 
 // transport is implemented by the UDP transports.
 type transport interface {
@@ -101,16 +107,17 @@ type bucket struct {
 
 func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, nodeFilter func(*enode.Node) bool, log log.Logger) (*Table, error) {
 	tab := &Table{
-		net:        t,
-		db:         db,
-		refreshReq: make(chan chan struct{}),
-		initDone:   make(chan struct{}),
-		closeReq:   make(chan struct{}),
-		closed:     make(chan struct{}),
-		rand:       mrand.New(mrand.NewSource(0)),
-		ips:        netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
-		log:        log,
-		nodeFilter: nodeFilter,
+		net:         t,
+		db:          db,
+		refreshReq:  make(chan chan struct{}),
+		initDone:    make(chan struct{}),
+		closeReq:    make(chan struct{}),
+		closed:      make(chan struct{}),
+		rand:        mrand.New(mrand.NewSource(0)),
+		ips:         netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
+		log:         log,
+		nodeFilter:  nodeFilter,
+		verifySlots: make(chan struct{}, maxConcurrentVerifications),
 	}
 	if err := tab.setFallbackNodes(bootnodes); err != nil {
 		return nil, err
@@ -302,13 +309,48 @@ func (tab *Table) doRefresh(done chan struct{}) {
 }
 
 func (tab *Table) loadSeedNodes() {
-	seeds := wrapNodes(tab.db.QuerySeeds(seedCount, seedMaxAge))
-	seeds = append(seeds, tab.nursery...)
-	for i := range seeds {
-		seed := seeds[i]
+	// Database seeds go through the regular addSeenNode path which honors
+	// the node filter. This drops stale non-Parallax entries that may have
+	// been cached before the filter was introduced.
+	for _, seed := range wrapNodes(tab.db.QuerySeeds(seedCount, seedMaxAge)) {
+		seed := seed
 		age := log.Lazy{Fn: func() any { return time.Since(tab.db.LastPongReceived(seed.ID(), seed.IP())) }}
 		tab.log.Trace("Found seed node in database", "id", seed.ID(), "addr", seed.addr(), "age", age)
 		tab.addSeenNode(seed)
+	}
+	// Nursery nodes (operator-supplied bootnodes) bypass the filter — they
+	// are explicitly trusted and their synthesized ENR records typically do
+	// not yet contain the parallax key.
+	for _, seed := range tab.nursery {
+		tab.addSeedNode(seed)
+	}
+}
+
+// addSeedNode adds a trusted bootstrap/seed node to the table, bypassing
+// the node filter. Only loadSeedNodes should call this for nursery entries.
+func (tab *Table) addSeedNode(n *node) {
+	if n.ID() == tab.self().ID() {
+		return
+	}
+
+	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
+	b := tab.bucket(n.ID())
+	if contains(b.entries, n.ID()) {
+		return
+	}
+	if len(b.entries) >= bucketSize {
+		tab.addReplacement(b, n)
+		return
+	}
+	if !tab.addIP(b, n.IP()) {
+		return
+	}
+	b.entries = append(b.entries, n)
+	b.replacements = deleteNode(b.replacements, n)
+	n.addedAt = time.Now()
+	if tab.nodeAddedHook != nil {
+		tab.nodeAddedHook(n)
 	}
 }
 
@@ -387,7 +429,13 @@ func (tab *Table) copyLiveNodes() {
 	for _, b := range &tab.buckets {
 		for _, n := range b.entries {
 			if n.livenessChecks > 0 && now.Sub(n.addedAt) >= seedMinTableTime {
-				tab.db.UpdateNode(unwrapNode(n))
+				en := unwrapNode(n)
+				// Defense-in-depth: never persist a non-Parallax entry to
+				// the nodedb, even if a race let one slip into the bucket.
+				if tab.nodeFilter != nil && !tab.nodeFilter(en) {
+					continue
+				}
+				tab.db.UpdateNode(en)
 			}
 		}
 	}
@@ -411,6 +459,12 @@ func (tab *Table) findnodeByID(target enode.ID, nresults int, preferLive bool) *
 	liveNodes := &nodesByDistance{target: target}
 	for _, b := range &tab.buckets {
 		for _, n := range b.entries {
+			// Defense-in-depth: drop entries that don't pass the filter so
+			// that handleFindnode never leaks non-Parallax neighbors and
+			// the lookup machinery never traverses them.
+			if tab.nodeFilter != nil && !tab.nodeFilter(unwrapNode(n)) {
+				continue
+			}
 			nodes.push(n, nresults)
 			if preferLive && n.livenessChecks > 0 {
 				liveNodes.push(n, nresults)
@@ -465,6 +519,12 @@ func (tab *Table) addSeenNode(n *node) {
 	if n.ID() == tab.self().ID() {
 		return
 	}
+	// Cheap synchronous filter: if the candidate already carries an ENR
+	// record (e.g. db-loaded seeds, FINDNODE results that survived the
+	// lookup-time filter), drop it now if it doesn't pass nodeFilter.
+	if tab.nodeFilter != nil && !tab.nodeFilter(unwrapNode(n)) {
+		return
+	}
 
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
@@ -501,10 +561,23 @@ func (tab *Table) addSeenNode(n *node) {
 //
 // The caller must not hold tab.mutex.
 func (tab *Table) addVerifiedNode(n *node) {
-	if !tab.isInitDone() {
+	if n.ID() == tab.self().ID() {
 		return
 	}
-	if n.ID() == tab.self().ID() {
+	if tab.nodeFilter != nil {
+		// When a node filter is set we trust the filter as the sole gate.
+		// This intentionally skips the upstream "init not done" check below:
+		// during the initial doRefresh window the other bootnodes try to bond
+		// with us immediately, and the upstream check would silently drop
+		// those legitimate adds. The filter already prevents an attacker from
+		// filling the table during bootstrap, since only nodes whose ENR
+		// carries the parallax key can pass.
+		if !tab.nodeFilter(unwrapNode(n)) {
+			return
+		}
+	} else if !tab.isInitDone() {
+		// No node filter configured — preserve the upstream behaviour and
+		// reject adds while the table is still bootstrapping.
 		return
 	}
 
@@ -531,6 +604,39 @@ func (tab *Table) addVerifiedNode(n *node) {
 	if tab.nodeAddedHook != nil {
 		tab.nodeAddedHook(n)
 	}
+}
+
+// verifyAndAdd asynchronously verifies via RequestENR that n passes
+// nodeFilter, then adds it as a verified node. It is safe to call from hot
+// paths (handlePing) because the goroutine count is bounded by verifySlots.
+//
+// If no nodeFilter is configured, n is added synchronously via the regular
+// addVerifiedNode path.
+func (tab *Table) verifyAndAdd(n *node) {
+	if tab.nodeFilter == nil {
+		tab.addVerifiedNode(n)
+		return
+	}
+	select {
+	case tab.verifySlots <- struct{}{}:
+	default:
+		// Back-pressure: already at the verification cap; drop.
+		tab.log.Debug("verifyAndAdd: slots exhausted", "id", n.ID(), "ip", n.IP())
+		return
+	}
+	go func() {
+		defer func() { <-tab.verifySlots }()
+		rn, err := tab.net.RequestENR(unwrapNode(n))
+		if err != nil {
+			tab.log.Debug("verifyAndAdd: RequestENR failed", "id", n.ID(), "ip", n.IP(), "err", err)
+			return
+		}
+		if !tab.nodeFilter(rn) {
+			tab.log.Debug("verifyAndAdd: node filtered out", "id", n.ID(), "ip", n.IP())
+			return
+		}
+		tab.addVerifiedNode(wrapNode(rn))
+	}()
 }
 
 // delete removes an entry from the node table. It is used to evacuate dead nodes.

@@ -34,6 +34,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/discover/v4wire"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/hashicorp/golang-lru/simplelru"
 )
 
 // Errors
@@ -79,7 +80,24 @@ type UDPv4 struct {
 	gotreply        chan reply
 	closeCtx        context.Context
 	cancelCloseCtx  context.CancelFunc
+
+	// recoverBondCache tracks the last bond-recovery attempt per source IP.
+	// It is consulted by recoverBond to drop repeated recovery attempts that
+	// would otherwise let a malicious peer (or a spoofed source) amplify
+	// traffic against a victim. See recoverBond for details.
+	recoverBondMu    sync.Mutex
+	recoverBondCache *simplelru.LRU
 }
+
+const (
+	// recoverBondCacheSize bounds memory used by the bond-recovery rate
+	// limiter. Once exceeded, the least-recently-used entry is evicted.
+	recoverBondCacheSize = 4096
+	// recoverBondInterval is the minimum delay between two bond-recovery
+	// attempts for the same source IP. Restart-recovery only needs one
+	// attempt per peer, so a generous interval is fine here.
+	recoverBondInterval = 1 * time.Minute
+)
 
 // replyMatcher represents a pending reply.
 //
@@ -129,17 +147,23 @@ type reply struct {
 func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	cfg = cfg.withDefaults()
 	closeCtx, cancel := context.WithCancel(context.Background())
+	rbCache, err := simplelru.NewLRU(recoverBondCacheSize, nil)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	t := &UDPv4{
-		conn:            c,
-		priv:            cfg.PrivateKey,
-		netrestrict:     cfg.NetRestrict,
-		localNode:       ln,
-		db:              ln.Database(),
-		gotreply:        make(chan reply),
-		addReplyMatcher: make(chan *replyMatcher),
-		closeCtx:        closeCtx,
-		cancelCloseCtx:  cancel,
-		log:             cfg.Log,
+		conn:             c,
+		priv:             cfg.PrivateKey,
+		netrestrict:      cfg.NetRestrict,
+		localNode:        ln,
+		db:               ln.Database(),
+		gotreply:         make(chan reply),
+		addReplyMatcher:  make(chan *replyMatcher),
+		closeCtx:         closeCtx,
+		cancelCloseCtx:   cancel,
+		log:              cfg.Log,
+		recoverBondCache: rbCache,
 	}
 
 	tab, err := newTable(t, ln.Database(), cfg.Bootnodes, cfg.NodeFilter, t.log)
@@ -269,6 +293,22 @@ func (t *UDPv4) LookupPubkey(key *ecdsa.PublicKey) []*enode.Node {
 // RandomNodes is an iterator yielding nodes from a random walk of the DHT.
 func (t *UDPv4) RandomNodes() enode.Iterator {
 	return newLookupIterator(t.closeCtx, t.newRandomLookup)
+}
+
+// FindNeighbors sends a FINDNODE request to n asking for nodes close to target,
+// and returns the neighbors that n reports. The destination is bonded
+// automatically via ensureBond, so n need not be in the local routing table.
+//
+// This is a low-level primitive intended for crawlers that want full control
+// over the lookup process. Normal callers should use LookupPubkey or
+// RandomNodes instead.
+func (t *UDPv4) FindNeighbors(n *enode.Node, target *ecdsa.PublicKey) ([]*enode.Node, error) {
+	e := v4wire.EncodePubkey(target)
+	rs, err := t.findnode(n.ID(), &net.UDPAddr{IP: n.IP(), Port: n.UDP()}, e)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapNodes(rs), nil
 }
 
 // lookupRandom implements transport.
@@ -665,14 +705,17 @@ func (t *UDPv4) handlePing(h *packetHandlerV4, from *net.UDPAddr, fromID enode.I
 		ENRSeq:     t.localNode.Node().Seq(),
 	})
 
-	// Ping back if our last pong on file is too far in the past.
+	// Ping back if our last pong on file is too far in the past. Route the
+	// add through verifyAndAdd so that, when a node filter is configured,
+	// we asynchronously fetch the sender's ENR and reject non-Parallax
+	// pingers before they can land in our routing table.
 	n := wrapNode(enode.NewV4(h.senderKey, from.IP, int(req.From.TCP), from.Port))
 	if time.Since(t.db.LastPongReceived(n.ID(), from.IP)) > bondExpiration {
 		t.sendPing(fromID, from, func() {
-			t.tab.addVerifiedNode(n)
+			t.tab.verifyAndAdd(n)
 		})
 	} else {
-		t.tab.addVerifiedNode(n)
+		t.tab.verifyAndAdd(n)
 	}
 
 	// Update node database and endpoint predictor.
@@ -705,15 +748,86 @@ func (t *UDPv4) verifyFindnode(h *packetHandlerV4, from *net.UDPAddr, fromID eno
 		return errExpired
 	}
 	if !t.checkBond(fromID, from.IP) {
-		// No endpoint proof pong exists, we don't process the packet. This prevents an
-		// attack vector where the discovery protocol could be used to amplify traffic in a
-		// DDOS attack. A malicious actor would send a findnode request with the IP address
-		// and UDP port of the target as the source address. The recipient of the findnode
-		// packet would then send a neighbors packet (which is a much bigger packet than
-		// findnode) to the victim.
+		// No endpoint proof pong exists, so we don't answer this findnode (DDoS
+		// protection: a Neighbors response is much larger than a Findnode and
+		// could be used for traffic amplification). However, the absence of a
+		// bond on our side is often caused by us having restarted and lost our
+		// nodedb while the peer still thinks it's bonded. To recover quickly,
+		// we kick off the same verifyAndAdd path that handlePing uses: it pings
+		// the requester (re-establishing the bond), fetches their ENR, and adds
+		// them to the table. This means the requester not only re-bonds with us
+		// but also lands in our routing table so that subsequent FINDNODE
+		// queries from other peers can discover them.
+		t.recoverBond(from, fromKey)
 		return errUnknownNode
 	}
 	return nil
+}
+
+// recoverBond is called when an inbound query (FINDNODE/ENRRequest) arrives
+// without a valid endpoint proof on our side. This is the "self-healing" path
+// used after a bootnode restart wipes its nodedb while existing peers still
+// believe they are bonded.
+//
+// The recovery does two things:
+//
+//  1. Sends an unsolicited Ping to the requester so the bond is re-established
+//     from our side (their handlePing replies with a Pong, which updates our
+//     LastPongReceived). This unblocks future FINDNODE/ENRRequest queries
+//     from the same peer.
+//
+//  2. Routes the synthesised node through verifyAndAdd so that — once bonded —
+//     we issue a RequestENR, fetch the full ENR record, and add the requester
+//     to our routing table. Without this, the requester would never appear in
+//     our table even after their queries start succeeding (they only ever send
+//     us FINDNODE, never PING, because their stale bond state tells them they
+//     are already bonded).
+//
+// DDoS mitigation: a per-source-IP rate limiter (recoverBondCache) caps
+// recovery attempts to one per recoverBondInterval. This prevents an attacker
+// from using us as a reflection amplifier — even if they spam unbonded
+// FINDNODEs with a spoofed source, we send at most one Ping per minute to any
+// given victim IP. Legitimate restart-recovery only needs one attempt anyway.
+func (t *UDPv4) recoverBond(from *net.UDPAddr, fromKey v4wire.Pubkey) {
+	if !t.allowRecoverBond(from.IP) {
+		return
+	}
+	senderKey, err := v4wire.DecodePubkey(crypto.S256(), fromKey)
+	if err != nil {
+		return
+	}
+	// TCP port is unknown for FINDNODE/ENRRequest packets, but the discv4 UDP
+	// port is what matters for table membership. The TCP port can be filled in
+	// later via the verified ENR record fetched by verifyAndAdd's RequestENR.
+	n := wrapNode(enode.NewV4(senderKey, from.IP, 0, from.Port))
+	t.log.Debug("Recovering bond from unbonded query", "id", n.ID(), "ip", from.IP, "udp", from.Port)
+	// Step 1: synchronously send a Ping for fast bond establishment. We don't
+	// need a callback — verifyPong will update LastPongReceived when the Pong
+	// arrives, which is all we need for the bond.
+	t.sendPing(n.ID(), from, nil)
+	// Step 2: route through verifyAndAdd so the requester ends up in our
+	// routing table after the bond exchange completes. verifyAndAdd takes the
+	// synchronous addVerifiedNode path when no NodeFilter is set, so the
+	// explicit Ping above is the bond-establishment step in plain discv4
+	// (filter-less) deployments.
+	t.tab.verifyAndAdd(n)
+}
+
+// allowRecoverBond returns true if a bond-recovery attempt may be made for
+// the given source IP, and updates the cache to record the attempt. Repeated
+// calls within recoverBondInterval return false.
+func (t *UDPv4) allowRecoverBond(ip net.IP) bool {
+	key := ip.String()
+	now := time.Now()
+	t.recoverBondMu.Lock()
+	defer t.recoverBondMu.Unlock()
+	if v, ok := t.recoverBondCache.Get(key); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < recoverBondInterval {
+			return false
+		}
+	}
+	t.recoverBondCache.Add(key, now)
+	return true
 }
 
 func (t *UDPv4) handleFindnode(h *packetHandlerV4, from *net.UDPAddr, fromID enode.ID, mac []byte) {
@@ -765,6 +879,9 @@ func (t *UDPv4) verifyENRRequest(h *packetHandlerV4, from *net.UDPAddr, fromID e
 		return errExpired
 	}
 	if !t.checkBond(fromID, from.IP) {
+		// Same recovery path as verifyFindnode: kick off verifyAndAdd so the
+		// bond is re-established and the requester is added to our table.
+		t.recoverBond(from, fromKey)
 		return errUnknownNode
 	}
 	return nil

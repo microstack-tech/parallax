@@ -165,6 +165,11 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 	// just remove those again during revalidation.
 	var filtered []*node
 	for _, n := range r {
+		// When a node filter is set, fetch the candidate's full ENR record
+		// so the table can verify the parallax key. The original FINDNODE
+		// entry only carries a synthesized ENR (ip+udp+tcp+secp256k1) which
+		// would be rejected by addSeenNode's filter check.
+		add := n
 		if it.tab.nodeFilter != nil {
 			nn, err := it.tab.net.RequestENR(unwrapNode(n))
 			if err != nil {
@@ -175,9 +180,10 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 				it.tab.log.Debug("Lookup filtered node", "id", n.ID(), "addr", n.addr())
 				continue
 			}
+			add = wrapNode(nn)
 		}
-		it.tab.addSeenNode(n)
-		filtered = append(filtered, n)
+		it.tab.addSeenNode(add)
+		filtered = append(filtered, add)
 	}
 	if it.tab.nodeFilter != nil {
 		reply <- filtered
