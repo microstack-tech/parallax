@@ -31,7 +31,21 @@ prlx:
 # Override with `make prlx-gui WAILS_TAGS=` to opt out of either.
 WAILS_TAGS ?= embedfrontend webkit2_41
 
-prlx-gui:
+# Wails generates JS bindings BEFORE running `npm run build`, and the
+# binding generator compiles every Go file in the package — including
+# embed.go's `//go:embed all:frontend/dist`. On a fresh checkout (or
+# after `make clean`) frontend/dist is empty and the embed directive
+# errors out before vite ever gets a chance to populate it. Touching a
+# placeholder file satisfies the embed pattern for the binding step;
+# vite then wipes the dir and writes the real assets in time for the
+# final Go compile.
+GUI_DIST_PLACEHOLDER := cmd/prlx-gui/frontend/dist/.gitkeep
+
+$(GUI_DIST_PLACEHOLDER):
+	@mkdir -p $(dir $@)
+	@touch $@
+
+prlx-gui: $(GUI_DIST_PLACEHOLDER)
 	@command -v wails >/dev/null 2>&1 || { \
 	  echo "wails CLI not found. Install with:"; \
 	  echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"; \
@@ -41,7 +55,7 @@ prlx-gui:
 	@echo "Done building Parallax Desktop."
 	@echo "Binary in cmd/prlx-gui/build/bin/"
 
-prlx-gui-cross:
+prlx-gui-cross: $(GUI_DIST_PLACEHOLDER)
 	@command -v wails >/dev/null 2>&1 || { \
 	  echo "wails CLI not found. Install with:"; \
 	  echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"; \
@@ -75,6 +89,8 @@ prlx-gui-package:
 	  arch="$${t#*/}"; \
 	  echo "==> wails build for $$os/$$arch"; \
 	  rm -rf "$$GUI_BIN"; \
+	  mkdir -p "$$REPO_ROOT/cmd/prlx-gui/frontend/dist"; \
+	  touch  "$$REPO_ROOT/cmd/prlx-gui/frontend/dist/.gitkeep"; \
 	  if ! ( cd "$$REPO_ROOT/cmd/prlx-gui" && wails build -clean -tags "$(WAILS_TAGS)" -platform "$$t" -ldflags "$(LDFLAGS)" ); then \
 	    echo "   !! skipped $$os/$$arch (wails build failed — usually missing native toolchain)"; \
 	    continue; \
