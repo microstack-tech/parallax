@@ -196,6 +196,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.GpoPercentileFlag,
 			utils.GpoMaxGasPriceFlag,
 			utils.GpoIgnoreGasPriceFlag,
+			utils.GpoEnableSmartFeeFlag,
 		},
 	},
 	{

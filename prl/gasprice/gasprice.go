@@ -20,6 +20,7 @@ import (
 	"context"
 	"math"
 	"math/big"
+	"sort"
 	"sync"
 
 	"github.com/ParallaxProtocol/parallax/common"
@@ -32,15 +33,17 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 )
 
-// Constants matching Bitcoin Core's CBlockPolicyEstimator exactly.
-// Since Parallax has the same ~10 minute block target as Bitcoin,
-// these parameters apply directly.
+// sampleNumber is the number of transactions sampled per block in the
+// legacy percentile algorithm.
+const sampleNumber = 3
+
+// Constants for the Bitcoin Core-style fee estimator (used when
+// EnableSmartFeeEstimator is true). Since Parallax has the same ~10 minute
+// block target as Bitcoin, these parameters apply directly.
 const (
-	// Bucket generation parameters.
 	// FEE_SPACING in Bitcoin Core: 1.05 (5% geometric spacing).
 	feeSpacing = 1.05
 
-	// Horizon parameters: periods, scale, and decay.
 	// SHORT: decay 0.962, half-life ~18 blocks (~3 hours).
 	shortBlockPeriods = 12
 	shortScale        = 1
@@ -71,12 +74,12 @@ const (
 
 var (
 	DefaultMaxPrice    = big.NewInt(500 * parampkg.GWei)
-	DefaultIgnorePrice = big.NewInt(2 * parampkg.Wei) // kept for backward compat
+	DefaultIgnorePrice = big.NewInt(2 * parampkg.Wei)
 )
 
 // Config contains the configuration for the gas price oracle.
 type Config struct {
-	// Legacy fields (kept for FeeHistory backward compatibility).
+	// Legacy percentile algorithm parameters.
 	Blocks           int
 	Percentile       int
 	MaxHeaderHistory int
@@ -85,7 +88,13 @@ type Config struct {
 	MaxPrice         *big.Int `toml:",omitempty"`
 	IgnorePrice      *big.Int `toml:",omitempty"`
 
-	// Bucket range configuration (spacing is always 1.05 per Bitcoin Core).
+	// EnableSmartFeeEstimator selects the fee estimation algorithm:
+	//   false (default) — legacy percentile-based oracle (geth original).
+	//   true             — Bitcoin Core-style estimateSmartFee.
+	EnableSmartFeeEstimator bool `toml:",omitempty"`
+
+	// Bucket range configuration for the smart fee estimator
+	// (spacing is always 1.05 per Bitcoin Core).
 	MinBucketFee *big.Int `toml:",omitempty"`
 	MaxBucketFee *big.Int `toml:",omitempty"`
 }
@@ -100,9 +109,8 @@ type OracleBackend interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 }
 
-// TxPoolAccessor provides mempool event access to the oracle.
-// Both core.TxPool and light.TxPool satisfy this interface.
-// Pass nil for light clients (oracle will still track block confirmations).
+// TxPoolAccessor provides mempool event access to the smart fee estimator.
+// Pass nil for light clients or when smart fee is disabled.
 type TxPoolAccessor interface {
 	SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription
 }
@@ -113,54 +121,75 @@ type EstimateMeta struct {
 	SuccessRate float64 // estimated confirmation probability at the returned fee
 }
 
-// txStatsInfo records mempool entry info for a tracked transaction.
+// txStatsInfo records mempool entry info for a tracked transaction
+// (used by the smart fee estimator).
 type txStatsInfo struct {
 	blockHeight uint64
 	bucketIndex int
 }
 
-// Oracle recommends gas prices based on historical confirmation data,
-// using Bitcoin Core's fee estimation algorithm (CBlockPolicyEstimator).
+// Oracle recommends gas prices using either the legacy percentile algorithm
+// (geth original) or the Bitcoin Core-style estimateSmartFee algorithm,
+// depending on the EnableSmartFeeEstimator config.
 type Oracle struct {
 	backend OracleBackend
 	txPool  TxPoolAccessor // may be nil
 
-	// Price bounds.
+	enableSmartFee bool
+
+	// Common price bounds.
 	maxPrice     *big.Int
-	defaultPrice *big.Int // miner's --miner.gasprice; used as both floor and ignore threshold
+	defaultPrice *big.Int
 
-	// Fee rate buckets (as float64 for bucket operations).
+	// --- Legacy percentile algorithm fields ---
+	checkBlocks int
+	percentile  int
+	ignorePrice *big.Int
+	fetchLock   sync.Mutex
+
+	// --- Smart fee algorithm fields ---
 	bucketBounds []float64 // upper bounds, including +Inf as last element
+	shortStats   *txConfirmStats
+	medStats     *txConfirmStats
+	longStats    *txConfirmStats
 
-	// Three time horizons (matching Bitcoin Core's shortStats, feeStats, longStats).
-	shortStats *txConfirmStats
-	medStats   *txConfirmStats
-	longStats  *txConfirmStats
+	stateLock           sync.RWMutex
+	pendingTxs          map[common.Hash]txStatsInfo
+	nBestSeenHeight     uint64
+	firstRecordedHeight uint64
 
-	// Legacy fields for FeeHistory backward compatibility.
+	// Fields for FeeHistory backward compatibility.
 	maxHeaderHistory, maxBlockHistory int
 	historyCache                      *lru.Cache
 
-	// State (protected by stateLock).
-	stateLock         sync.RWMutex
-	pendingTxs        map[common.Hash]txStatsInfo
-	nBestSeenHeight   uint64
-	firstRecordedHeight uint64
-
-	// Cached estimation results (protected by cacheLock).
+	// Cached estimation results (used by both algorithms).
 	cacheLock       sync.RWMutex
 	lastHead        common.Hash
-	lastPrice       *big.Int
-	cachedEstimates map[int]*big.Int
+	lastPrice       *big.Int         // legacy single-value cache
+	cachedEstimates map[int]*big.Int // smart fee per-target cache
 
 	// Lifecycle.
 	closeCh chan struct{}
 }
 
-// NewOracle returns a new gas price oracle using Bitcoin Core's fee estimation algorithm.
-// The txPool parameter is optional; pass nil for light clients.
+// NewOracle returns a new gas price oracle.
+// The txPool parameter is optional; pass nil for light clients or when
+// smart fee estimation is disabled (EnableSmartFeeEstimator = false).
 func NewOracle(backend OracleBackend, txPool TxPoolAccessor, params Config) *Oracle {
-	// Sanitize legacy fields.
+	// Sanitize legacy percentile algorithm fields.
+	blocks := params.Blocks
+	if blocks < 1 {
+		blocks = 1
+		log.Warn("Sanitizing invalid gasprice oracle sample blocks", "provided", params.Blocks, "updated", blocks)
+	}
+	percent := params.Percentile
+	if percent < 0 {
+		percent = 0
+		log.Warn("Sanitizing invalid gasprice oracle sample percentile", "provided", params.Percentile, "updated", percent)
+	} else if percent > 100 {
+		percent = 100
+		log.Warn("Sanitizing invalid gasprice oracle sample percentile", "provided", params.Percentile, "updated", percent)
+	}
 	maxHeaderHistory := params.MaxHeaderHistory
 	if maxHeaderHistory < 1 {
 		maxHeaderHistory = 1
@@ -170,81 +199,97 @@ func NewOracle(backend OracleBackend, txPool TxPoolAccessor, params Config) *Ora
 		maxBlockHistory = 1
 	}
 
+	// Sanitize prices.
 	maxPrice := params.MaxPrice
 	if maxPrice == nil || maxPrice.Int64() <= 0 {
 		maxPrice = DefaultMaxPrice
 		log.Warn("Sanitizing invalid gasprice oracle price cap", "provided", params.MaxPrice, "updated", maxPrice)
+	}
+	ignorePrice := params.IgnorePrice
+	if ignorePrice == nil || ignorePrice.Int64() <= 0 {
+		ignorePrice = DefaultIgnorePrice
 	}
 	defaultPrice := params.Default
 	if defaultPrice == nil || defaultPrice.Sign() <= 0 {
 		defaultPrice = big.NewInt(1 * parampkg.GWei)
 	}
 
-	minBucketFee := params.MinBucketFee
-	if minBucketFee == nil || minBucketFee.Sign() <= 0 {
-		// Default to the miner's minimum gas price — no point generating
-		// buckets below fees that will never be mined.
-		minBucketFee = defaultPrice
-	}
-	maxBucketFee := params.MaxBucketFee
-	if maxBucketFee == nil || maxBucketFee.Sign() <= 0 {
-		maxBucketFee = maxPrice
-	}
-
-	// Generate bucket boundaries with FEE_SPACING = 1.05, matching Bitcoin Core.
-	minFee := float64(minBucketFee.Int64())
-	maxFee := float64(maxBucketFee.Int64())
-	var bucketBounds []float64
-	for boundary := minFee; boundary <= maxFee; boundary *= feeSpacing {
-		bucketBounds = append(bucketBounds, boundary)
-	}
-	bucketBounds = append(bucketBounds, math.Inf(1)) // INF bucket
-
-	// Create the three stats instances (matching Bitcoin Core's constructor).
-	shortStats := newTxConfirmStats(bucketBounds, shortBlockPeriods, shortDecay, shortScale)
-	medStats := newTxConfirmStats(bucketBounds, medBlockPeriods, medDecay, medScale)
-	longStats := newTxConfirmStats(bucketBounds, longBlockPeriods, longDecay, longScale)
-
 	cache, _ := lru.New(2048)
 	oracle := &Oracle{
 		backend:          backend,
 		txPool:           txPool,
+		enableSmartFee:   params.EnableSmartFeeEstimator,
 		maxPrice:         maxPrice,
 		defaultPrice:     defaultPrice,
-		bucketBounds:     bucketBounds,
-		shortStats:       shortStats,
-		medStats:         medStats,
-		longStats:        longStats,
+		ignorePrice:      ignorePrice,
+		checkBlocks:      blocks,
+		percentile:       percent,
 		maxHeaderHistory: maxHeaderHistory,
 		maxBlockHistory:  maxBlockHistory,
 		historyCache:     cache,
-		pendingTxs:       make(map[common.Hash]txStatsInfo),
 		lastPrice:        new(big.Int).Set(defaultPrice),
-		cachedEstimates:  make(map[int]*big.Int),
 		closeCh:          make(chan struct{}),
 	}
 
-	// Subscribe to chain head events.
+	if params.EnableSmartFeeEstimator {
+		// Initialize smart fee estimator state.
+		minBucketFee := params.MinBucketFee
+		if minBucketFee == nil || minBucketFee.Sign() <= 0 {
+			// Default to the miner's minimum gas price — no point generating
+			// buckets below fees that will never be mined.
+			minBucketFee = defaultPrice
+		}
+		maxBucketFee := params.MaxBucketFee
+		if maxBucketFee == nil || maxBucketFee.Sign() <= 0 {
+			maxBucketFee = maxPrice
+		}
+
+		// Generate bucket boundaries with FEE_SPACING = 1.05.
+		minFee := float64(minBucketFee.Int64())
+		maxFee := float64(maxBucketFee.Int64())
+		var bucketBounds []float64
+		for boundary := minFee; boundary <= maxFee; boundary *= feeSpacing {
+			bucketBounds = append(bucketBounds, boundary)
+		}
+		bucketBounds = append(bucketBounds, math.Inf(1)) // INF bucket
+
+		oracle.bucketBounds = bucketBounds
+		oracle.shortStats = newTxConfirmStats(bucketBounds, shortBlockPeriods, shortDecay, shortScale)
+		oracle.medStats = newTxConfirmStats(bucketBounds, medBlockPeriods, medDecay, medScale)
+		oracle.longStats = newTxConfirmStats(bucketBounds, longBlockPeriods, longDecay, longScale)
+		oracle.pendingTxs = make(map[common.Hash]txStatsInfo)
+		oracle.cachedEstimates = make(map[int]*big.Int)
+
+		log.Info("Gas price oracle initialized (Bitcoin Core smart fee algorithm)",
+			"buckets", len(bucketBounds),
+			"spacing", feeSpacing,
+			"minBucket", minBucketFee,
+			"maxBucket", maxBucketFee,
+			"shortPeriods", shortBlockPeriods,
+			"medPeriods", medBlockPeriods,
+			"longPeriods", longBlockPeriods,
+		)
+	} else {
+		log.Info("Gas price oracle initialized (legacy percentile algorithm)",
+			"blocks", blocks, "percentile", percent,
+			"maxPrice", maxPrice, "ignorePrice", ignorePrice,
+		)
+	}
+
+	// Subscribe to chain head events. The block loop runs in both modes:
+	// - Legacy mode: only invalidates the historyCache on reorgs.
+	// - Smart fee mode: also runs the bucket tracking pipeline.
 	headEvent := make(chan core.ChainHeadEvent, 1)
 	backend.SubscribeChainHeadEvent(headEvent)
 	go oracle.blockLoop(headEvent)
 
-	// Subscribe to new transaction events if txPool is available.
-	if txPool != nil {
+	// Subscribe to mempool tx events only when smart fee is enabled and we
+	// have a tx pool to subscribe to.
+	if params.EnableSmartFeeEstimator && txPool != nil {
 		txEvent := make(chan core.NewTxsEvent, 64)
 		txPool.SubscribeNewTxsEvent(txEvent)
 		go oracle.txLoop(txEvent)
 	}
-
-	log.Info("Gas price oracle initialized (Bitcoin Core algorithm)",
-		"buckets", len(bucketBounds),
-		"spacing", feeSpacing,
-		"minBucket", minBucketFee,
-		"maxBucket", maxBucketFee,
-		"shortPeriods", shortBlockPeriods,
-		"medPeriods", medBlockPeriods,
-		"longPeriods", longBlockPeriods,
-	)
 
 	return oracle
 }
@@ -254,7 +299,8 @@ func (oracle *Oracle) Close() {
 	close(oracle.closeCh)
 }
 
-// blockLoop processes new blocks.
+// blockLoop processes new blocks. In legacy mode it only invalidates the
+// historyCache on reorgs. In smart fee mode it also runs the bucket tracking.
 func (oracle *Oracle) blockLoop(headEvent chan core.ChainHeadEvent) {
 	var lastHead common.Hash
 	for {
@@ -265,14 +311,16 @@ func (oracle *Oracle) blockLoop(headEvent chan core.ChainHeadEvent) {
 				oracle.historyCache.Purge()
 			}
 			lastHead = block.Hash()
-			oracle.processNewBlock(block)
+			if oracle.enableSmartFee {
+				oracle.processNewBlock(block)
+			}
 		case <-oracle.closeCh:
 			return
 		}
 	}
 }
 
-// txLoop processes new mempool transactions.
+// txLoop processes new mempool transactions (smart fee mode only).
 func (oracle *Oracle) txLoop(txEvent chan core.NewTxsEvent) {
 	for {
 		select {
@@ -283,6 +331,159 @@ func (oracle *Oracle) txLoop(txEvent chan core.NewTxsEvent) {
 		}
 	}
 }
+
+//
+// =============================================================================
+// Legacy percentile algorithm (original geth implementation)
+// =============================================================================
+//
+
+// suggestTipCapLegacy is the original geth percentile-based gas price oracle.
+// It samples sampleNumber transactions from each of the last checkBlocks blocks,
+// sorts them by effective gas tip, and returns the configured percentile.
+func (oracle *Oracle) suggestTipCapLegacy(ctx context.Context) (*big.Int, error) {
+	head, _ := oracle.backend.HeaderByNumber(ctx, rpc.LatestBlockNumber)
+	headHash := head.Hash()
+
+	// Return cached price if still valid.
+	oracle.cacheLock.RLock()
+	lastHead, lastPrice := oracle.lastHead, oracle.lastPrice
+	oracle.cacheLock.RUnlock()
+	if headHash == lastHead {
+		return new(big.Int).Set(lastPrice), nil
+	}
+	oracle.fetchLock.Lock()
+	defer oracle.fetchLock.Unlock()
+
+	// Re-check cache after acquiring fetch lock.
+	oracle.cacheLock.RLock()
+	lastHead, lastPrice = oracle.lastHead, oracle.lastPrice
+	oracle.cacheLock.RUnlock()
+	if headHash == lastHead {
+		return new(big.Int).Set(lastPrice), nil
+	}
+
+	var (
+		sent, exp int
+		number    = head.Number.Uint64()
+		result    = make(chan results, oracle.checkBlocks)
+		quit      = make(chan struct{})
+		txValues  []*big.Int
+	)
+	for sent < oracle.checkBlocks && number > 0 {
+		go oracle.getBlockValues(ctx, types.MakeSigner(oracle.backend.ChainConfig(), big.NewInt(int64(number))), number, sampleNumber, oracle.ignorePrice, result, quit)
+		sent++
+		exp++
+		number--
+	}
+	for exp > 0 {
+		res := <-result
+		if res.err != nil {
+			close(quit)
+			return new(big.Int).Set(lastPrice), res.err
+		}
+		exp--
+		// Empty block or only miner txs: use last cached price as filler.
+		if len(res.values) == 0 {
+			res.values = []*big.Int{lastPrice}
+		}
+		// If too little data, query more blocks (up to 2*checkBlocks).
+		if len(res.values) == 1 && len(txValues)+1+exp < oracle.checkBlocks*2 && number > 0 {
+			go oracle.getBlockValues(ctx, types.MakeSigner(oracle.backend.ChainConfig(), big.NewInt(int64(number))), number, sampleNumber, oracle.ignorePrice, result, quit)
+			sent++
+			exp++
+			number--
+		}
+		txValues = append(txValues, res.values...)
+	}
+	price := lastPrice
+	if len(txValues) > 0 {
+		sort.Sort(bigIntArray(txValues))
+		price = txValues[(len(txValues)-1)*oracle.percentile/100]
+	}
+	if price.Cmp(oracle.maxPrice) > 0 {
+		price = new(big.Int).Set(oracle.maxPrice)
+	}
+	oracle.cacheLock.Lock()
+	oracle.lastHead = headHash
+	oracle.lastPrice = price
+	oracle.cacheLock.Unlock()
+
+	return new(big.Int).Set(price), nil
+}
+
+type results struct {
+	values []*big.Int
+	err    error
+}
+
+type txSorter struct {
+	txs     []*types.Transaction
+	baseFee *big.Int
+}
+
+func newSorter(txs []*types.Transaction, baseFee *big.Int) *txSorter {
+	return &txSorter{txs: txs, baseFee: baseFee}
+}
+
+func (s *txSorter) Len() int { return len(s.txs) }
+func (s *txSorter) Swap(i, j int) {
+	s.txs[i], s.txs[j] = s.txs[j], s.txs[i]
+}
+
+func (s *txSorter) Less(i, j int) bool {
+	tip1, _ := s.txs[i].EffectiveGasTip(s.baseFee)
+	tip2, _ := s.txs[j].EffectiveGasTip(s.baseFee)
+	return tip1.Cmp(tip2) < 0
+}
+
+// getBlockValues samples up to `limit` transactions from a block, sorted
+// ascending by effective tip, and sends them on the result channel.
+func (oracle *Oracle) getBlockValues(ctx context.Context, signer types.Signer, blockNum uint64, limit int, ignoreUnder *big.Int, result chan results, quit chan struct{}) {
+	block, err := oracle.backend.BlockByNumber(ctx, rpc.BlockNumber(blockNum))
+	if block == nil {
+		select {
+		case result <- results{nil, err}:
+		case <-quit:
+		}
+		return
+	}
+	txs := make([]*types.Transaction, len(block.Transactions()))
+	copy(txs, block.Transactions())
+	sorter := newSorter(txs, block.BaseFee())
+	sort.Sort(sorter)
+
+	var prices []*big.Int
+	for _, tx := range sorter.txs {
+		tip, _ := tx.EffectiveGasTip(block.BaseFee())
+		if ignoreUnder != nil && tip.Cmp(ignoreUnder) == -1 {
+			continue
+		}
+		sender, err := types.Sender(signer, tx)
+		if err == nil && sender != block.Coinbase() {
+			prices = append(prices, tip)
+			if len(prices) >= limit {
+				break
+			}
+		}
+	}
+	select {
+	case result <- results{prices, nil}:
+	case <-quit:
+	}
+}
+
+type bigIntArray []*big.Int
+
+func (s bigIntArray) Len() int           { return len(s) }
+func (s bigIntArray) Less(i, j int) bool { return s[i].Cmp(s[j]) < 0 }
+func (s bigIntArray) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+//
+// =============================================================================
+// Bitcoin Core-style smart fee algorithm
+// =============================================================================
+//
 
 // processTransaction records new mempool transactions for tracking.
 // Equivalent to Bitcoin Core's CBlockPolicyEstimator::processTransaction.
@@ -343,7 +544,6 @@ func (oracle *Oracle) processBlockTx(blockHeight uint64, tx *types.Transaction) 
 		return false
 	}
 
-	// Remove from tracking (as confirmed).
 	oracle.removeTx(hash, true)
 
 	blocksToConfirm := int(blockHeight) - int(info.blockHeight)
@@ -365,7 +565,7 @@ func (oracle *Oracle) processBlockTx(blockHeight uint64, tx *types.Transaction) 
 	return true
 }
 
-// processBlock handles a new block: updates circular buffers, applies decay,
+// processNewBlock handles a new block: updates circular buffers, applies decay,
 // and processes confirmed transactions.
 // Equivalent to Bitcoin Core's CBlockPolicyEstimator::processBlock.
 func (oracle *Oracle) processNewBlock(block *types.Block) {
@@ -375,23 +575,19 @@ func (oracle *Oracle) processNewBlock(block *types.Block) {
 	blockHeight := block.NumberU64()
 
 	if blockHeight <= oracle.nBestSeenHeight {
-		// Ignore side chains and reorgs.
-		return
+		return // ignore side chains and reorgs
 	}
 
 	oracle.nBestSeenHeight = blockHeight
 
-	// Roll circular buffers.
 	oracle.shortStats.clearCurrent(blockHeight)
 	oracle.medStats.clearCurrent(blockHeight)
 	oracle.longStats.clearCurrent(blockHeight)
 
-	// Decay all exponential averages.
 	oracle.shortStats.updateMovingAverages()
 	oracle.medStats.updateMovingAverages()
 	oracle.longStats.updateMovingAverages()
 
-	// Process confirmed transactions.
 	countedTxs := 0
 	for _, tx := range block.Transactions() {
 		if oracle.processBlockTx(blockHeight, tx) {
@@ -409,7 +605,7 @@ func (oracle *Oracle) processNewBlock(block *types.Block) {
 		cutoff := blockHeight - oldestEstimateHistory
 		for hash, info := range oracle.pendingTxs {
 			if info.blockHeight < cutoff {
-				oracle.removeTx(hash, false) // counts as failure
+				oracle.removeTx(hash, false)
 			}
 		}
 	}
@@ -421,14 +617,12 @@ func (oracle *Oracle) processNewBlock(block *types.Block) {
 		"pendingTracked", len(oracle.pendingTxs),
 	)
 
-	// Invalidate cached estimates.
 	oracle.cacheLock.Lock()
 	oracle.lastHead = block.Hash()
 	oracle.cachedEstimates = make(map[int]*big.Int)
 	oracle.cacheLock.Unlock()
 }
 
-// blockSpan returns the number of blocks we've been tracking.
 func (oracle *Oracle) blockSpan() uint64 {
 	if oracle.firstRecordedHeight == 0 {
 		return 0
@@ -436,8 +630,6 @@ func (oracle *Oracle) blockSpan() uint64 {
 	return oracle.nBestSeenHeight - oracle.firstRecordedHeight
 }
 
-// maxUsableEstimate returns the maximum confirmation target we can meaningfully estimate.
-// We need at least 2x the target in block history to have enough potential failure data.
 func (oracle *Oracle) maxUsableEstimate() int {
 	maxConf := oracle.longStats.getMaxConfirms()
 	span := int(oracle.blockSpan())
@@ -451,9 +643,6 @@ func (oracle *Oracle) maxUsableEstimate() int {
 	return usable
 }
 
-// estimateCombinedFee estimates the fee from the shortest applicable horizon.
-// If checkShorterHorizon is true, also checks shorter horizons at their max
-// target to maintain monotonically increasing estimates.
 func (oracle *Oracle) estimateCombinedFee(confTarget int, successThreshold float64, checkShorterHorizon bool) float64 {
 	estimate := float64(-1)
 
@@ -467,14 +656,12 @@ func (oracle *Oracle) estimateCombinedFee(confTarget int, successThreshold float
 		}
 
 		if checkShorterHorizon {
-			// Check if medium horizon at its max target gives a lower answer.
 			if confTarget > oracle.medStats.getMaxConfirms() {
 				medMax := oracle.medStats.estimateMedianVal(oracle.medStats.getMaxConfirms(), sufficientFeeTxs, successThreshold, oracle.nBestSeenHeight)
 				if medMax > 0 && (estimate == -1 || medMax < estimate) {
 					estimate = medMax
 				}
 			}
-			// Check if short horizon at its max target gives a lower answer.
 			if confTarget > oracle.shortStats.getMaxConfirms() {
 				shortMax := oracle.shortStats.estimateMedianVal(oracle.shortStats.getMaxConfirms(), sufficientTxShort, successThreshold, oracle.nBestSeenHeight)
 				if shortMax > 0 && (estimate == -1 || shortMax < estimate) {
@@ -486,8 +673,6 @@ func (oracle *Oracle) estimateCombinedFee(confTarget int, successThreshold float
 	return estimate
 }
 
-// estimateConservativeFee ensures the DOUBLE_SUCCESS_PCT is met at 2*target
-// for longer time horizons.
 func (oracle *Oracle) estimateConservativeFee(doubleTarget int) float64 {
 	estimate := float64(-1)
 
@@ -503,19 +688,16 @@ func (oracle *Oracle) estimateConservativeFee(doubleTarget int) float64 {
 	return estimate
 }
 
-// EstimateSmartFee returns the max of fee estimates calculated with:
+// estimateSmartFeeBitcoin returns the max of fee estimates calculated with:
 //   - 60% threshold at target/2
 //   - 85% threshold at target
 //   - 95% threshold at 2*target
-//
-// Each calculation uses the shortest applicable time horizon.
-// Conservative mode additionally requires 95% at 2*target across longer horizons.
+//   - conservative 95% at 2*target across longer horizons
 //
 // This is a direct port of Bitcoin Core's CBlockPolicyEstimator::estimateSmartFee.
-func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *EstimateMeta, error) {
-	log.Info("Fee estimator: EstimateSmartFee called", "confTarget", confTarget)
+func (oracle *Oracle) estimateSmartFeeBitcoin(ctx context.Context, confTarget int) (*big.Int, *EstimateMeta, error) {
+	log.Info("Fee estimator: EstimateSmartFee called (smart fee)", "confTarget", confTarget)
 
-	// Check cache first (outside state lock).
 	oracle.cacheLock.RLock()
 	if cached, ok := oracle.cachedEstimates[confTarget]; ok {
 		oracle.cacheLock.RUnlock()
@@ -536,45 +718,37 @@ func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*bi
 		}
 	}
 
-	// Bitcoin Core: "It's not possible to get reasonable estimates for confTarget of 1"
 	if confTarget == 1 {
 		confTarget = 2
 	}
 
-	// Limit to max usable estimate based on data we've seen.
 	maxUsable := oracle.maxUsableEstimate()
 	if confTarget > maxUsable {
 		confTarget = maxUsable
 	}
 
 	if confTarget <= 1 {
-		// Not enough data yet.
 		log.Info("Fee estimator: insufficient data, returning default", "default", oracle.defaultPrice)
 		return new(big.Int).Set(oracle.defaultPrice), &EstimateMeta{}, nil
 	}
 
 	median := float64(-1)
 
-	// Sub-estimate 1: 60% success at target/2.
 	halfEst := oracle.estimateCombinedFee(confTarget/2, halfSuccessPct, true)
 	if halfEst > median {
 		median = halfEst
 	}
 
-	// Sub-estimate 2: 85% success at target.
 	actualEst := oracle.estimateCombinedFee(confTarget, successPct, true)
 	if actualEst > median {
 		median = actualEst
 	}
 
-	// Sub-estimate 3: 95% success at 2*target.
-	// For non-conservative: also check shorter horizons (true).
 	doubleEst := oracle.estimateCombinedFee(2*confTarget, doubleSuccessPct, true)
 	if doubleEst > median {
 		median = doubleEst
 	}
 
-	// Conservative check: require 95% at 2*target across longer horizons.
 	consEst := oracle.estimateConservativeFee(2 * confTarget)
 	if consEst > median {
 		median = consEst
@@ -586,7 +760,6 @@ func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*bi
 		"median", median,
 	)
 
-	// Convert to *big.Int result.
 	var result *big.Int
 	if median < 0 {
 		result = new(big.Int).Set(oracle.defaultPrice)
@@ -595,7 +768,6 @@ func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*bi
 		result = new(big.Int).SetInt64(int64(math.Round(median)))
 	}
 
-	// Clamp to [defaultPrice, maxPrice].
 	if result.Cmp(oracle.defaultPrice) < 0 {
 		log.Info("Fee estimator: clamping to minimum", "result", result, "floor", oracle.defaultPrice)
 		result = new(big.Int).Set(oracle.defaultPrice)
@@ -612,7 +784,6 @@ func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*bi
 		"pendingTracked", len(oracle.pendingTxs),
 	)
 
-	// Cache the result.
 	oracle.cacheLock.Lock()
 	oracle.cachedEstimates[confTarget] = new(big.Int).Set(result)
 	oracle.cacheLock.Unlock()
@@ -623,15 +794,44 @@ func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*bi
 	}, nil
 }
 
-// SuggestTipCap returns a tip cap so that newly created transaction can have a
-// very high chance to be included in the following blocks.
+//
+// =============================================================================
+// Public API (dispatches based on enableSmartFee flag)
+// =============================================================================
+//
+
+// SuggestTipCap returns a tip cap so that newly created transactions have a
+// high chance of being included in the next few blocks.
+//
+// When EnableSmartFeeEstimator is false (default), uses the legacy percentile
+// algorithm. When true, uses the Bitcoin Core-style smart fee estimator with
+// a 2-block confirmation target.
 func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
-	log.Info("Fee estimator: SuggestTipCap called (eth_gasPrice / eth_maxPriorityFeePerGas)")
-	estimate, _, err := oracle.EstimateSmartFee(ctx, 2)
+	if !oracle.enableSmartFee {
+		return oracle.suggestTipCapLegacy(ctx)
+	}
+	estimate, _, err := oracle.estimateSmartFeeBitcoin(ctx, 2)
 	if err != nil {
 		log.Error("Fee estimator: SuggestTipCap failed", "err", err)
 		return nil, err
 	}
-	log.Info("Fee estimator: SuggestTipCap result", "gasPrice", estimate)
 	return estimate, nil
+}
+
+// EstimateSmartFee returns a recommended gas price for a transaction to be
+// confirmed within confTarget blocks, along with metadata.
+//
+// When EnableSmartFeeEstimator is true, this uses the Bitcoin Core algorithm.
+// When false, the confTarget is ignored and the legacy percentile result is
+// returned (since the legacy algorithm has no concept of confirmation targets).
+func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *EstimateMeta, error) {
+	if oracle.enableSmartFee {
+		return oracle.estimateSmartFeeBitcoin(ctx, confTarget)
+	}
+	// Legacy mode: ignore confTarget, return the percentile-based suggestion.
+	tip, err := oracle.suggestTipCapLegacy(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tip, &EstimateMeta{}, nil
 }

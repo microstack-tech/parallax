@@ -148,6 +148,7 @@ var (
 		utils.GpoPercentileFlag,
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
+		utils.GpoEnableSmartFeeFlag,
 		utils.MinerNotifyFullFlag,
 		configFileFlag,
 	}, utils.NetworkFlags, utils.DatabasePathFlags)

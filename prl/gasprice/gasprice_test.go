@@ -157,11 +157,24 @@ func (b *testBackend) GetBlockByNumber(number uint64) *types.Block {
 	return b.chain.GetBlockByNumber(number)
 }
 
-// TestSuggestTipCapColdStart verifies that with no tracking data,
-// the oracle returns the default price.
-func TestSuggestTipCap(t *testing.T) {
+// smartFeeConfig returns a Config with the Bitcoin Core algorithm enabled.
+func smartFeeConfig() Config {
+	return Config{
+		Default:                 big.NewInt(params.GWei),
+		EnableSmartFeeEstimator: true,
+	}
+}
+
+// TestSuggestTipCapLegacy tests the legacy percentile-based oracle.
+// With Blocks=3, Percentile=60, the oracle's retry logic samples up to
+// 2*Blocks=6 blocks (each test block has 1 tx). Tips collected are
+// [27,28,29,30,31,32]; the 60th percentile is index 3 → 30G.
+func TestSuggestTipCapLegacy(t *testing.T) {
 	config := Config{
-		Default: big.NewInt(params.GWei),
+		Blocks:     3,
+		Percentile: 60,
+		Default:    big.NewInt(params.GWei),
+		// EnableSmartFeeEstimator defaults to false.
 	}
 	backend := newTestBackend(t, nil, false)
 	oracle := NewOracle(backend, nil, config)
@@ -171,19 +184,34 @@ func TestSuggestTipCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SuggestTipCap error: %v", err)
 	}
-	if got.Cmp(config.Default) != 0 {
-		t.Fatalf("Gas price mismatch, want %d, got %d", config.Default, got)
+	expected := big.NewInt(30 * params.GWei)
+	if got.Cmp(expected) != 0 {
+		t.Fatalf("Legacy SuggestTipCap mismatch, want %d, got %d", expected, got)
+	}
+}
+
+// TestSuggestTipCapSmartFeeColdStart tests smart fee cold start behavior.
+// With no confirmation data, it should return the configured default.
+func TestSuggestTipCapSmartFeeColdStart(t *testing.T) {
+	backend := newTestBackend(t, nil, false)
+	oracle := NewOracle(backend, nil, smartFeeConfig())
+	defer oracle.Close()
+
+	got, err := oracle.SuggestTipCap(context.Background())
+	if err != nil {
+		t.Fatalf("SuggestTipCap error: %v", err)
+	}
+	expected := big.NewInt(params.GWei)
+	if got.Cmp(expected) != 0 {
+		t.Fatalf("Smart fee cold start mismatch, want %d, got %d", expected, got)
 	}
 }
 
 // TestEstimateSmartFeeColdStart verifies cold start returns default for all targets.
 func TestEstimateSmartFeeColdStart(t *testing.T) {
 	defaultPrice := big.NewInt(params.GWei)
-	config := Config{
-		Default: defaultPrice,
-	}
 	backend := newTestBackend(t, nil, false)
-	oracle := NewOracle(backend, nil, config)
+	oracle := NewOracle(backend, nil, smartFeeConfig())
 	defer oracle.Close()
 
 	for _, target := range []int{2, 6, 12, 48, 100} {
@@ -202,8 +230,9 @@ func TestEstimateSmartFeeClamp(t *testing.T) {
 	defaultPrice := big.NewInt(5 * params.GWei)
 	maxPrice := big.NewInt(100 * params.GWei)
 	config := Config{
-		Default:  defaultPrice,
-		MaxPrice: maxPrice,
+		Default:                 defaultPrice,
+		MaxPrice:                maxPrice,
+		EnableSmartFeeEstimator: true,
 	}
 	backend := newTestBackend(t, nil, false)
 	oracle := NewOracle(backend, nil, config)
@@ -218,6 +247,38 @@ func TestEstimateSmartFeeClamp(t *testing.T) {
 	}
 	if got.Cmp(maxPrice) > 0 {
 		t.Errorf("Result %v exceeds max %v", got, maxPrice)
+	}
+}
+
+// TestEstimateSmartFeeFlagToggle verifies the flag selects the correct algorithm.
+// With smart fee disabled: legacy percentile of test backend (31 GWei).
+// With smart fee enabled: cold start default (1 GWei).
+func TestEstimateSmartFeeFlagToggle(t *testing.T) {
+	backend := newTestBackend(t, nil, false)
+
+	legacy := NewOracle(backend, nil, Config{
+		Blocks:     3,
+		Percentile: 60,
+		Default:    big.NewInt(params.GWei),
+	})
+	defer legacy.Close()
+
+	smart := NewOracle(backend, nil, Config{
+		Blocks:                  3,
+		Percentile:              60,
+		Default:                 big.NewInt(params.GWei),
+		EnableSmartFeeEstimator: true,
+	})
+	defer smart.Close()
+
+	legacyResult, _ := legacy.SuggestTipCap(context.Background())
+	smartResult, _ := smart.SuggestTipCap(context.Background())
+
+	if legacyResult.Cmp(big.NewInt(30*params.GWei)) != 0 {
+		t.Errorf("Legacy mode returned %v, want 30 GWei", legacyResult)
+	}
+	if smartResult.Cmp(big.NewInt(params.GWei)) != 0 {
+		t.Errorf("Smart fee cold start returned %v, want 1 GWei", smartResult)
 	}
 }
 
@@ -376,11 +437,8 @@ func TestTxConfirmStatsFailure(t *testing.T) {
 // process blocks that confirm them, then estimate fees.
 func TestProcessBlockAndEstimate(t *testing.T) {
 	defaultPrice := big.NewInt(params.GWei)
-	config := Config{
-		Default: defaultPrice,
-	}
 	backend := newTestBackend(t, nil, false)
-	oracle := NewOracle(backend, nil, config)
+	oracle := NewOracle(backend, nil, smartFeeConfig())
 	defer oracle.Close()
 
 	// Simulate: add txs to mempool at various fee levels, then confirm them.
@@ -452,11 +510,8 @@ func TestProcessBlockAndEstimate(t *testing.T) {
 
 // TestMaxUsableEstimate verifies that maxUsableEstimate limits based on block span.
 func TestMaxUsableEstimate(t *testing.T) {
-	config := Config{
-		Default: big.NewInt(params.GWei),
-	}
 	backend := newTestBackend(t, nil, false)
-	oracle := NewOracle(backend, nil, config)
+	oracle := NewOracle(backend, nil, smartFeeConfig())
 	defer oracle.Close()
 
 	// With no data, maxUsableEstimate should be 1.
@@ -484,11 +539,8 @@ func TestMaxUsableEstimate(t *testing.T) {
 
 // TestConfTargetClamping verifies target clamping behavior.
 func TestConfTargetClamping(t *testing.T) {
-	config := Config{
-		Default: big.NewInt(params.GWei),
-	}
 	backend := newTestBackend(t, nil, false)
-	oracle := NewOracle(backend, nil, config)
+	oracle := NewOracle(backend, nil, smartFeeConfig())
 	defer oracle.Close()
 
 	// Target 0 and 1 should both produce the same result (clamped to 2).
@@ -538,9 +590,10 @@ func TestThreeSubEstimates(t *testing.T) {
 // TestBucketGeneration verifies bucket generation with FEE_SPACING = 1.05.
 func TestBucketGeneration(t *testing.T) {
 	config := Config{
-		Default:      big.NewInt(params.GWei),
-		MinBucketFee: big.NewInt(params.GWei / 10),  // 0.1 GWei
-		MaxBucketFee: big.NewInt(500 * params.GWei),  // 500 GWei
+		Default:                 big.NewInt(params.GWei),
+		MinBucketFee:            big.NewInt(params.GWei / 10),  // 0.1 GWei
+		MaxBucketFee:            big.NewInt(500 * params.GWei), // 500 GWei
+		EnableSmartFeeEstimator: true,
 	}
 	backend := newTestBackend(t, nil, false)
 	oracle := NewOracle(backend, nil, config)
