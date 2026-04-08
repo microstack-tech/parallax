@@ -73,7 +73,7 @@ const (
 )
 
 var (
-	DefaultMaxPrice    = big.NewInt(500 * parampkg.GWei)
+	DefaultMaxPrice    = big.NewInt(1000 * parampkg.GWei)
 	DefaultIgnorePrice = big.NewInt(2 * parampkg.Wei)
 )
 
