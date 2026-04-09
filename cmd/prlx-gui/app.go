@@ -13,9 +13,6 @@ import (
 
 // App is the root struct bound to the Wails frontend. Every exported method
 // becomes a JS-callable function under window.go.main.App.*
-//
-// The MVP scope is intentionally narrow: run / manage / observe a Parallax
-// node. Wallet, mining and transaction features are out of scope.
 type App struct {
 	ctx context.Context
 
@@ -23,6 +20,7 @@ type App struct {
 	logs     *backend.LogTail
 	node     *backend.NodeController
 	metamask *backend.MetaMaskHelper
+	miner    *backend.MinerController
 }
 
 // NewApp constructs the App. The heavy lifting (loading config, attaching the
@@ -64,9 +62,17 @@ func (a *App) startup(ctx context.Context) {
 	if err := a.metamask.Start(); err != nil {
 		wruntime.LogErrorf(ctx, "metamask helper: %v", err)
 	}
+
+	a.miner = backend.NewMinerController(cfg, a.node)
+	a.miner.SetEmitter(func(evt backend.MinerEvent) {
+		wruntime.EventsEmit(ctx, "miner", evt)
+	})
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if a.miner != nil {
+		_ = a.miner.Stop()
+	}
 	if a.metamask != nil {
 		_ = a.metamask.Stop()
 	}
@@ -134,6 +140,25 @@ func (a *App) GetLogTail(n int) []backend.LogLine { return a.logs.Tail(n) }
 // SetLogVerbosity changes the active log level (0 = silent, 3 = info,
 // 5 = trace).
 func (a *App) SetLogVerbosity(level int) { a.logs.SetVerbosity(level) }
+
+// ---------------------------------------------------------------------------
+// Mining
+// ---------------------------------------------------------------------------
+
+func (a *App) StartMining(mode string) error              { return a.miner.Start(a.ctx, mode) }
+func (a *App) StopMining() error                          { return a.miner.Stop() }
+func (a *App) MinerStatus() backend.MinerStatus           { return a.miner.Status() }
+func (a *App) DetectGPUs() ([]backend.DeviceInfo, error)  { return a.miner.DetectGPUs() }
+func (a *App) DefaultPools() []backend.PoolInfo           { return a.miner.DefaultPools() }
+func (a *App) HashwarpInstalled() bool { return a.miner.HashwarpInstalled() }
+func (a *App) InstallHashwarp(gpuType string) error {
+	return a.miner.InstallHashwarp(gpuType, func(step, detail string) {
+		wruntime.EventsEmit(a.ctx, "hashwarp-install", map[string]string{
+			"step":   step,
+			"detail": detail,
+		})
+	})
+}
 
 // ---------------------------------------------------------------------------
 // Misc

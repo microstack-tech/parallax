@@ -48,6 +48,13 @@ export type GUIConfig = {
   trieCleanCacheMB: number;
   trieDirtyCacheMB: number;
   snapshotCacheMB: number;
+  // Mining
+  miningWallet: string;
+  miningWorker: string;
+  miningPool: string;
+  miningThreads: number;
+  miningDevices: number[];
+  customPools: PoolInfo[];
 };
 
 export type NodeStatus = {
@@ -111,6 +118,62 @@ export type TxView = {
   kind: "transfer" | "contract" | "call";
 };
 
+// ---------------------------------------------------------------------------
+// Mining
+// ---------------------------------------------------------------------------
+
+export type MiningMode = "off" | "pool" | "sologpu" | "solo";
+
+export type PoolInfo = {
+  name: string;
+  url: string;
+  region: string;
+  builtin: boolean;
+};
+
+export type DeviceInfo = {
+  index: number;
+  pciId: string;
+  type: string;
+  name: string;
+  memory: string;
+  cuda: boolean;
+  openCl: boolean;
+};
+
+export type GPUDeviceStatus = {
+  index: number;
+  name: string;
+  mode: string;
+  hashrate: number;
+  tempC: number;
+  fanPct: number;
+  powerW: number;
+  paused: boolean;
+  accepted: number;
+  rejected: number;
+  failed: number;
+};
+
+export type MinerStatus = {
+  mode: MiningMode;
+  running: boolean;
+  hashrate: number;
+  uptimeSeconds: number;
+  poolConnected: boolean;
+  poolUri: string;
+  sharesAccepted: number;
+  sharesRejected: number;
+  sharesFailed: number;
+  secsSinceLastShare: number;
+  epoch: number;
+  generatingDag: boolean;
+  devices: GPUDeviceStatus[];
+  soloDifficulty: string;
+  soloBlocksFound: number;
+  error: string;
+};
+
 export const api = {
   bootstrapNeeded: () => call<boolean>("BootstrapNeeded"),
   saveBootstrap: (cfg: GUIConfig) => call<void>("SaveBootstrap", cfg),
@@ -128,6 +191,15 @@ export const api = {
   setLogVerbosity: (n: number) => call<void>("SetLogVerbosity", n),
 
   metaMaskHelperURL: () => call<string>("MetaMaskHelperURL"),
+
+  // Mining
+  startMining: (mode: MiningMode) => call<void>("StartMining", mode),
+  stopMining: () => call<void>("StopMining"),
+  minerStatus: () => call<MinerStatus>("MinerStatus"),
+  detectGPUs: () => call<DeviceInfo[]>("DetectGPUs"),
+  defaultPools: () => call<PoolInfo[]>("DefaultPools"),
+  hashwarpInstalled: () => call<boolean>("HashwarpInstalled"),
+  installHashwarp: (gpuType: "cuda" | "opencl") => call<void>("InstallHashwarp", gpuType),
 
   version: () => call<string>("Version"),
   clientVersion: () => call<string>("ClientVersion"),

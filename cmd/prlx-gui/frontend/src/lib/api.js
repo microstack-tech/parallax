@@ -34,6 +34,14 @@ export const api = {
     getLogTail: (n) => call("GetLogTail", n),
     setLogVerbosity: (n) => call("SetLogVerbosity", n),
     metaMaskHelperURL: () => call("MetaMaskHelperURL"),
+    // Mining
+    startMining: (mode) => call("StartMining", mode),
+    stopMining: () => call("StopMining"),
+    minerStatus: () => call("MinerStatus"),
+    detectGPUs: () => call("DetectGPUs"),
+    defaultPools: () => call("DefaultPools"),
+    hashwarpInstalled: () => call("HashwarpInstalled"),
+    installHashwarp: (gpuType) => call("InstallHashwarp", gpuType),
     version: () => call("Version"),
     clientVersion: () => call("ClientVersion"),
 };

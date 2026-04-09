@@ -5,6 +5,7 @@ import { api } from "./lib/api";
 import Dashboard from "./pages/Dashboard";
 import Connect from "./pages/Connect";
 import Peers from "./pages/Peers";
+import Mining from "./pages/Mining";
 import Settings from "./pages/Settings";
 import Logs from "./pages/Logs";
 import Onboarding from "./pages/Onboarding";
@@ -83,6 +84,7 @@ function RoutedContent() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/connect" element={<Connect />} />
             <Route path="/peers" element={<Peers />} />
+            <Route path="/mining" element={<Mining />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
@@ -122,6 +124,7 @@ function TopBar() {
           <TopLink to="/">Client</TopLink>
           <TopLink to="/connect">Connect</TopLink>
           <TopLink to="/peers">Peers</TopLink>
+          <TopLink to="/mining">Mining</TopLink>
           <TopLink to="/settings">Settings</TopLink>
         </nav>
 

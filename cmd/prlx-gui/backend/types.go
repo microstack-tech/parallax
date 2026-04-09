@@ -36,6 +36,14 @@ type GUIConfig struct {
 	TrieCleanCacheMB int `json:"trieCleanCacheMB"`
 	TrieDirtyCacheMB int `json:"trieDirtyCacheMB"`
 	SnapshotCacheMB  int `json:"snapshotCacheMB"`
+
+	// Mining
+	MiningWallet  string     `json:"miningWallet"`  // 0x... reward address
+	MiningWorker  string     `json:"miningWorker"`  // worker name (defaults to hostname)
+	MiningPool    string     `json:"miningPool"`    // selected pool URL
+	MiningThreads int        `json:"miningThreads"` // CPU threads for solo mode (0 = auto)
+	MiningDevices []int      `json:"miningDevices"` // GPU device indices (nil = all)
+	CustomPools   []PoolInfo `json:"customPools"`   // user-added pool entries
 }
 
 // NodeStatus is the high-level snapshot the dashboard polls.
@@ -113,4 +121,76 @@ type BlockView struct {
 	Coinbase   string `json:"coinbase"`
 	RewardWei  string `json:"rewardWei"` // base subsidy for this height
 	Difficulty string `json:"difficulty"`
+}
+
+// ---------------------------------------------------------------------------
+// Mining
+// ---------------------------------------------------------------------------
+
+// PoolInfo describes one mining pool endpoint.
+type PoolInfo struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`     // stratum+tcp://host:port
+	Region  string `json:"region"`  // "US", "EU", "Asia", etc.
+	Builtin bool   `json:"builtin"` // true = shipped with app
+}
+
+// DeviceInfo describes one GPU detected by hashwarp --list-devices.
+type DeviceInfo struct {
+	Index  int    `json:"index"`
+	PciID  string `json:"pciId"`  // "01:00.0"
+	Type   string `json:"type"`   // "Gpu" | "Cpu" | "Acc"
+	Name   string `json:"name"`
+	Memory string `json:"memory"` // "8.00 GB"
+	CUDA   bool   `json:"cuda"`
+	OpenCL bool   `json:"openCl"`
+}
+
+// GPUDeviceStatus is per-device live stats from hashwarp API.
+type GPUDeviceStatus struct {
+	Index    int     `json:"index"`
+	Name     string  `json:"name"`
+	Mode     string  `json:"mode"` // "CUDA" | "OpenCL"
+	Hashrate float64 `json:"hashrate"`
+	TempC    int     `json:"tempC"`
+	FanPct   int     `json:"fanPct"`
+	PowerW   float64 `json:"powerW"`
+	Paused   bool    `json:"paused"`
+	Accepted uint64  `json:"accepted"`
+	Rejected uint64  `json:"rejected"`
+	Failed   uint64  `json:"failed"`
+}
+
+// MinerStatus is the unified snapshot polled by Mining.tsx every 2s.
+type MinerStatus struct {
+	Mode    string `json:"mode"`    // "off" | "pool" | "solo"
+	Running bool   `json:"running"`
+
+	// Aggregate
+	Hashrate      float64 `json:"hashrate"` // H/s
+	UptimeSeconds int64   `json:"uptimeSeconds"`
+
+	// Pool mode (GPU via hashwarp)
+	PoolConnected      bool              `json:"poolConnected"`
+	PoolURI            string            `json:"poolUri"`
+	SharesAccepted     uint64            `json:"sharesAccepted"`
+	SharesRejected     uint64            `json:"sharesRejected"`
+	SharesFailed       uint64            `json:"sharesFailed"`
+	SecsSinceLastShare uint64            `json:"secsSinceLastShare"`
+	Epoch              int               `json:"epoch"`
+	GeneratingDAG      bool              `json:"generatingDag"`
+	Devices            []GPUDeviceStatus `json:"devices"`
+
+	// Solo mode (CPU via embedded node)
+	SoloDifficulty  string `json:"soloDifficulty"`
+	SoloBlocksFound uint64 `json:"soloBlocksFound"`
+
+	// Error surfaced to UI
+	Error string `json:"error,omitempty"`
+}
+
+// MinerEvent is broadcast over the "miner" Wails event channel.
+type MinerEvent struct {
+	Kind    string      `json:"kind"` // "started" | "stopped" | "error" | "dag" | "stats"
+	Payload interface{} `json:"payload,omitempty"`
 }
