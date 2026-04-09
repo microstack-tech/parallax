@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: prlx prlx-gui prlx-gui-cross prlx-gui-package android ios pvm all test clean devtools lint cross package darwin-universal release
+.PHONY: prlx android ios pvm all test clean devtools lint cross package darwin-universal release
 
 GOBIN      = ./build/bin
 GO        ?= latest
@@ -17,102 +17,6 @@ prlx:
 	$(GORUN) build/ci.go install ./cmd/prlx
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/prlx\" to launch parallax."
-
-# Build tags applied to every Parallax Desktop build:
-#
-#   * embedfrontend — compiles the real go:embed of frontend/dist (see
-#     cmd/prlx-gui/embed.go). Without this tag the build falls back to an
-#     empty embed.FS stub so plain `go test ./...` from CI doesn't fail
-#     on a fresh checkout where frontend/dist hasn't been populated yet.
-#   * webkit2_41   — selects the modern WebKit2GTK ABI on Linux. Wails
-#     2.x defaults to 4.0 but Arch and recent Debian/Ubuntu only ship
-#     4.1. Harmless on macOS / Windows.
-#
-# Override with `make prlx-gui WAILS_TAGS=` to opt out of either.
-WAILS_TAGS ?= embedfrontend webkit2_41
-
-# Wails generates JS bindings BEFORE running `npm run build`, and the
-# binding generator compiles every Go file in the package — including
-# embed.go's `//go:embed all:frontend/dist`. On a fresh checkout (or
-# after `make clean`) frontend/dist is empty and the embed directive
-# errors out before vite ever gets a chance to populate it. Touching a
-# placeholder file satisfies the embed pattern for the binding step;
-# vite then wipes the dir and writes the real assets in time for the
-# final Go compile.
-GUI_DIST_PLACEHOLDER := cmd/prlx-gui/frontend/dist/.gitkeep
-
-$(GUI_DIST_PLACEHOLDER):
-	@mkdir -p $(dir $@)
-	@touch $@
-
-prlx-gui: $(GUI_DIST_PLACEHOLDER)
-	@command -v wails >/dev/null 2>&1 || { \
-	  echo "wails CLI not found. Install with:"; \
-	  echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"; \
-	  exit 1; \
-	}
-	cd cmd/prlx-gui && wails build -clean -tags "$(WAILS_TAGS)" -ldflags "$(LDFLAGS)"
-	@echo "Done building Parallax Desktop."
-	@echo "Binary in cmd/prlx-gui/build/bin/"
-
-prlx-gui-cross: $(GUI_DIST_PLACEHOLDER)
-	@command -v wails >/dev/null 2>&1 || { \
-	  echo "wails CLI not found. Install with:"; \
-	  echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"; \
-	  exit 1; \
-	}
-	cd cmd/prlx-gui && wails build -clean -tags "$(WAILS_TAGS)" -platform linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64 -ldflags "$(LDFLAGS)"
-	@echo "Done cross-building Parallax Desktop."
-
-# prlx-gui-package builds the desktop GUI for every entry in GUI_TARGETS
-# and writes one parallax-gui-<os>-<arch>.{zip,tar.gz} per target into
-# PACKAGEDIR. Wails GUI cross-compilation is best-effort: building for
-# darwin/* from a non-mac host requires osxcross, building for windows/*
-# from a non-windows host requires mingw-w64, etc. When the toolchain is
-# missing the per-target build prints a warning and the loop continues so
-# the rest of the bundles still get produced.
-GUI_TARGETS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
-
-prlx-gui-package:
-	@command -v wails >/dev/null 2>&1 || { \
-	  echo "wails CLI not found. Install with:"; \
-	  echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"; \
-	  exit 1; \
-	}
-	@set -euo pipefail; \
-	REPO_ROOT="$(REPO_ROOT)"; \
-	PACKAGEDIR="$(PACKAGEDIR)"; \
-	GUI_BIN="$$REPO_ROOT/cmd/prlx-gui/build/bin"; \
-	mkdir -p "$$PACKAGEDIR"; \
-	for t in $(GUI_TARGETS); do \
-	  os="$${t%/*}"; \
-	  arch="$${t#*/}"; \
-	  echo "==> wails build for $$os/$$arch"; \
-	  rm -rf "$$GUI_BIN"; \
-	  mkdir -p "$$REPO_ROOT/cmd/prlx-gui/frontend/dist"; \
-	  touch  "$$REPO_ROOT/cmd/prlx-gui/frontend/dist/.gitkeep"; \
-	  if ! ( cd "$$REPO_ROOT/cmd/prlx-gui" && wails build -clean -tags "$(WAILS_TAGS)" -platform "$$t" -ldflags "$(LDFLAGS)" ); then \
-	    echo "   !! skipped $$os/$$arch (wails build failed — usually missing native toolchain)"; \
-	    continue; \
-	  fi; \
-	  if [ ! -d "$$GUI_BIN" ] || [ -z "$$(ls -A "$$GUI_BIN" 2>/dev/null)" ]; then \
-	    echo "   !! skipped $$os/$$arch (no output in build/bin)"; \
-	    continue; \
-	  fi; \
-	  bundle="parallax-gui-$$os-$$arch"; \
-	  out="$$PACKAGEDIR/$$bundle.zip"; \
-	  rm -f "$$out"; \
-	  ( cd "$$GUI_BIN" && zip -9 -r "$$out" . >/dev/null ); \
-	  echo "-> Packaged $$(basename "$$out")"; \
-	done; \
-	if ls "$$PACKAGEDIR"/parallax-gui-*.zip >/dev/null 2>&1; then \
-	  if command -v shasum >/dev/null 2>&1; then \
-	    ( cd "$$PACKAGEDIR" && shasum -a 256 parallax-gui-*.zip >> SHA256SUMS.txt ); \
-	  else \
-	    ( cd "$$PACKAGEDIR" && sha256sum parallax-gui-*.zip >> SHA256SUMS.txt ); \
-	  fi; \
-	fi; \
-	echo "GUI bundles in $$PACKAGEDIR/"
 
 all:
 	$(GORUN) build/ci.go install
@@ -239,5 +143,3 @@ release:
 	$(MAKE) package
 	@echo
 	@echo "CLI bundles in $(PACKAGEDIR)/"
-	@echo "Note: the desktop GUI is built and packaged by .github/workflows/release.yml"
-	@echo "      (run \`make prlx-gui-package\` locally if you want to build it by hand)."
