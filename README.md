@@ -42,7 +42,6 @@ Binaries are located under `build/bin`:
 | `clef`         | Stand-alone signer for secure account operations. |
 | `devp2p`       | Networking utilities to inspect and interact at the P2P layer. |
 | `abigen`       | Generates type-safe Go bindings from contract ABIs. |
-| `bootnode`     | Lightweight discovery node to bootstrap networks. |
 | `pvm`          | Execute and debug PVM bytecode snippets in isolation. |
 | `rlpdump`      | Decode RLP structures into a human-readable form. |
 
