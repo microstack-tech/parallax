@@ -18,7 +18,7 @@ Reference Golang implementation of the **Parallax protocol**.
 
 ## Building from Source
 
-Parallax requires **Go 1.25+** and a C compiler.
+Parallax requires **Go 1.26+** and a C compiler.
 
 ```bash
 make prlx

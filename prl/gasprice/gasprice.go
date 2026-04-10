@@ -117,9 +117,9 @@ type TxPoolAccessor interface {
 
 // EstimateMeta contains metadata about a fee estimation result.
 type EstimateMeta struct {
-	DataBlocks      int     // approximate number of blocks of data used
-	SuccessRate     float64 // estimated confirmation probability at the returned fee
-	LegacyFallback  bool    // true if the smart fee estimator had insufficient data and the result came from the legacy percentile oracle
+	DataBlocks     int     // approximate number of blocks of data used
+	SuccessRate    float64 // estimated confirmation probability at the returned fee
+	LegacyFallback bool    // true if the smart fee estimator had insufficient data and the result came from the legacy percentile oracle
 }
 
 // txStatsInfo records mempool entry info for a tracked transaction
