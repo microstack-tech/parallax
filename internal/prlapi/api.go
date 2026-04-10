@@ -82,22 +82,26 @@ func (s *PublicParallaxAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.
 
 // SmartFeeResult represents the result of a smart fee estimation.
 type SmartFeeResult struct {
-	GasPrice    *hexutil.Big `json:"gasPrice"`
-	ConfTarget  int          `json:"confTarget"`
-	SuccessRate float64      `json:"successRate"`
+	GasPrice       *hexutil.Big `json:"gasPrice"`
+	ConfTarget     int          `json:"confTarget"`
+	SuccessRate    float64      `json:"successRate"`
+	LegacyFallback bool         `json:"legacyFallback"` // true if the smart fee estimator had insufficient data and fell back to the legacy percentile oracle
 }
 
 // EstimateSmartFee returns a gas price recommendation for a transaction to be
 // confirmed within confTarget blocks, using a Bitcoin Core-style fee estimation algorithm.
+// If the smart fee estimator has insufficient data (cold start or sparse traffic), the
+// result is sourced from the legacy percentile oracle and LegacyFallback is set to true.
 func (s *PublicParallaxAPI) EstimateSmartFee(ctx context.Context, confTarget int) (*SmartFeeResult, error) {
 	gasPrice, meta, err := s.b.EstimateSmartFee(ctx, confTarget)
 	if err != nil {
 		return nil, err
 	}
 	return &SmartFeeResult{
-		GasPrice:    (*hexutil.Big)(gasPrice),
-		ConfTarget:  confTarget,
-		SuccessRate: meta.SuccessRate,
+		GasPrice:       (*hexutil.Big)(gasPrice),
+		ConfTarget:     confTarget,
+		SuccessRate:    meta.SuccessRate,
+		LegacyFallback: meta.LegacyFallback,
 	}, nil
 }
 

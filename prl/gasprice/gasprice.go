@@ -117,8 +117,9 @@ type TxPoolAccessor interface {
 
 // EstimateMeta contains metadata about a fee estimation result.
 type EstimateMeta struct {
-	DataBlocks  int     // approximate number of blocks of data used
-	SuccessRate float64 // estimated confirmation probability at the returned fee
+	DataBlocks      int     // approximate number of blocks of data used
+	SuccessRate     float64 // estimated confirmation probability at the returned fee
+	LegacyFallback  bool    // true if the smart fee estimator had insufficient data and the result came from the legacy percentile oracle
 }
 
 // txStatsInfo records mempool entry info for a tracked transaction
@@ -728,8 +729,8 @@ func (oracle *Oracle) estimateSmartFeeBitcoin(ctx context.Context, confTarget in
 	}
 
 	if confTarget <= 1 {
-		log.Info("Fee estimator: insufficient data, returning default", "default", oracle.defaultPrice)
-		return new(big.Int).Set(oracle.defaultPrice), &EstimateMeta{}, nil
+		log.Info("Fee estimator: insufficient data (confTarget clamped to ≤1)", "default", oracle.defaultPrice)
+		return new(big.Int).Set(oracle.defaultPrice), &EstimateMeta{LegacyFallback: true}, nil
 	}
 
 	median := float64(-1)
@@ -760,13 +761,16 @@ func (oracle *Oracle) estimateSmartFeeBitcoin(ctx context.Context, confTarget in
 		"median", median,
 	)
 
-	var result *big.Int
+	// If all four sub-estimates returned -1, we have no data. Signal the
+	// caller via LegacyFallback so it can substitute the legacy percentile
+	// oracle result. Don't cache fallback results — the next call should
+	// recompute once smart fee has accumulated data.
 	if median < 0 {
-		result = new(big.Int).Set(oracle.defaultPrice)
-		log.Info("Fee estimator: no estimate available, using default", "default", oracle.defaultPrice)
-	} else {
-		result = new(big.Int).SetInt64(int64(math.Round(median)))
+		log.Info("Fee estimator: no estimate available, signaling legacy fallback", "default", oracle.defaultPrice)
+		return new(big.Int).Set(oracle.defaultPrice), &EstimateMeta{LegacyFallback: true}, nil
 	}
+
+	result := new(big.Int).SetInt64(int64(math.Round(median)))
 
 	if result.Cmp(oracle.defaultPrice) < 0 {
 		log.Info("Fee estimator: clamping to minimum", "result", result, "floor", oracle.defaultPrice)
@@ -803,17 +807,27 @@ func (oracle *Oracle) estimateSmartFeeBitcoin(ctx context.Context, confTarget in
 // SuggestTipCap returns a tip cap so that newly created transactions have a
 // high chance of being included in the next few blocks.
 //
-// When EnableSmartFeeEstimator is false (default), uses the legacy percentile
-// algorithm. When true, uses the Bitcoin Core-style smart fee estimator with
-// a 2-block confirmation target.
+// When EnableSmartFeeEstimator is false, uses the legacy percentile algorithm.
+// When true, uses the Bitcoin Core-style smart fee estimator with a 2-block
+// confirmation target. If the smart fee estimator has insufficient data (cold
+// start or sparse traffic), it automatically falls back to the legacy
+// percentile oracle for a market-aware answer rather than returning the
+// configured minimum.
 func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	if !oracle.enableSmartFee {
 		return oracle.suggestTipCapLegacy(ctx)
 	}
-	estimate, _, err := oracle.estimateSmartFeeBitcoin(ctx, 2)
+	estimate, meta, err := oracle.estimateSmartFeeBitcoin(ctx, 2)
 	if err != nil {
 		log.Error("Fee estimator: SuggestTipCap failed", "err", err)
 		return nil, err
+	}
+	if meta.LegacyFallback {
+		log.Info("Fee estimator: smart fee has no data, falling back to legacy oracle")
+		if legacyEstimate, legacyErr := oracle.suggestTipCapLegacy(ctx); legacyErr == nil {
+			return legacyEstimate, nil
+		}
+		// Legacy also failed; return the smart fee default as last resort.
 	}
 	return estimate, nil
 }
@@ -822,11 +836,24 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 // confirmed within confTarget blocks, along with metadata.
 //
 // When EnableSmartFeeEstimator is true, this uses the Bitcoin Core algorithm.
-// When false, the confTarget is ignored and the legacy percentile result is
-// returned (since the legacy algorithm has no concept of confirmation targets).
+// If the smart fee estimator has insufficient data, it falls back to the
+// legacy percentile oracle and sets EstimateMeta.LegacyFallback = true.
+// When EnableSmartFeeEstimator is false, the confTarget is ignored and the
+// legacy percentile result is returned.
 func (oracle *Oracle) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *EstimateMeta, error) {
 	if oracle.enableSmartFee {
-		return oracle.estimateSmartFeeBitcoin(ctx, confTarget)
+		estimate, meta, err := oracle.estimateSmartFeeBitcoin(ctx, confTarget)
+		if err != nil {
+			return nil, nil, err
+		}
+		if meta.LegacyFallback {
+			log.Info("Fee estimator: smart fee has no data, falling back to legacy oracle", "confTarget", confTarget)
+			if legacyEstimate, legacyErr := oracle.suggestTipCapLegacy(ctx); legacyErr == nil {
+				return legacyEstimate, &EstimateMeta{LegacyFallback: true}, nil
+			}
+			// Legacy also failed; return the smart fee default as last resort.
+		}
+		return estimate, meta, nil
 	}
 	// Legacy mode: ignore confTarget, return the percentile-based suggestion.
 	tip, err := oracle.suggestTipCapLegacy(ctx)

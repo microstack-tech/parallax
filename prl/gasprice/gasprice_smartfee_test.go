@@ -784,3 +784,127 @@ func TestPolicyEstimatorPipelineReorgIgnored(t *testing.T) {
 		t.Errorf("nBestSeenHeight = %d after new block, want 6", o.nBestSeenHeight)
 	}
 }
+
+// =============================================================================
+// Legacy fallback tests
+// =============================================================================
+
+// TestLegacyFallbackOnColdStart verifies that EstimateSmartFee falls back to
+// the legacy percentile oracle when the smart fee estimator has no data (cold
+// start). The result should be a market-aware value from block history, not
+// the configured minimum, and EstimateMeta.LegacyFallback must be true.
+func TestLegacyFallbackOnColdStart(t *testing.T) {
+	backend := newTestBackend(t, nil, false)
+	config := Config{
+		Blocks:                  3,
+		Percentile:              60,
+		Default:                 big.NewInt(1), // very low floor
+		MaxPrice:                big.NewInt(100 * btcBasefee),
+		EnableSmartFeeEstimator: true,
+	}
+	oracle := NewOracle(backend, nil, config)
+	defer oracle.Close()
+
+	// EstimateSmartFee on cold start: smart fee has no data → fallback.
+	got, meta, err := oracle.EstimateSmartFee(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("EstimateSmartFee error: %v", err)
+	}
+	if !meta.LegacyFallback {
+		t.Error("EstimateMeta.LegacyFallback = false on cold start, want true")
+	}
+	// The test backend has txs at 1..32 GWei. The legacy oracle with
+	// Blocks=3, Percentile=60 returns ~30 GWei — far above the 1 wei floor.
+	floor := big.NewInt(1)
+	if got.Cmp(floor) <= 0 {
+		t.Errorf("Cold start fallback returned %v, want > %v (should be market-aware)", got, floor)
+	}
+
+	// SuggestTipCap should also fall back.
+	tip, err := oracle.SuggestTipCap(context.Background())
+	if err != nil {
+		t.Fatalf("SuggestTipCap error: %v", err)
+	}
+	if tip.Cmp(floor) <= 0 {
+		t.Errorf("SuggestTipCap cold start returned %v, want > %v", tip, floor)
+	}
+}
+
+// TestNoFallbackWithSufficientData verifies that once the smart fee estimator
+// has accumulated enough data, the fallback does NOT fire — the result comes
+// from the smart fee algorithm with LegacyFallback = false.
+func TestNoFallbackWithSufficientData(t *testing.T) {
+	sim := newSimState(t, btcNumTiers)
+	defer sim.close()
+	o := sim.oracle
+
+	feeV := make([]float64, btcNumTiers)
+	for j := 0; j < btcNumTiers; j++ {
+		feeV[j] = float64(btcBasefee * int64(j+1))
+	}
+
+	// Run 200 blocks of Phase-1 mixed-rate confirmation to populate data.
+	for o.nBestSeenHeight < 200 {
+		for j := 0; j < btcNumTiers; j++ {
+			for k := 0; k < 4; k++ {
+				sim.addTx(j, feeV[j])
+			}
+		}
+		blocknum := o.nBestSeenHeight
+		var block []simTx
+		for h := 0; h <= int(blocknum%10); h++ {
+			block = append(block, sim.drainTier(9-h)...)
+		}
+		sim.mineBlock(block)
+	}
+
+	// With 200 blocks of data, smart fee should produce a real estimate.
+	got, meta, err := o.EstimateSmartFee(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("EstimateSmartFee error: %v", err)
+	}
+	if meta.LegacyFallback {
+		t.Error("EstimateMeta.LegacyFallback = true with 200 blocks of data, want false")
+	}
+	// The estimate should be a real value (well above the 1 wei default).
+	if got.Cmp(big.NewInt(1)) <= 0 {
+		t.Errorf("EstimateSmartFee(2) = %v with full data, want a real estimate", got)
+	}
+}
+
+// TestLegacyFallbackMatchesLegacyOracle verifies that when the fallback fires,
+// the returned value matches what a pure legacy oracle would return for the
+// same backend and config — i.e. the fallback is a real legacy computation,
+// not a stale or default value.
+func TestLegacyFallbackMatchesLegacyOracle(t *testing.T) {
+	backend := newTestBackend(t, nil, false)
+	config := Config{
+		Blocks:     3,
+		Percentile: 60,
+		Default:    big.NewInt(1),
+	}
+
+	// Create a pure legacy oracle.
+	legacyOracle := NewOracle(backend, nil, config)
+	defer legacyOracle.Close()
+	legacyTip, err := legacyOracle.SuggestTipCap(context.Background())
+	if err != nil {
+		t.Fatalf("legacy SuggestTipCap error: %v", err)
+	}
+
+	// Create a smart fee oracle with the same config.
+	smartConfig := config
+	smartConfig.EnableSmartFeeEstimator = true
+	smartOracle := NewOracle(backend, nil, smartConfig)
+	defer smartOracle.Close()
+	smartTip, err := smartOracle.SuggestTipCap(context.Background())
+	if err != nil {
+		t.Fatalf("smart SuggestTipCap error: %v", err)
+	}
+
+	// On cold start, the smart oracle should fall back to legacy and produce
+	// the same result.
+	if smartTip.Cmp(legacyTip) != 0 {
+		t.Errorf("Smart fee fallback = %v, legacy oracle = %v — should match", smartTip, legacyTip)
+	}
+}

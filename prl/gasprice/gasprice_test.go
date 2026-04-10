@@ -191,7 +191,9 @@ func TestSuggestTipCapLegacy(t *testing.T) {
 }
 
 // TestSuggestTipCapSmartFeeColdStart tests smart fee cold start behavior.
-// With no confirmation data, it should return the configured default.
+// With no confirmation data, the smart fee estimator falls back to the legacy
+// percentile oracle. The result should be a market-aware value (from the test
+// backend's block history), not the configured minimum.
 func TestSuggestTipCapSmartFeeColdStart(t *testing.T) {
 	backend := newTestBackend(t, nil, false)
 	oracle := NewOracle(backend, nil, smartFeeConfig())
@@ -201,13 +203,14 @@ func TestSuggestTipCapSmartFeeColdStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SuggestTipCap error: %v", err)
 	}
-	expected := big.NewInt(params.GWei)
-	if got.Cmp(expected) != 0 {
-		t.Fatalf("Smart fee cold start mismatch, want %d, got %d", expected, got)
+	defaultPrice := big.NewInt(params.GWei)
+	if got.Cmp(defaultPrice) <= 0 {
+		t.Fatalf("Smart fee cold start should fall back to legacy (got %v, want > %v)", got, defaultPrice)
 	}
 }
 
-// TestEstimateSmartFeeColdStart verifies cold start returns default for all targets.
+// TestEstimateSmartFeeColdStart verifies cold start falls back to legacy oracle
+// and reports LegacyFallback in the metadata.
 func TestEstimateSmartFeeColdStart(t *testing.T) {
 	defaultPrice := big.NewInt(params.GWei)
 	backend := newTestBackend(t, nil, false)
@@ -215,12 +218,15 @@ func TestEstimateSmartFeeColdStart(t *testing.T) {
 	defer oracle.Close()
 
 	for _, target := range []int{2, 6, 12, 48, 100} {
-		got, _, err := oracle.EstimateSmartFee(context.Background(), target)
+		got, meta, err := oracle.EstimateSmartFee(context.Background(), target)
 		if err != nil {
 			t.Fatalf("EstimateSmartFee(%d) error: %v", target, err)
 		}
-		if got.Cmp(defaultPrice) != 0 {
-			t.Errorf("EstimateSmartFee(%d) = %v, want %v (cold start)", target, got, defaultPrice)
+		if got.Cmp(defaultPrice) <= 0 {
+			t.Errorf("EstimateSmartFee(%d) = %v, want > %v (should fall back to legacy)", target, got, defaultPrice)
+		}
+		if !meta.LegacyFallback {
+			t.Errorf("EstimateSmartFee(%d) meta.LegacyFallback = false, want true (cold start)", target)
 		}
 	}
 }
@@ -251,8 +257,8 @@ func TestEstimateSmartFeeClamp(t *testing.T) {
 }
 
 // TestEstimateSmartFeeFlagToggle verifies the flag selects the correct algorithm.
-// With smart fee disabled: legacy percentile of test backend (31 GWei).
-// With smart fee enabled: cold start default (1 GWei).
+// With smart fee disabled: legacy percentile of test backend (30 GWei).
+// With smart fee enabled but no data: falls back to legacy, same result.
 func TestEstimateSmartFeeFlagToggle(t *testing.T) {
 	backend := newTestBackend(t, nil, false)
 
@@ -277,8 +283,10 @@ func TestEstimateSmartFeeFlagToggle(t *testing.T) {
 	if legacyResult.Cmp(big.NewInt(30*params.GWei)) != 0 {
 		t.Errorf("Legacy mode returned %v, want 30 GWei", legacyResult)
 	}
-	if smartResult.Cmp(big.NewInt(params.GWei)) != 0 {
-		t.Errorf("Smart fee cold start returned %v, want 1 GWei", smartResult)
+	// With no smart fee data, the fallback should produce the same result
+	// as the legacy oracle since both use the same backend and config.
+	if smartResult.Cmp(legacyResult) != 0 {
+		t.Errorf("Smart fee cold start returned %v, want %v (same as legacy fallback)", smartResult, legacyResult)
 	}
 }
 
