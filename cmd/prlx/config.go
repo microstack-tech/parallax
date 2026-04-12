@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -26,18 +26,18 @@ import (
 
 	"gopkg.in/urfave/cli.v1"
 
-	"github.com/ParallaxProtocol/parallax/accounts/external"
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
-	"github.com/ParallaxProtocol/parallax/accounts/scwallet"
-	"github.com/ParallaxProtocol/parallax/accounts/usbwallet"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/internal/prlapi"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/internal/api"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prl/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/wallet/external"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/wallet/scwallet"
+	"github.com/ParallaxProtocol/parallax/wallet/usbwallet"
 	"github.com/naoina/toml"
 )
 
@@ -69,7 +69,7 @@ var tomlSettings = toml.Config{
 	MissingField: func(rt reflect.Type, field string) error {
 		id := fmt.Sprintf("%s.%s", rt.String(), field)
 		if deprecated(id) {
-			log.Warn("Config field is deprecated and won't have an effect", "name", id)
+			logging.Warn("Config field is deprecated and won't have an effect", "name", id)
 			return nil
 		}
 		var link string
@@ -109,7 +109,7 @@ func loadConfig(file string, cfg *prlxConfig) error {
 func defaultNodeConfig() node.Config {
 	cfg := node.DefaultConfig
 	cfg.Name = clientIdentifier
-	cfg.Version = params.VersionWithCommit(gitCommit, gitDate)
+	cfg.Version = chainparams.VersionWithCommit(gitCommit, gitDate)
 	cfg.HTTPModules = append(cfg.HTTPModules, "eth")
 	cfg.WSModules = append(cfg.WSModules, "eth")
 	cfg.IPCPath = "prlx.ipc"
@@ -162,14 +162,14 @@ func makeFullNode(ctx *cli.Context) (*node.Node, prlapi.Backend) {
 		// Hack to speed up check for mainnet because we know
 		// the first non-empty block.
 		ghash := rawdb.ReadCanonicalHash(parallax.ChainDb(), 0)
-		if cfg.Parallax.NetworkId == 2110 && ghash == params.MainnetGenesisHash {
+		if cfg.Parallax.NetworkId == 2110 && ghash == chainparams.MainnetGenesisHash {
 			firstIdx = 7661
 		}
 		isLegacy, _, err := dbHasLegacyReceipts(parallax.ChainDb(), firstIdx)
 		if err != nil {
-			log.Error("Failed to check db for legacy receipts", "err", err)
+			logging.Error("Failed to check db for legacy receipts", "err", err)
 		} else if isLegacy {
-			log.Warn("Database has receipts with a legacy format. Please run `prlx db freezer-migrate`.")
+			logging.Warn("Database has receipts with a legacy format. Please run `prlx db freezer-migrate`.")
 		}
 	}
 
@@ -282,7 +282,7 @@ func setAccountManagerBackends(stack *node.Node) error {
 
 	// Assemble the supported backends
 	if len(conf.ExternalSigner) > 0 {
-		log.Info("Using external signer", "url", conf.ExternalSigner)
+		logging.Info("Using external signer", "url", conf.ExternalSigner)
 		if extapi, err := external.NewExternalBackend(conf.ExternalSigner); err == nil {
 			am.AddBackend(extapi)
 			return nil
@@ -299,19 +299,19 @@ func setAccountManagerBackends(stack *node.Node) error {
 	if conf.USB {
 		// Start a USB hub for Ledger hardware wallets
 		if ledgerhub, err := usbwallet.NewLedgerHub(); err != nil {
-			log.Warn(fmt.Sprintf("Failed to start Ledger hub, disabling: %v", err))
+			logging.Warn(fmt.Sprintf("Failed to start Ledger hub, disabling: %v", err))
 		} else {
 			am.AddBackend(ledgerhub)
 		}
 		// Start a USB hub for Trezor hardware wallets (HID version)
 		if trezorhub, err := usbwallet.NewTrezorHubWithHID(); err != nil {
-			log.Warn(fmt.Sprintf("Failed to start HID Trezor hub, disabling: %v", err))
+			logging.Warn(fmt.Sprintf("Failed to start HID Trezor hub, disabling: %v", err))
 		} else {
 			am.AddBackend(trezorhub)
 		}
 		// Start a USB hub for Trezor hardware wallets (WebUSB version)
 		if trezorhub, err := usbwallet.NewTrezorHubWithWebUSB(); err != nil {
-			log.Warn(fmt.Sprintf("Failed to start WebUSB Trezor hub, disabling: %v", err))
+			logging.Warn(fmt.Sprintf("Failed to start WebUSB Trezor hub, disabling: %v", err))
 		} else {
 			am.AddBackend(trezorhub)
 		}
@@ -319,7 +319,7 @@ func setAccountManagerBackends(stack *node.Node) error {
 	if len(conf.SmartCardDaemonPath) > 0 {
 		// Start a smart card hub
 		if schub, err := scwallet.NewHub(conf.SmartCardDaemonPath, scwallet.Scheme, keydir); err != nil {
-			log.Warn(fmt.Sprintf("Failed to start smart card hub, disabling: %v", err))
+			logging.Warn(fmt.Sprintf("Failed to start smart card hub, disabling: %v", err))
 		} else {
 			am.AddBackend(schub)
 		}

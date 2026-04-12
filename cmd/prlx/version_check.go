@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -26,7 +26,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/jedisct1/go-minisign"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -53,7 +53,7 @@ type vulnJson struct {
 func versionCheck(ctx *cli.Context) error {
 	url := ctx.String(VersionCheckUrlFlag.Name)
 	version := ctx.String(VersionCheckVersionFlag.Name)
-	log.Info("Checking vulnerabilities", "version", version, "url", url)
+	logging.Info("Checking vulnerabilities", "version", version, "url", url)
 	return checkCurrent(url, version)
 }
 
@@ -145,11 +145,11 @@ func verifySignature(pubkeys []string, data, sigdata []byte) error {
 		break
 	}
 	if key == nil {
-		log.Info("Signing key not trusted", "keyid", keyID(sig.KeyId), "error", err)
+		logging.Info("Signing key not trusted", "keyid", keyID(sig.KeyId), "error", err)
 		return errors.New("signature could not be verified")
 	}
 	if ok, err := key.Verify(data, sig); !ok || err != nil {
-		log.Info("Verification failed error", "keyid", keyID(key.KeyId), "error", err)
+		logging.Info("Verification failed error", "keyid", keyID(key.KeyId), "error", err)
 		return errors.New("signature could not be verified")
 	}
 	return nil

@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package debug interfaces Go runtime debugging facilities.
 // This package is mostly glue code making these facilities available
@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/hashicorp/go-bexpr"
 )
 
@@ -56,7 +56,7 @@ type HandlerT struct {
 // Verbosity sets the log verbosity ceiling. The verbosity of individual packages
 // and source files can be raised using Vmodule.
 func (*HandlerT) Verbosity(level int) {
-	glogger.Verbosity(log.Lvl(level))
+	glogger.Verbosity(logging.Lvl(level))
 }
 
 // Vmodule sets the log verbosity pattern. See package log for details on the
@@ -113,7 +113,7 @@ func (h *HandlerT) StartCPUProfile(file string) error {
 	}
 	h.cpuW = f
 	h.cpuFile = file
-	log.Info("CPU profiling started", "dump", h.cpuFile)
+	logging.Info("CPU profiling started", "dump", h.cpuFile)
 	return nil
 }
 
@@ -125,7 +125,7 @@ func (h *HandlerT) StopCPUProfile() error {
 	if h.cpuW == nil {
 		return errors.New("CPU profiling not in progress")
 	}
-	log.Info("Done writing CPU profile", "dump", h.cpuFile)
+	logging.Info("Done writing CPU profile", "dump", h.cpuFile)
 	h.cpuW.Close()
 	h.cpuW = nil
 	h.cpuFile = ""
@@ -211,11 +211,11 @@ func (*HandlerT) Stacks(filter *string) string {
 		expanded = regexp.MustCompile("!(`[:/\\.A-Za-z0-9_-]+`)").ReplaceAllString(expanded, "$1 not")
 		expanded = strings.ReplaceAll(expanded, "||", "or")
 		expanded = strings.ReplaceAll(expanded, "&&", "and")
-		log.Info("Expanded filter expression", "filter", *filter, "expanded", expanded)
+		logging.Info("Expanded filter expression", "filter", *filter, "expanded", expanded)
 
 		expr, err := bexpr.CreateEvaluator(expanded)
 		if err != nil {
-			log.Error("Failed to parse filter expression", "expanded", expanded, "err", err)
+			logging.Error("Failed to parse filter expression", "expanded", expanded, "err", err)
 			return ""
 		}
 		// Split the goroutine dump into segments and filter each
@@ -245,7 +245,7 @@ func (*HandlerT) SetGCPercent(v int) int {
 
 func writeProfile(name, file string) error {
 	p := pprof.Lookup(name)
-	log.Info("Writing profile records", "count", p.Count(), "type", name, "dump", file)
+	logging.Info("Writing profile records", "count", p.Count(), "type", name, "dump", file)
 	f, err := os.Create(expandHome(file))
 	if err != nil {
 		return err

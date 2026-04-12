@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -29,16 +29,16 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/console/prompt"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state/snapshot"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/node/console/prompt"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state/snapshot"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"github.com/olekukonko/tablewriter"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -215,10 +215,10 @@ func removeDB(ctx *cli.Context) error {
 
 	// Remove the full node state database
 	path := stack.ResolvePath("chaindata")
-	if common.FileExist(path) {
+	if util.FileExist(path) {
 		confirmAndRemoveDB(path, "full node state database")
 	} else {
-		log.Info("Full node state database missing", "path", path)
+		logging.Info("Full node state database missing", "path", path)
 	}
 	// Remove the full node ancient database
 	path = config.Parallax.DatabaseFreezer
@@ -228,17 +228,17 @@ func removeDB(ctx *cli.Context) error {
 	case !filepath.IsAbs(path):
 		path = config.Node.ResolvePath(path)
 	}
-	if common.FileExist(path) {
+	if util.FileExist(path) {
 		confirmAndRemoveDB(path, "full node ancient database")
 	} else {
-		log.Info("Full node ancient database missing", "path", path)
+		logging.Info("Full node ancient database missing", "path", path)
 	}
 	// Remove the light node database
 	path = stack.ResolvePath("lightchaindata")
-	if common.FileExist(path) {
+	if util.FileExist(path) {
 		confirmAndRemoveDB(path, "light node database")
 	} else {
-		log.Info("Light node database missing", "path", path)
+		logging.Info("Light node database missing", "path", path)
 	}
 	return nil
 }
@@ -251,7 +251,7 @@ func confirmAndRemoveDB(database string, kind string) {
 	case err != nil:
 		utils.Fatalf("%v", err)
 	case !confirm:
-		log.Info("Database deletion skipped", "path", database)
+		logging.Info("Database deletion skipped", "path", database)
 	default:
 		start := time.Now()
 		filepath.Walk(database, func(path string, info os.FileInfo, err error) error {
@@ -266,7 +266,7 @@ func confirmAndRemoveDB(database string, kind string) {
 			}
 			return filepath.SkipDir
 		})
-		log.Info("Database successfully deleted", "path", database, "elapsed", common.PrettyDuration(time.Since(start)))
+		logging.Info("Database successfully deleted", "path", database, "elapsed", util.PrettyDuration(time.Since(start)))
 	}
 }
 
@@ -344,25 +344,25 @@ func checkStateContent(ctx *cli.Context) error {
 			fmt.Printf("  Data:  0x%x\n", v)
 		}
 		if time.Since(lastLog) > 8*time.Second {
-			log.Info("Iterating the database", "at", fmt.Sprintf("%#x", k), "elapsed", common.PrettyDuration(time.Since(startTime)))
+			logging.Info("Iterating the database", "at", fmt.Sprintf("%#x", k), "elapsed", util.PrettyDuration(time.Since(startTime)))
 			lastLog = time.Now()
 		}
 	}
 	if err := it.Error(); err != nil {
 		return err
 	}
-	log.Info("Iterated the state content", "errors", errs, "items", count)
+	logging.Info("Iterated the state content", "errors", errs, "items", count)
 	return nil
 }
 
-func showLeveldbStats(db prldb.KeyValueStater) {
+func showLeveldbStats(db dbstore.KeyValueStater) {
 	if stats, err := db.Stat("leveldb.stats"); err != nil {
-		log.Warn("Failed to read database stats", "error", err)
+		logging.Warn("Failed to read database stats", "error", err)
 	} else {
 		fmt.Println(stats)
 	}
 	if ioStats, err := db.Stat("leveldb.iostats"); err != nil {
-		log.Warn("Failed to read database iostats", "error", err)
+		logging.Warn("Failed to read database iostats", "error", err)
 	} else {
 		fmt.Println(ioStats)
 	}
@@ -386,15 +386,15 @@ func dbCompact(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, false)
 	defer db.Close()
 
-	log.Info("Stats before compaction")
+	logging.Info("Stats before compaction")
 	showLeveldbStats(db)
 
-	log.Info("Triggering compaction")
+	logging.Info("Triggering compaction")
 	if err := db.Compact(nil, nil); err != nil {
-		log.Info("Compact err", "error", err)
+		logging.Info("Compact err", "error", err)
 		return err
 	}
-	log.Info("Stats after compaction")
+	logging.Info("Stats after compaction")
 	showLeveldbStats(db)
 	return nil
 }
@@ -410,15 +410,15 @@ func dbGet(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
 
-	key, err := common.ParseHexOrString(ctx.Args().Get(0))
+	key, err := util.ParseHexOrString(ctx.Args().Get(0))
 	if err != nil {
-		log.Info("Could not decode the key", "error", err)
+		logging.Info("Could not decode the key", "error", err)
 		return err
 	}
 
 	data, err := db.Get(key)
 	if err != nil {
-		log.Info("Get operation failed", "key", fmt.Sprintf("0x%#x", key), "error", err)
+		logging.Info("Get operation failed", "key", fmt.Sprintf("0x%#x", key), "error", err)
 		return err
 	}
 	fmt.Printf("key %#x: %#x\n", key, data)
@@ -436,9 +436,9 @@ func dbDelete(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, false)
 	defer db.Close()
 
-	key, err := common.ParseHexOrString(ctx.Args().Get(0))
+	key, err := util.ParseHexOrString(ctx.Args().Get(0))
 	if err != nil {
-		log.Info("Could not decode the key", "error", err)
+		logging.Info("Could not decode the key", "error", err)
 		return err
 	}
 	data, err := db.Get(key)
@@ -446,7 +446,7 @@ func dbDelete(ctx *cli.Context) error {
 		fmt.Printf("Previous value: %#x\n", data)
 	}
 	if err = db.Delete(key); err != nil {
-		log.Info("Delete operation returned an error", "key", fmt.Sprintf("0x%#x", key), "error", err)
+		logging.Info("Delete operation returned an error", "key", fmt.Sprintf("0x%#x", key), "error", err)
 		return err
 	}
 	return nil
@@ -469,14 +469,14 @@ func dbPut(ctx *cli.Context) error {
 		data  []byte
 		err   error
 	)
-	key, err = common.ParseHexOrString(ctx.Args().Get(0))
+	key, err = util.ParseHexOrString(ctx.Args().Get(0))
 	if err != nil {
-		log.Info("Could not decode the key", "error", err)
+		logging.Info("Could not decode the key", "error", err)
 		return err
 	}
 	value, err = hexutil.Decode(ctx.Args().Get(1))
 	if err != nil {
-		log.Info("Could not decode the value", "error", err)
+		logging.Info("Could not decode the value", "error", err)
 		return err
 	}
 	data, err = db.Get(key)
@@ -503,19 +503,19 @@ func dbDumpTrie(ctx *cli.Context) error {
 		err   error
 	)
 	if root, err = hexutil.Decode(ctx.Args().Get(0)); err != nil {
-		log.Info("Could not decode the root", "error", err)
+		logging.Info("Could not decode the root", "error", err)
 		return err
 	}
-	stRoot := common.BytesToHash(root)
+	stRoot := util.BytesToHash(root)
 	if ctx.NArg() >= 2 {
 		if start, err = hexutil.Decode(ctx.Args().Get(1)); err != nil {
-			log.Info("Could not decode the seek position", "error", err)
+			logging.Info("Could not decode the seek position", "error", err)
 			return err
 		}
 	}
 	if ctx.NArg() >= 3 {
 		if max, err = strconv.ParseInt(ctx.Args().Get(2), 10, 64); err != nil {
-			log.Info("Could not decode the max count", "error", err)
+			logging.Info("Could not decode the max count", "error", err)
 			return err
 		}
 	}
@@ -557,17 +557,17 @@ func freezerInspect(ctx *cli.Context) error {
 		disableSnappy = noSnap
 	}
 	if start, err = strconv.ParseInt(ctx.Args().Get(1), 10, 64); err != nil {
-		log.Info("Could read start-param", "error", err)
+		logging.Info("Could read start-param", "error", err)
 		return err
 	}
 	if end, err = strconv.ParseInt(ctx.Args().Get(2), 10, 64); err != nil {
-		log.Info("Could read count param", "error", err)
+		logging.Info("Could read count param", "error", err)
 		return err
 	}
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 	path := filepath.Join(stack.ResolvePath("chaindata"), "ancient")
-	log.Info("Opening freezer", "location", path, "name", kind)
+	logging.Info("Opening freezer", "location", path, "name", kind)
 	if f, err := rawdb.NewFreezerTable(path, kind, disableSnappy, true); err != nil {
 		return err
 	} else {
@@ -602,7 +602,7 @@ func importLDBdata(ctx *cli.Context) error {
 	defer close(interrupt)
 	go func() {
 		if _, ok := <-interrupt; ok {
-			log.Info("Interrupted during ldb import, stopping at next batch")
+			logging.Info("Interrupted during ldb import, stopping at next batch")
 		}
 		close(stop)
 	}()
@@ -611,13 +611,13 @@ func importLDBdata(ctx *cli.Context) error {
 }
 
 type preimageIterator struct {
-	iter prldb.Iterator
+	iter dbstore.Iterator
 }
 
 func (iter *preimageIterator) Next() (byte, []byte, []byte, bool) {
 	for iter.iter.Next() {
 		key := iter.iter.Key()
-		if bytes.HasPrefix(key, rawdb.PreimagePrefix) && len(key) == (len(rawdb.PreimagePrefix)+common.HashLength) {
+		if bytes.HasPrefix(key, rawdb.PreimagePrefix) && len(key) == (len(rawdb.PreimagePrefix)+util.HashLength) {
 			return utils.OpBatchAdd, key, iter.iter.Value(), true
 		}
 	}
@@ -630,8 +630,8 @@ func (iter *preimageIterator) Release() {
 
 type snapshotIterator struct {
 	init    bool
-	account prldb.Iterator
-	storage prldb.Iterator
+	account dbstore.Iterator
+	storage dbstore.Iterator
 }
 
 func (iter *snapshotIterator) Next() (byte, []byte, []byte, bool) {
@@ -641,13 +641,13 @@ func (iter *snapshotIterator) Next() (byte, []byte, []byte, bool) {
 	}
 	for iter.account.Next() {
 		key := iter.account.Key()
-		if bytes.HasPrefix(key, rawdb.SnapshotAccountPrefix) && len(key) == (len(rawdb.SnapshotAccountPrefix)+common.HashLength) {
+		if bytes.HasPrefix(key, rawdb.SnapshotAccountPrefix) && len(key) == (len(rawdb.SnapshotAccountPrefix)+util.HashLength) {
 			return utils.OpBatchAdd, key, iter.account.Value(), true
 		}
 	}
 	for iter.storage.Next() {
 		key := iter.storage.Key()
-		if bytes.HasPrefix(key, rawdb.SnapshotStoragePrefix) && len(key) == (len(rawdb.SnapshotStoragePrefix)+2*common.HashLength) {
+		if bytes.HasPrefix(key, rawdb.SnapshotStoragePrefix) && len(key) == (len(rawdb.SnapshotStoragePrefix)+2*util.HashLength) {
 			return utils.OpBatchAdd, key, iter.storage.Value(), true
 		}
 	}
@@ -660,12 +660,12 @@ func (iter *snapshotIterator) Release() {
 }
 
 // chainExporters defines the export scheme for all exportable chain data.
-var chainExporters = map[string]func(db prldb.Database) utils.ChainDataIterator{
-	"preimage": func(db prldb.Database) utils.ChainDataIterator {
+var chainExporters = map[string]func(db dbstore.Database) utils.ChainDataIterator{
+	"preimage": func(db dbstore.Database) utils.ChainDataIterator {
 		iter := db.NewIterator(rawdb.PreimagePrefix, nil)
 		return &preimageIterator{iter: iter}
 	},
-	"snapshot": func(db prldb.Database) utils.ChainDataIterator {
+	"snapshot": func(db dbstore.Database) utils.ChainDataIterator {
 		account := db.NewIterator(rawdb.SnapshotAccountPrefix, nil)
 		storage := db.NewIterator(rawdb.SnapshotStoragePrefix, nil)
 		return &snapshotIterator{account: account, storage: storage}
@@ -698,7 +698,7 @@ func exportChaindata(ctx *cli.Context) error {
 	defer close(interrupt)
 	go func() {
 		if _, ok := <-interrupt; ok {
-			log.Info("Interrupted during db export, stopping at next batch")
+			logging.Info("Interrupted during db export, stopping at next batch")
 		}
 		close(stop)
 	}()
@@ -768,7 +768,7 @@ func freezerMigrate(ctx *cli.Context) error {
 		return err
 	}
 	if numAncients < 1 {
-		log.Info("No receipts in freezer to migrate")
+		logging.Info("No receipts in freezer to migrate")
 		return nil
 	}
 
@@ -777,11 +777,11 @@ func freezerMigrate(ctx *cli.Context) error {
 		return err
 	}
 	if !isFirstLegacy {
-		log.Info("No legacy receipts to migrate")
+		logging.Info("No legacy receipts to migrate")
 		return nil
 	}
 
-	log.Info("Starting migration", "ancients", numAncients, "firstLegacy", firstIdx)
+	logging.Info("Starting migration", "ancients", numAncients, "firstLegacy", firstIdx)
 	start := time.Now()
 	if err := db.MigrateTable("receipts", types.ConvertLegacyStoredReceipts); err != nil {
 		return err
@@ -789,7 +789,7 @@ func freezerMigrate(ctx *cli.Context) error {
 	if err := db.Close(); err != nil {
 		return err
 	}
-	log.Info("Migration finished", "duration", time.Since(start))
+	logging.Info("Migration finished", "duration", time.Since(start))
 
 	return nil
 }
@@ -797,7 +797,7 @@ func freezerMigrate(ctx *cli.Context) error {
 // dbHasLegacyReceipts checks freezer entries for legacy receipts. It stops at the first
 // non-empty receipt and checks its format. The index of this first non-empty element is
 // the second return parameter.
-func dbHasLegacyReceipts(db prldb.Database, firstIdx uint64) (bool, uint64, error) {
+func dbHasLegacyReceipts(db dbstore.Database, firstIdx uint64) (bool, uint64, error) {
 	// Check first block for legacy receipt format
 	numAncients, err := db.Ancients()
 	if err != nil {

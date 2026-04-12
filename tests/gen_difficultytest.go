@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/math"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/math"
 )
 
 var _ = (*difficultyTestMarshaling)(nil)
@@ -17,7 +17,7 @@ func (d DifficultyTest) MarshalJSON() ([]byte, error) {
 	type DifficultyTest struct {
 		ParentTimestamp    math.HexOrDecimal64   `json:"parentTimestamp"`
 		ParentDifficulty   *math.HexOrDecimal256 `json:"parentDifficulty"`
-		UncleHash          common.Hash           `json:"parentUncles"`
+		UncleHash          util.Hash             `json:"parentUncles"`
 		CurrentTimestamp   math.HexOrDecimal64   `json:"currentTimestamp"`
 		CurrentBlockNumber math.HexOrDecimal64   `json:"currentBlockNumber"`
 		CurrentDifficulty  *math.HexOrDecimal256 `json:"currentDifficulty"`
@@ -37,7 +37,7 @@ func (d *DifficultyTest) UnmarshalJSON(input []byte) error {
 	type DifficultyTest struct {
 		ParentTimestamp    *math.HexOrDecimal64  `json:"parentTimestamp"`
 		ParentDifficulty   *math.HexOrDecimal256 `json:"parentDifficulty"`
-		UncleHash          *common.Hash          `json:"parentUncles"`
+		UncleHash          *util.Hash            `json:"parentUncles"`
 		CurrentTimestamp   *math.HexOrDecimal64  `json:"currentTimestamp"`
 		CurrentBlockNumber *math.HexOrDecimal64  `json:"currentBlockNumber"`
 		CurrentDifficulty  *math.HexOrDecimal256 `json:"currentDifficulty"`

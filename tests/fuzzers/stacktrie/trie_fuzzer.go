@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package stacktrie
 
@@ -25,9 +25,9 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -65,9 +65,9 @@ type spongeDb struct {
 func (s *spongeDb) Has(key []byte) (bool, error)             { panic("implement me") }
 func (s *spongeDb) Get(key []byte) ([]byte, error)           { return nil, errors.New("no such elem") }
 func (s *spongeDb) Delete(key []byte) error                  { panic("implement me") }
-func (s *spongeDb) NewBatch() prldb.Batch                    { return &spongeBatch{s} }
-func (s *spongeDb) NewBatchWithSize(size int) prldb.Batch    { return &spongeBatch{s} }
-func (s *spongeDb) NewSnapshot() (prldb.Snapshot, error)     { panic("implement me") }
+func (s *spongeDb) NewBatch() dbstore.Batch                  { return &spongeBatch{s} }
+func (s *spongeDb) NewBatchWithSize(size int) dbstore.Batch  { return &spongeBatch{s} }
+func (s *spongeDb) NewSnapshot() (dbstore.Snapshot, error)   { panic("implement me") }
 func (s *spongeDb) Stat(property string) (string, error)     { panic("implement me") }
 func (s *spongeDb) Compact(start []byte, limit []byte) error { panic("implement me") }
 func (s *spongeDb) Close() error                             { return nil }
@@ -80,7 +80,7 @@ func (s *spongeDb) Put(key []byte, value []byte) error {
 	s.sponge.Write(value)
 	return nil
 }
-func (s *spongeDb) NewIterator(prefix []byte, start []byte) prldb.Iterator { panic("implement me") }
+func (s *spongeDb) NewIterator(prefix []byte, start []byte) dbstore.Iterator { panic("implement me") }
 
 // spongeBatch is a dummy batch which immediately writes to the underlying spongedb
 type spongeBatch struct {
@@ -91,11 +91,11 @@ func (b *spongeBatch) Put(key, value []byte) error {
 	b.db.Put(key, value)
 	return nil
 }
-func (b *spongeBatch) Delete(key []byte) error             { panic("implement me") }
-func (b *spongeBatch) ValueSize() int                      { return 100 }
-func (b *spongeBatch) Write() error                        { return nil }
-func (b *spongeBatch) Reset()                              {}
-func (b *spongeBatch) Replay(w prldb.KeyValueWriter) error { return nil }
+func (b *spongeBatch) Delete(key []byte) error               { panic("implement me") }
+func (b *spongeBatch) ValueSize() int                        { return 100 }
+func (b *spongeBatch) Write() error                          { return nil }
+func (b *spongeBatch) Reset()                                {}
+func (b *spongeBatch) Replay(w dbstore.KeyValueWriter) error { return nil }
 
 type kv struct {
 	k, v []byte
@@ -145,7 +145,7 @@ func (f *fuzzer) fuzz() int {
 	var (
 		spongeA     = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 		dbA         = trie.NewDatabase(spongeA)
-		trieA, _    = trie.New(common.Hash{}, dbA)
+		trieA, _    = trie.New(util.Hash{}, dbA)
 		spongeB     = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 		trieB       = trie.NewStackTrie(spongeB)
 		vals        kvs

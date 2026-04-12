@@ -7,10 +7,10 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/core/types"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
 )
 
 var _ = (*headerMarshaling)(nil)
@@ -18,11 +18,11 @@ var _ = (*headerMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (h header) MarshalJSON() ([]byte, error) {
 	type header struct {
-		ParentHash     common.Hash           `json:"parentHash"`
-		Coinbase       *common.Address       `json:"miner"`
-		Root           common.Hash           `json:"stateRoot"        gencodec:"required"`
-		TxHash         *common.Hash          `json:"transactionsRoot"`
-		ReceiptHash    *common.Hash          `json:"receiptsRoot"`
+		ParentHash     util.Hash             `json:"parentHash"`
+		Coinbase       *util.Address         `json:"miner"`
+		Root           util.Hash             `json:"stateRoot"        gencodec:"required"`
+		TxHash         *util.Hash            `json:"transactionsRoot"`
+		ReceiptHash    *util.Hash            `json:"receiptsRoot"`
 		Bloom          types.Bloom           `json:"logsBloom"`
 		Difficulty     *math.HexOrDecimal256 `json:"difficulty"`
 		Number         *math.HexOrDecimal256 `json:"number"           gencodec:"required"`
@@ -31,7 +31,7 @@ func (h header) MarshalJSON() ([]byte, error) {
 		Time           math.HexOrDecimal64   `json:"timestamp"        gencodec:"required"`
 		EpochStartTime math.HexOrDecimal64   `json:"epochStartTime"        gencodec:"required"`
 		Extra          hexutil.Bytes         `json:"extraData"`
-		MixDigest      common.Hash           `json:"mixHash"`
+		MixDigest      util.Hash             `json:"mixHash"`
 		Nonce          *types.BlockNonce     `json:"nonce"`
 		BaseFee        *math.HexOrDecimal256 `json:"baseFeePerGas" rlp:"optional"`
 	}
@@ -58,11 +58,11 @@ func (h header) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals from JSON.
 func (h *header) UnmarshalJSON(input []byte) error {
 	type header struct {
-		ParentHash     *common.Hash          `json:"parentHash"`
-		Coinbase       *common.Address       `json:"miner"`
-		Root           *common.Hash          `json:"stateRoot"        gencodec:"required"`
-		TxHash         *common.Hash          `json:"transactionsRoot"`
-		ReceiptHash    *common.Hash          `json:"receiptsRoot"`
+		ParentHash     *util.Hash            `json:"parentHash"`
+		Coinbase       *util.Address         `json:"miner"`
+		Root           *util.Hash            `json:"stateRoot"        gencodec:"required"`
+		TxHash         *util.Hash            `json:"transactionsRoot"`
+		ReceiptHash    *util.Hash            `json:"receiptsRoot"`
 		Bloom          *types.Bloom          `json:"logsBloom"`
 		Difficulty     *math.HexOrDecimal256 `json:"difficulty"`
 		Number         *math.HexOrDecimal256 `json:"number"           gencodec:"required"`
@@ -71,7 +71,7 @@ func (h *header) UnmarshalJSON(input []byte) error {
 		Time           *math.HexOrDecimal64  `json:"timestamp"        gencodec:"required"`
 		EpochStartTime *math.HexOrDecimal64  `json:"epochStartTime"        gencodec:"required"`
 		Extra          *hexutil.Bytes        `json:"extraData"`
-		MixDigest      *common.Hash          `json:"mixHash"`
+		MixDigest      *util.Hash            `json:"mixHash"`
 		Nonce          *types.BlockNonce     `json:"nonce"`
 		BaseFee        *math.HexOrDecimal256 `json:"baseFeePerGas" rlp:"optional"`
 	}

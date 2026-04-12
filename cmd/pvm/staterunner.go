@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/vm"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/prl/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/tests"
+	"github.com/ParallaxProtocol/parallax/validation/state"
 
 	"gopkg.in/urfave/cli.v1"
 )
@@ -52,10 +52,10 @@ func stateTestCmd(ctx *cli.Context) error {
 	if len(ctx.Args().First()) == 0 {
 		return errors.New("path-to-test argument required")
 	}
-	// Configure the go-ethereum logger
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(ctx.GlobalInt(VerbosityFlag.Name)))
-	log.Root().SetHandler(glogger)
+	// Configure the parallax logger
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.Lvl(ctx.GlobalInt(VerbosityFlag.Name)))
+	logging.Root().SetHandler(glogger)
 
 	// Configure the PVM logger
 	config := &logger.Config{
@@ -65,7 +65,7 @@ func stateTestCmd(ctx *cli.Context) error {
 		EnableReturnData: !ctx.GlobalBool(DisableReturnDataFlag.Name),
 	}
 	var (
-		tracer   vm.PVMLogger
+		tracer   script.PVMLogger
 		debugger *logger.StructLogger
 	)
 	switch {
@@ -89,7 +89,7 @@ func stateTestCmd(ctx *cli.Context) error {
 		return err
 	}
 	// Iterate over all the tests, run them and aggregate the results
-	cfg := vm.Config{
+	cfg := script.Config{
 		Tracer: tracer,
 		Debug:  ctx.GlobalBool(DebugFlag.Name) || ctx.GlobalBool(MachineFlag.Name),
 	}

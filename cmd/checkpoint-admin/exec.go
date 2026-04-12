@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -25,17 +25,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
+	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/contracts/checkpointoracle"
-	"github.com/ParallaxProtocol/parallax/contracts/checkpointoracle/contract"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prlclient"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle"
+	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle/contract"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/wallet"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -85,12 +85,12 @@ var commandPublish = cli.Command{
 // the network where the connected node is located.
 func deploy(ctx *cli.Context) error {
 	// Gather all the addresses that should be permitted to sign
-	var addrs []common.Address
+	var addrs []util.Address
 	for _, account := range strings.Split(ctx.String(signersFlag.Name), ",") {
-		if trimmed := strings.TrimSpace(account); !common.IsHexAddress(trimmed) {
+		if trimmed := strings.TrimSpace(account); !util.IsHexAddress(trimmed) {
 			utils.Fatalf("Invalid account in --signers: '%s'", trimmed)
 		}
-		addrs = append(addrs, common.HexToAddress(account))
+		addrs = append(addrs, util.HexToAddress(account))
 	}
 	// Retrieve and validate the signing threshold
 	needed := ctx.Int(thresholdFlag.Name)
@@ -109,12 +109,12 @@ func deploy(ctx *cli.Context) error {
 
 	// Deploy the checkpoint oracle
 	fmt.Println("Sending deploy request to Clef...")
-	oracle, tx, _, err := contract.DeployCheckpointOracle(transactor, client, addrs, big.NewInt(int64(params.CheckpointFrequency)),
-		big.NewInt(int64(params.CheckpointProcessConfirmations)), big.NewInt(int64(needed)))
+	oracle, tx, _, err := contract.DeployCheckpointOracle(transactor, client, addrs, big.NewInt(int64(chainparams.CheckpointFrequency)),
+		big.NewInt(int64(chainparams.CheckpointProcessConfirmations)), big.NewInt(int64(needed)))
 	if err != nil {
 		utils.Fatalf("Failed to deploy checkpoint oracle %v", err)
 	}
-	log.Info("Deployed checkpoint oracle", "address", oracle, "tx", tx.Hash().Hex())
+	logging.Info("Deployed checkpoint oracle", "address", oracle, "tx", tx.Hash().Hex())
 
 	return nil
 }
@@ -125,9 +125,9 @@ func deploy(ctx *cli.Context) error {
 func sign(ctx *cli.Context) error {
 	var (
 		offline bool // The indicator whether we sign checkpoint by offline.
-		chash   common.Hash
+		chash   util.Hash
 		cindex  uint64
-		address common.Address
+		address util.Address
 
 		node   *rpc.Client
 		oracle *checkpointoracle.CheckpointOracle
@@ -138,7 +138,7 @@ func sign(ctx *cli.Context) error {
 		if !ctx.IsSet(hashFlag.Name) {
 			utils.Fatalf("Please specify the checkpoint hash (--hash) to sign in offline mode")
 		}
-		chash = common.HexToHash(ctx.String(hashFlag.Name))
+		chash = util.HexToHash(ctx.String(hashFlag.Name))
 
 		if !ctx.IsSet(indexFlag.Name) {
 			utils.Fatalf("Please specify checkpoint index (--index) to sign in offline mode")
@@ -148,7 +148,7 @@ func sign(ctx *cli.Context) error {
 		if !ctx.IsSet(oracleFlag.Name) {
 			utils.Fatalf("Please specify oracle address (--oracle) to sign in offline mode")
 		}
-		address = common.HexToAddress(ctx.String(oracleFlag.Name))
+		address = util.HexToAddress(ctx.String(oracleFlag.Name))
 	} else {
 		// Interactive mode signing, retrieve the data from the remote node
 		node = newRPCClient(ctx.GlobalString(nodeURLFlag.Name))
@@ -160,12 +160,12 @@ func sign(ctx *cli.Context) error {
 		reqCtx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelFn()
 
-		head, err := prlclient.NewClient(node).HeaderByNumber(reqCtx, nil)
+		head, err := client.NewClient(node).HeaderByNumber(reqCtx, nil)
 		if err != nil {
 			return err
 		}
 		num := head.Number.Uint64()
-		if num < ((cindex+1)*params.CheckpointFrequency + params.CheckpointProcessConfirmations) {
+		if num < ((cindex+1)*chainparams.CheckpointFrequency + chainparams.CheckpointProcessConfirmations) {
 			utils.Fatalf("Invalid future checkpoint")
 		}
 		_, oracle = newContract(node)
@@ -185,7 +185,7 @@ func sign(ctx *cli.Context) error {
 		signer    string
 	)
 	// isAdmin checks whether the specified signer is admin.
-	isAdmin := func(addr common.Address) error {
+	isAdmin := func(addr util.Address) error {
 		signers, err := oracle.Contract().GetAllAdmin(nil)
 		if err != nil {
 			return err
@@ -205,7 +205,7 @@ func sign(ctx *cli.Context) error {
 	signer = ctx.String(signerFlag.Name)
 
 	if !offline {
-		if err := isAdmin(common.HexToAddress(signer)); err != nil {
+		if err := isAdmin(util.HexToAddress(signer)); err != nil {
 			return err
 		}
 	}
@@ -217,7 +217,7 @@ func sign(ctx *cli.Context) error {
 	p["message"] = hexutil.Encode(append(buf, chash.Bytes()...))
 
 	fmt.Println("Sending signing request to Clef...")
-	if err := clef.Call(&signature, "account_signData", accounts.MimetypeDataWithValidator, signer, p); err != nil {
+	if err := clef.Call(&signature, "account_signData", wallet.MimetypeDataWithValidator, signer, p); err != nil {
 		utils.Fatalf("Failed to sign checkpoint, err %v", err)
 	}
 	fmt.Printf("Signer     => %s\n", signer)
@@ -226,7 +226,7 @@ func sign(ctx *cli.Context) error {
 }
 
 // sighash calculates the hash of the data to sign for the checkpoint oracle.
-func sighash(index uint64, oracle common.Address, hash common.Hash) []byte {
+func sighash(index uint64, oracle util.Address, hash util.Hash) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, index)
 
@@ -235,7 +235,7 @@ func sighash(index uint64, oracle common.Address, hash common.Hash) []byte {
 }
 
 // ecrecover calculates the sender address from a sighash and signature combo.
-func ecrecover(sighash []byte, sig []byte) common.Address {
+func ecrecover(sighash []byte, sig []byte) util.Address {
 	sig[64] -= 27
 	defer func() { sig[64] += 27 }()
 
@@ -260,14 +260,14 @@ func publish(ctx *cli.Context) error {
 		if len(trimmed) != 130 {
 			utils.Fatalf("Invalid signature in --signature: '%s'", trimmed)
 		} else {
-			sigs = append(sigs, common.Hex2Bytes(trimmed))
+			sigs = append(sigs, util.Hex2Bytes(trimmed))
 		}
 	}
 	// Retrieve the checkpoint we want to sign to sort the signatures
 	var (
-		client       = newRPCClient(ctx.GlobalString(nodeURLFlag.Name))
-		addr, oracle = newContract(client)
-		checkpoint   = getCheckpoint(ctx, client)
+		conn         = newRPCClient(ctx.GlobalString(nodeURLFlag.Name))
+		addr, oracle = newContract(conn)
+		checkpoint   = getCheckpoint(ctx, conn)
 		sighash      = sighash(checkpoint.SectionIndex, addr, checkpoint.Hash())
 	)
 	for i := 0; i < len(sigs); i++ {
@@ -283,12 +283,12 @@ func publish(ctx *cli.Context) error {
 	reqCtx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFn()
 
-	head, err := prlclient.NewClient(client).HeaderByNumber(reqCtx, nil)
+	head, err := client.NewClient(conn).HeaderByNumber(reqCtx, nil)
 	if err != nil {
 		return err
 	}
 	num := head.Number.Uint64()
-	recent, err := prlclient.NewClient(client).HeaderByNumber(reqCtx, big.NewInt(int64(num-128)))
+	recent, err := client.NewClient(conn).HeaderByNumber(reqCtx, big.NewInt(int64(num-128)))
 	if err != nil {
 		return err
 	}
@@ -306,6 +306,6 @@ func publish(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Register contract failed %v", err)
 	}
-	log.Info("Successfully registered checkpoint", "tx", tx.Hash().Hex())
+	logging.Info("Successfully registered checkpoint", "tx", tx.Hash().Hex())
 	return nil
 }

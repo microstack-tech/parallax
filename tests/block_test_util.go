@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package tests implements execution of Parallax JSON tests.
 package tests
@@ -25,18 +25,18 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/consensus"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -50,13 +50,13 @@ func (t *BlockTest) UnmarshalJSON(in []byte) error {
 }
 
 type btJSON struct {
-	Blocks     []btBlock             `json:"blocks"`
-	Genesis    btHeader              `json:"genesisBlockHeader"`
-	Pre        core.GenesisAlloc     `json:"pre"`
-	Post       core.GenesisAlloc     `json:"postState"`
-	BestBlock  common.UnprefixedHash `json:"lastblockhash"`
-	Network    string                `json:"network"`
-	SealEngine string                `json:"sealEngine"`
+	Blocks     []btBlock               `json:"blocks"`
+	Genesis    btHeader                `json:"genesisBlockHeader"`
+	Pre        validation.GenesisAlloc `json:"pre"`
+	Post       validation.GenesisAlloc `json:"postState"`
+	BestBlock  util.UnprefixedHash     `json:"lastblockhash"`
+	Network    string                  `json:"network"`
+	SealEngine string                  `json:"sealEngine"`
 }
 
 type btBlock struct {
@@ -70,16 +70,16 @@ type btBlock struct {
 
 type btHeader struct {
 	Bloom            types.Bloom
-	Coinbase         common.Address
-	MixHash          common.Hash
+	Coinbase         util.Address
+	MixHash          util.Hash
 	Nonce            types.BlockNonce
 	Number           *big.Int
-	Hash             common.Hash
-	ParentHash       common.Hash
-	ReceiptTrie      common.Hash
-	StateRoot        common.Hash
-	TransactionsTrie common.Hash
-	UncleHash        common.Hash
+	Hash             util.Hash
+	ParentHash       util.Hash
+	ReceiptTrie      util.Hash
+	StateRoot        util.Hash
+	TransactionsTrie util.Hash
+	UncleHash        util.Hash
 	ExtraData        []byte
 	Difficulty       *big.Int
 	GasLimit         uint64
@@ -122,12 +122,12 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	} else {
 		engine = xhash.NewShared()
 	}
-	cache := &core.CacheConfig{TrieCleanLimit: 0}
+	cache := &validation.CacheConfig{TrieCleanLimit: 0}
 	if snapshotter {
 		cache.SnapshotLimit = 1
 		cache.SnapshotWait = true
 	}
-	chain, err := core.NewBlockChain(db, cache, config, engine, vm.Config{}, nil, nil)
+	chain, err := validation.NewBlockChain(db, cache, config, engine, script.Config{}, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func (t *BlockTest) Run(snapshotter bool) error {
 		return err
 	}
 	cmlast := chain.CurrentBlock().Hash()
-	if common.Hash(t.json.BestBlock) != cmlast {
+	if util.Hash(t.json.BestBlock) != cmlast {
 		return fmt.Errorf("last block hash validation mismatch: want: %x, have: %x", t.json.BestBlock, cmlast)
 	}
 	newDB, err := chain.State()
@@ -157,8 +157,8 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	return t.validateImportedHeaders(chain, validBlocks)
 }
 
-func (t *BlockTest) genesis(config *params.ChainConfig) *core.Genesis {
-	return &core.Genesis{
+func (t *BlockTest) genesis(config *chainparams.ChainConfig) *validation.Genesis {
+	return &validation.Genesis{
 		Config:     config,
 		Nonce:      t.json.Genesis.Nonce.Uint64(),
 		Timestamp:  t.json.Genesis.Timestamp,
@@ -187,7 +187,7 @@ See https://github.com/ethereum/tests/wiki/Blockchain-Tests-II
 	expected we are expected to ignore it and continue processing and then validate the
 	post state.
 */
-func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error) {
+func (t *BlockTest) insertBlocks(blockchain *validation.BlockChain) ([]btBlock, error) {
 	validBlocks := make([]btBlock, 0)
 	// insert the test blocks, which will execute all transactions
 	for bi, b := range t.json.Blocks {
@@ -293,9 +293,9 @@ func (t *BlockTest) validatePostState(statedb *state.StateDB) error {
 	return nil
 }
 
-func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []btBlock) error {
+func (t *BlockTest) validateImportedHeaders(cm *validation.BlockChain, validBlocks []btBlock) error {
 	// to get constant lookup when verifying block headers by hash (some tests have many blocks)
-	bmap := make(map[common.Hash]btBlock, len(t.json.Blocks))
+	bmap := make(map[util.Hash]btBlock, len(t.json.Blocks))
 	for _, b := range validBlocks {
 		bmap[b.BlockHeader.Hash] = b
 	}

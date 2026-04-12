@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/core/types"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
 )
 
 var _ = (*btHeaderMarshaling)(nil)
@@ -18,16 +18,16 @@ var _ = (*btHeaderMarshaling)(nil)
 func (b btHeader) MarshalJSON() ([]byte, error) {
 	type btHeader struct {
 		Bloom            types.Bloom
-		Coinbase         common.Address
-		MixHash          common.Hash
+		Coinbase         util.Address
+		MixHash          util.Hash
 		Nonce            types.BlockNonce
 		Number           *math.HexOrDecimal256
-		Hash             common.Hash
-		ParentHash       common.Hash
-		ReceiptTrie      common.Hash
-		StateRoot        common.Hash
-		TransactionsTrie common.Hash
-		UncleHash        common.Hash
+		Hash             util.Hash
+		ParentHash       util.Hash
+		ReceiptTrie      util.Hash
+		StateRoot        util.Hash
+		TransactionsTrie util.Hash
+		UncleHash        util.Hash
 		ExtraData        hexutil.Bytes
 		Difficulty       *math.HexOrDecimal256
 		GasLimit         math.HexOrDecimal64
@@ -60,16 +60,16 @@ func (b btHeader) MarshalJSON() ([]byte, error) {
 func (b *btHeader) UnmarshalJSON(input []byte) error {
 	type btHeader struct {
 		Bloom            *types.Bloom
-		Coinbase         *common.Address
-		MixHash          *common.Hash
+		Coinbase         *util.Address
+		MixHash          *util.Hash
 		Nonce            *types.BlockNonce
 		Number           *math.HexOrDecimal256
-		Hash             *common.Hash
-		ParentHash       *common.Hash
-		ReceiptTrie      *common.Hash
-		StateRoot        *common.Hash
-		TransactionsTrie *common.Hash
-		UncleHash        *common.Hash
+		Hash             *util.Hash
+		ParentHash       *util.Hash
+		ReceiptTrie      *util.Hash
+		StateRoot        *util.Hash
+		TransactionsTrie *util.Hash
+		UncleHash        *util.Hash
 		ExtraData        *hexutil.Bytes
 		Difficulty       *math.HexOrDecimal256
 		GasLimit         *math.HexOrDecimal64

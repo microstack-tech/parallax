@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package node
 
@@ -28,7 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/rs/cors"
 )
@@ -56,7 +56,7 @@ type rpcHandler struct {
 }
 
 type httpServer struct {
-	log      log.Logger
+	log      logging.Logger
 	timeouts rpc.HTTPTimeouts
 	mux      http.ServeMux // registered handlers go here
 
@@ -81,7 +81,7 @@ type httpServer struct {
 	handlerNames map[string]string
 }
 
-func newHTTPServer(log log.Logger, timeouts rpc.HTTPTimeouts) *httpServer {
+func newHTTPServer(log logging.Logger, timeouts rpc.HTTPTimeouts) *httpServer {
 	h := &httpServer{log: log, timeouts: timeouts, handlerNames: make(map[string]string)}
 
 	h.httpHandler.Store((*rpcHandler)(nil))
@@ -174,7 +174,7 @@ func (h *httpServer) start() error {
 	for _, path := range paths {
 		name := h.handlerNames[path]
 		if !logged[name] {
-			log.Info(name+" enabled", "url", "http://"+listener.Addr().String()+path)
+			logging.Info(name+" enabled", "url", "http://"+listener.Addr().String()+path)
 			logged[name] = true
 		}
 	}
@@ -481,7 +481,7 @@ func newGzipHandler(next http.Handler) http.Handler {
 }
 
 type ipcServer struct {
-	log      log.Logger
+	log      logging.Logger
 	endpoint string
 
 	mu       sync.Mutex
@@ -489,7 +489,7 @@ type ipcServer struct {
 	srv      *rpc.Server
 }
 
-func newIPCServer(log log.Logger, endpoint string) *ipcServer {
+func newIPCServer(log logging.Logger, endpoint string) *ipcServer {
 	return &ipcServer{log: log, endpoint: endpoint}
 }
 
@@ -529,7 +529,7 @@ func (is *ipcServer) stop() error {
 // and then registers all of the APIs exposed by the services.
 func RegisterApis(apis []rpc.API, modules []string, srv *rpc.Server, exposeAll bool) error {
 	if bad, available := checkModuleAvailability(modules, apis); len(bad) > 0 {
-		log.Error("Unavailable modules in HTTP API list", "unavailable", bad, "available", available)
+		logging.Error("Unavailable modules in HTTP API list", "unavailable", bad, "available", available)
 	}
 	// Generate the allow list based on the allowed modules
 	allowList := make(map[string]bool)

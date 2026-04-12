@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package rangeproof
 
@@ -23,10 +23,10 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/prldb/memorydb"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 )
 
 type kv struct {
@@ -62,13 +62,13 @@ func (f *fuzzer) readInt() uint64 {
 }
 
 func (f *fuzzer) randomTrie(n int) (*trie.Trie, map[string]*kv) {
-	trie, _ := trie.New(common.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
+	trie, _ := trie.New(util.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
 	vals := make(map[string]*kv)
 	size := f.readInt()
 	// Fill it with some fluff
 	for i := byte(0); i < byte(size); i++ {
-		value := &kv{common.LeftPadBytes([]byte{i}, 32), []byte{i}, false}
-		value2 := &kv{common.LeftPadBytes([]byte{i + 10}, 32), []byte{i}, false}
+		value := &kv{util.LeftPadBytes([]byte{i}, 32), []byte{i}, false}
+		value2 := &kv{util.LeftPadBytes([]byte{i + 10}, 32), []byte{i}, false}
 		trie.Update(value.k, value.v)
 		trie.Update(value2.k, value2.v)
 		vals[string(value.k)] = value

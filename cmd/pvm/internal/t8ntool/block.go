@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package t8ntool
 
@@ -24,25 +24,25 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/consensus/clique"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/clique"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
 	"gopkg.in/urfave/cli.v1"
 )
 
 //go:generate go run github.com/fjl/gencodec -type header -field-override headerMarshaling -out gen_header.go
 type header struct {
-	ParentHash     common.Hash       `json:"parentHash"`
-	Coinbase       *common.Address   `json:"miner"`
-	Root           common.Hash       `json:"stateRoot"        gencodec:"required"`
-	TxHash         *common.Hash      `json:"transactionsRoot"`
-	ReceiptHash    *common.Hash      `json:"receiptsRoot"`
+	ParentHash     util.Hash         `json:"parentHash"`
+	Coinbase       *util.Address     `json:"miner"`
+	Root           util.Hash         `json:"stateRoot"        gencodec:"required"`
+	TxHash         *util.Hash        `json:"transactionsRoot"`
+	ReceiptHash    *util.Hash        `json:"receiptsRoot"`
 	Bloom          types.Bloom       `json:"logsBloom"`
 	Difficulty     *big.Int          `json:"difficulty"`
 	Number         *big.Int          `json:"number"           gencodec:"required"`
@@ -51,7 +51,7 @@ type header struct {
 	Time           uint64            `json:"timestamp"        gencodec:"required"`
 	EpochStartTime uint64            `json:"epochStartTime"        gencodec:"required"`
 	Extra          []byte            `json:"extraData"`
-	MixDigest      common.Hash       `json:"mixHash"`
+	MixDigest      util.Hash         `json:"mixHash"`
 	Nonce          *types.BlockNonce `json:"nonce"`
 	BaseFee        *big.Int          `json:"baseFeePerGas" rlp:"optional"`
 }
@@ -81,18 +81,18 @@ type bbInput struct {
 
 type cliqueInput struct {
 	Key       *ecdsa.PrivateKey
-	Voted     *common.Address
+	Voted     *util.Address
 	Authorize *bool
-	Vanity    common.Hash
+	Vanity    util.Hash
 }
 
 // UnmarshalJSON implements json.Unmarshaler interface.
 func (c *cliqueInput) UnmarshalJSON(input []byte) error {
 	var x struct {
-		Key       *common.Hash    `json:"secretKey"`
-		Voted     *common.Address `json:"voted"`
-		Authorize *bool           `json:"authorize"`
-		Vanity    common.Hash     `json:"vanity"`
+		Key       *util.Hash    `json:"secretKey"`
+		Voted     *util.Address `json:"voted"`
+		Authorize *bool         `json:"authorize"`
+		Vanity    util.Hash     `json:"vanity"`
 	}
 	if err := json.Unmarshal(input, &x); err != nil {
 		return err
@@ -115,12 +115,12 @@ func (c *cliqueInput) UnmarshalJSON(input []byte) error {
 func (i *bbInput) ToBlock() *types.Block {
 	header := &types.Header{
 		ParentHash:     i.Header.ParentHash,
-		Coinbase:       common.Address{},
+		Coinbase:       util.Address{},
 		Root:           i.Header.Root,
 		TxHash:         types.EmptyRootHash,
 		ReceiptHash:    types.EmptyRootHash,
 		Bloom:          i.Header.Bloom,
-		Difficulty:     common.Big0,
+		Difficulty:     util.Big0,
 		Number:         i.Header.Number,
 		GasLimit:       i.Header.GasLimit,
 		GasUsed:        i.Header.GasUsed,
@@ -229,10 +229,10 @@ func (i *bbInput) sealClique(block *types.Block) (*types.Block, error) {
 
 // BuildBlock constructs a block from the given inputs.
 func BuildBlock(ctx *cli.Context) error {
-	// Configure the go-ethereum logger
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(ctx.Int(VerbosityFlag.Name)))
-	log.Root().SetHandler(glogger)
+	// Configure the parallax logger
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.Lvl(ctx.Int(VerbosityFlag.Name)))
+	logging.Root().SetHandler(glogger)
 
 	baseDir, err := createBasedir(ctx)
 	if err != nil {
@@ -318,7 +318,7 @@ func readInput(ctx *cli.Context) (*bbInput, error) {
 		txs    = []*types.Transaction{}
 	)
 	if inputData.TxRlp != "" {
-		if err := rlp.DecodeBytes(common.FromHex(inputData.TxRlp), &txs); err != nil {
+		if err := rlp.DecodeBytes(util.FromHex(inputData.TxRlp), &txs); err != nil {
 			return nil, NewError(ErrorRlp, fmt.Errorf("unable to decode transaction from rlp data: %v", err))
 		}
 		inputData.Txs = txs
@@ -330,7 +330,7 @@ func readInput(ctx *cli.Context) (*bbInput, error) {
 			Ommers []*types.Header
 		}
 		var ommer *extblock
-		if err := rlp.DecodeBytes(common.FromHex(str), &ommer); err != nil {
+		if err := rlp.DecodeBytes(util.FromHex(str), &ommer); err != nil {
 			return nil, NewError(ErrorRlp, fmt.Errorf("unable to decode ommer from rlp data: %v", err))
 		}
 		ommers = append(ommers, ommer.Header)
@@ -347,7 +347,7 @@ func dispatchBlock(ctx *cli.Context, baseDir string, block *types.Block) error {
 
 	type blockInfo struct {
 		Rlp  hexutil.Bytes `json:"rlp"`
-		Hash common.Hash   `json:"hash"`
+		Hash util.Hash     `json:"hash"`
 	}
 	var enc blockInfo
 	enc.Rlp = raw

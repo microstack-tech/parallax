@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/params"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -39,7 +39,7 @@ var (
 		Name:  "check.version",
 		Usage: "Version to check",
 		Value: fmt.Sprintf("Parallax/v%v/%v-%v/%v",
-			params.VersionWithCommit(gitCommit, gitDate),
+			chainparams.VersionWithCommit(gitCommit, gitDate),
 			runtime.GOOS, runtime.GOARCH, runtime.Version()),
 	}
 	makecacheCommand = cli.Command{
@@ -134,7 +134,7 @@ func makedag(ctx *cli.Context) error {
 
 func version(ctx *cli.Context) error {
 	fmt.Println(strings.Title(clientIdentifier))
-	fmt.Println("Version:", params.VersionWithMeta)
+	fmt.Println("Version:", chainparams.VersionWithMeta)
 	if gitCommit != "" {
 		fmt.Println("Git Commit:", gitCommit)
 	}

@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -106,7 +106,7 @@ func (c *route53Client) deploy(name string, t *dnsdisc.Tree) error {
 	if err != nil {
 		return err
 	}
-	log.Info(fmt.Sprintf("Found %d TXT records", len(existing)))
+	logging.Info(fmt.Sprintf("Found %d TXT records", len(existing)))
 	records := t.ToTXT(name)
 	changes := c.computeChanges(name, records, existing)
 
@@ -126,7 +126,7 @@ func (c *route53Client) deleteDomain(name string) error {
 	if err != nil {
 		return err
 	}
-	log.Info(fmt.Sprintf("Found %d TXT records", len(existing)))
+	logging.Info(fmt.Sprintf("Found %d TXT records", len(existing)))
 	changes := makeDeletionChanges(existing, nil)
 
 	// Submit to API.
@@ -137,7 +137,7 @@ func (c *route53Client) deleteDomain(name string) error {
 // submitChanges submits the given DNS changes to Route53.
 func (c *route53Client) submitChanges(changes []types.Change, comment string) error {
 	if len(changes) == 0 {
-		log.Info("No DNS changes needed")
+		logging.Info("No DNS changes needed")
 		return nil
 	}
 
@@ -145,7 +145,7 @@ func (c *route53Client) submitChanges(changes []types.Change, comment string) er
 	batches := splitChanges(changes, route53ChangeSizeLimit, route53ChangeCountLimit)
 	changesToCheck := make([]*route53.ChangeResourceRecordSetsOutput, len(batches))
 	for i, changes := range batches {
-		log.Info(fmt.Sprintf("Submitting %d changes to Route53", len(changes)))
+		logging.Info(fmt.Sprintf("Submitting %d changes to Route53", len(changes)))
 		batch := &types.ChangeBatch{
 			Changes: changes,
 			Comment: aws.String(fmt.Sprintf("%s (%d/%d)", comment, i+1, len(batches))),
@@ -159,7 +159,7 @@ func (c *route53Client) submitChanges(changes []types.Change, comment string) er
 
 	// Wait for all change batches to propagate.
 	for _, change := range changesToCheck {
-		log.Info(fmt.Sprintf("Waiting for change request %s", *change.ChangeInfo.Id))
+		logging.Info(fmt.Sprintf("Waiting for change request %s", *change.ChangeInfo.Id))
 		wreq := &route53.GetChangeInput{Id: change.ChangeInfo.Id}
 		var count int
 		for {
@@ -190,7 +190,7 @@ func (c *route53Client) checkZone(name string) (err error) {
 
 // findZoneID searches for the Zone ID containing the given domain.
 func (c *route53Client) findZoneID(name string) (string, error) {
-	log.Info(fmt.Sprintf("Finding Route53 Zone ID for %s", name))
+	logging.Info(fmt.Sprintf("Finding Route53 Zone ID for %s", name))
 	var req route53.ListHostedZonesByNameInput
 	for {
 		resp, err := c.api.ListHostedZonesByName(context.TODO(), &req)
@@ -237,14 +237,14 @@ func (c *route53Client) computeChanges(name string, records map[string]string, e
 
 		if !exists {
 			// Entry is unknown, push a new one
-			log.Info(fmt.Sprintf("Creating %s = %s", path, newValue))
+			logging.Info(fmt.Sprintf("Creating %s = %s", path, newValue))
 			changes = append(changes, newTXTChange("CREATE", path, ttl, newValue))
 		} else if prevValue != newValue || prevRecords.ttl != ttl {
 			// Entry already exists, only change its content.
-			log.Info(fmt.Sprintf("Updating %s from %s to %s", path, prevValue, newValue))
+			logging.Info(fmt.Sprintf("Updating %s from %s to %s", path, prevValue, newValue))
 			changes = append(changes, newTXTChange("UPSERT", path, ttl, newValue))
 		} else {
-			log.Debug(fmt.Sprintf("Skipping %s = %s", path, newValue))
+			logging.Debug(fmt.Sprintf("Skipping %s = %s", path, newValue))
 		}
 	}
 
@@ -263,7 +263,7 @@ func makeDeletionChanges(records map[string]recordSet, keep map[string]string) [
 		if _, ok := keep[path]; ok {
 			continue
 		}
-		log.Info(fmt.Sprintf("Deleting %s = %s", path, strings.Join(set.values, "")))
+		logging.Info(fmt.Sprintf("Deleting %s = %s", path, strings.Join(set.values, "")))
 		changes = append(changes, newTXTChange("DELETE", path, set.ttl, set.values...))
 	}
 	return changes
@@ -330,7 +330,7 @@ func (c *route53Client) collectRecords(name string) (map[string]recordSet, error
 	req.HostedZoneId = &c.zoneID
 	existing := make(map[string]recordSet)
 	for page := 0; ; page++ {
-		log.Debug("Loading existing TXT records", "name", name, "zone", c.zoneID, "page", page)
+		logging.Debug("Loading existing TXT records", "name", name, "zone", c.zoneID, "page", page)
 		resp, err := c.api.ListResourceRecordSets(context.TODO(), &req)
 		if err != nil {
 			return existing, err
@@ -361,7 +361,7 @@ func (c *route53Client) collectRecords(name string) (map[string]recordSet, error
 		req.StartRecordType = resp.NextRecordType
 	}
 
-	log.Info("Loaded existing TXT records", "name", name, "zone", c.zoneID, "records", len(existing))
+	logging.Info("Loaded existing TXT records", "name", name, "zone", c.zoneID, "records", len(existing))
 	return existing, nil
 }
 

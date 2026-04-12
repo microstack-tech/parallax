@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package testlog provides a log handler for unit tests.
 package testlog
@@ -21,20 +21,20 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 )
 
 // Handler returns a log handler which logs to the unit test log of t.
-func Handler(t *testing.T, level log.Lvl) log.Handler {
-	return log.LvlFilterHandler(level, &handler{t, log.TerminalFormat(false)})
+func Handler(t *testing.T, level logging.Lvl) logging.Handler {
+	return logging.LvlFilterHandler(level, &handler{t, logging.TerminalFormat(false)})
 }
 
 type handler struct {
 	t   *testing.T
-	fmt log.Format
+	fmt logging.Format
 }
 
-func (h *handler) Log(r *log.Record) error {
+func (h *handler) Log(r *logging.Record) error {
 	h.t.Logf("%s", h.fmt.Format(r))
 	return nil
 }
@@ -45,30 +45,30 @@ func (h *handler) Log(r *log.Record) error {
 // which emitted the log message.
 type logger struct {
 	t  *testing.T
-	l  log.Logger
+	l  logging.Logger
 	mu *sync.Mutex
 	h  *bufHandler
 }
 
 type bufHandler struct {
-	buf []*log.Record
-	fmt log.Format
+	buf []*logging.Record
+	fmt logging.Format
 }
 
-func (h *bufHandler) Log(r *log.Record) error {
+func (h *bufHandler) Log(r *logging.Record) error {
 	h.buf = append(h.buf, r)
 	return nil
 }
 
 // Logger returns a logger which logs to the unit test log of t.
-func Logger(t *testing.T, level log.Lvl) log.Logger {
+func Logger(t *testing.T, level logging.Lvl) logging.Logger {
 	l := &logger{
 		t:  t,
-		l:  log.New(),
+		l:  logging.New(),
 		mu: new(sync.Mutex),
-		h:  &bufHandler{fmt: log.TerminalFormat(false)},
+		h:  &bufHandler{fmt: logging.TerminalFormat(false)},
 	}
-	l.l.SetHandler(log.LvlFilterHandler(level, l.h))
+	l.l.SetHandler(logging.LvlFilterHandler(level, l.h))
 	return l
 }
 
@@ -120,15 +120,15 @@ func (l *logger) Crit(msg string, ctx ...any) {
 	l.flush()
 }
 
-func (l *logger) New(ctx ...any) log.Logger {
+func (l *logger) New(ctx ...any) logging.Logger {
 	return &logger{l.t, l.l.New(ctx...), l.mu, l.h}
 }
 
-func (l *logger) GetHandler() log.Handler {
+func (l *logger) GetHandler() logging.Handler {
 	return l.l.GetHandler()
 }
 
-func (l *logger) SetHandler(h log.Handler) {
+func (l *logger) SetHandler(h logging.Handler) {
 	l.l.SetHandler(h)
 }
 

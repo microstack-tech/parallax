@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package tests
 
@@ -24,19 +24,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/state/snapshot"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/validation/state/snapshot"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -58,17 +58,17 @@ func (t *StateTest) UnmarshalJSON(in []byte) error {
 
 type stJSON struct {
 	Env  stEnv                    `json:"env"`
-	Pre  core.GenesisAlloc        `json:"pre"`
+	Pre  validation.GenesisAlloc  `json:"pre"`
 	Tx   stTransaction            `json:"transaction"`
 	Out  hexutil.Bytes            `json:"out"`
 	Post map[string][]stPostState `json:"post"`
 }
 
 type stPostState struct {
-	Root            common.UnprefixedHash `json:"hash"`
-	Logs            common.UnprefixedHash `json:"logs"`
-	TxBytes         hexutil.Bytes         `json:"txbytes"`
-	ExpectException string                `json:"expectException"`
+	Root            util.UnprefixedHash `json:"hash"`
+	Logs            util.UnprefixedHash `json:"logs"`
+	TxBytes         hexutil.Bytes       `json:"txbytes"`
+	ExpectException string              `json:"expectException"`
 	Indexes         struct {
 		Data  int `json:"data"`
 		Gas   int `json:"gas"`
@@ -79,17 +79,17 @@ type stPostState struct {
 //go:generate go run github.com/fjl/gencodec -type stEnv -field-override stEnvMarshaling -out gen_stenv.go
 
 type stEnv struct {
-	Coinbase   common.Address `json:"currentCoinbase"   gencodec:"required"`
-	Difficulty *big.Int       `json:"currentDifficulty" gencodec:"optional"`
-	Random     *big.Int       `json:"currentRandom"     gencodec:"optional"`
-	GasLimit   uint64         `json:"currentGasLimit"   gencodec:"required"`
-	Number     uint64         `json:"currentNumber"     gencodec:"required"`
-	Timestamp  uint64         `json:"currentTimestamp"  gencodec:"required"`
-	BaseFee    *big.Int       `json:"currentBaseFee"    gencodec:"optional"`
+	Coinbase   util.Address `json:"currentCoinbase"   gencodec:"required"`
+	Difficulty *big.Int     `json:"currentDifficulty" gencodec:"optional"`
+	Random     *big.Int     `json:"currentRandom"     gencodec:"optional"`
+	GasLimit   uint64       `json:"currentGasLimit"   gencodec:"required"`
+	Number     uint64       `json:"currentNumber"     gencodec:"required"`
+	Timestamp  uint64       `json:"currentTimestamp"  gencodec:"required"`
+	BaseFee    *big.Int     `json:"currentBaseFee"    gencodec:"optional"`
 }
 
 type stEnvMarshaling struct {
-	Coinbase   common.UnprefixedAddress
+	Coinbase   util.UnprefixedAddress
 	Difficulty *math.HexOrDecimal256
 	Random     *math.HexOrDecimal256
 	GasLimit   math.HexOrDecimal64
@@ -126,7 +126,7 @@ type stTransactionMarshaling struct {
 // The fork definition can be
 // - a plain forkname, e.g. `Byzantium`,
 // - a fork basename, and a list of EIPs to enable; e.g. `Byzantium+1884+1283`.
-func GetChainConfig(forkString string) (baseConfig *params.ChainConfig, eips []int, err error) {
+func GetChainConfig(forkString string) (baseConfig *chainparams.ChainConfig, eips []int, err error) {
 	var (
 		splitForks            = strings.Split(forkString, "+")
 		ok                    bool
@@ -139,7 +139,7 @@ func GetChainConfig(forkString string) (baseConfig *params.ChainConfig, eips []i
 		if eipNum, err := strconv.Atoi(eip); err != nil {
 			return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eipNum)
 		} else {
-			if !vm.ValidEip(eipNum) {
+			if !script.ValidEip(eipNum) {
 				return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eipNum)
 			}
 			eips = append(eips, eipNum)
@@ -160,7 +160,7 @@ func (t *StateTest) Subtests() []StateSubtest {
 }
 
 // Run executes a specific subtest and verifies the post-state and logs
-func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bool) (*snapshot.Tree, *state.StateDB, error) {
+func (t *StateTest) Run(subtest StateSubtest, vmconfig script.Config, snapshotter bool) (*snapshot.Tree, *state.StateDB, error) {
 	snaps, statedb, root, err := t.RunNoVerify(subtest, vmconfig, snapshotter)
 	if err != nil {
 		return snaps, statedb, err
@@ -168,20 +168,20 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 	post := t.json.Post[subtest.Fork][subtest.Index]
 	// N.B: We need to do this in a two-step process, because the first Commit takes care
 	// of suicides, and we need to touch the coinbase _after_ it has potentially suicided.
-	if root != common.Hash(post.Root) {
+	if root != util.Hash(post.Root) {
 		return snaps, statedb, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}
-	if logs := rlpHash(statedb.Logs()); logs != common.Hash(post.Logs) {
+	if logs := rlpHash(statedb.Logs()); logs != util.Hash(post.Logs) {
 		return snaps, statedb, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
 	}
 	return snaps, statedb, nil
 }
 
 // RunNoVerify runs a specific subtest and returns the statedb and post-state root
-func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapshotter bool) (*snapshot.Tree, *state.StateDB, common.Hash, error) {
+func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig script.Config, snapshotter bool) (*snapshot.Tree, *state.StateDB, util.Hash, error) {
 	config, eips, err := GetChainConfig(subtest.Fork)
 	if err != nil {
-		return nil, nil, common.Hash{}, UnsupportedForkError{subtest.Fork}
+		return nil, nil, util.Hash{}, UnsupportedForkError{subtest.Fork}
 	}
 	vmconfig.ExtraEips = eips
 	block := t.genesis(config).ToBlock(nil)
@@ -199,7 +199,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	post := t.json.Post[subtest.Fork][subtest.Index]
 	msg, err := t.json.Tx.toMessage(post, baseFee)
 	if err != nil {
-		return nil, nil, common.Hash{}, err
+		return nil, nil, util.Hash{}, err
 	}
 
 	// Try to recover tx with current signer
@@ -207,30 +207,30 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		var ttx types.Transaction
 		err := ttx.UnmarshalBinary(post.TxBytes)
 		if err != nil {
-			return nil, nil, common.Hash{}, err
+			return nil, nil, util.Hash{}, err
 		}
 
 		if _, err := types.Sender(types.LatestSigner(config), &ttx); err != nil {
-			return nil, nil, common.Hash{}, err
+			return nil, nil, util.Hash{}, err
 		}
 	}
 
 	// Prepare the PVM.
-	txContext := core.NewPVMTxContext(msg)
-	context := core.NewPVMBlockContext(block.Header(), nil, &t.json.Env.Coinbase)
+	txContext := validation.NewPVMTxContext(msg)
+	context := validation.NewPVMBlockContext(block.Header(), nil, &t.json.Env.Coinbase)
 	context.GetHash = vmTestBlockHash
 	context.BaseFee = baseFee
 	if t.json.Env.Random != nil {
-		rnd := common.BigToHash(t.json.Env.Random)
+		rnd := util.BigToHash(t.json.Env.Random)
 		context.Random = &rnd
 		context.Difficulty = big.NewInt(0)
 	}
-	pvm := vm.NewPVM(context, txContext, statedb, config, vmconfig)
+	pvm := script.NewPVM(context, txContext, statedb, config, vmconfig)
 	// Execute the message.
 	snapshot := statedb.Snapshot()
-	gaspool := new(core.GasPool)
+	gaspool := new(validation.GasPool)
 	gaspool.AddGas(block.GasLimit())
-	if _, err := core.ApplyMessage(pvm, msg, gaspool); err != nil {
+	if _, err := validation.ApplyMessage(pvm, msg, gaspool); err != nil {
 		statedb.RevertToSnapshot(snapshot)
 	}
 	// Add 0-value mining reward. This only makes a difference in the cases
@@ -250,9 +250,9 @@ func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
 	return t.json.Tx.GasLimit[t.json.Post[subtest.Fork][subtest.Index].Indexes.Gas]
 }
 
-func MakePreState(db prldb.Database, accounts core.GenesisAlloc, snapshotter bool) (*snapshot.Tree, *state.StateDB) {
+func MakePreState(db dbstore.Database, accounts validation.GenesisAlloc, snapshotter bool) (*snapshot.Tree, *state.StateDB) {
 	sdb := state.NewDatabase(db)
-	statedb, _ := state.New(common.Hash{}, sdb, nil)
+	statedb, _ := state.New(util.Hash{}, sdb, nil)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
 		statedb.SetNonce(addr, a.Nonce)
@@ -272,8 +272,8 @@ func MakePreState(db prldb.Database, accounts core.GenesisAlloc, snapshotter boo
 	return snaps, statedb
 }
 
-func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
-	genesis := &core.Genesis{
+func (t *StateTest) genesis(config *chainparams.ChainConfig) *validation.Genesis {
+	genesis := &validation.Genesis{
 		Config:     config,
 		Coinbase:   t.json.Env.Coinbase,
 		Difficulty: t.json.Env.Difficulty,
@@ -284,15 +284,15 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 	}
 	if t.json.Env.Random != nil {
 		// Post-Merge
-		genesis.Mixhash = common.BigToHash(t.json.Env.Random)
+		genesis.Mixhash = util.BigToHash(t.json.Env.Random)
 		genesis.Difficulty = big.NewInt(0)
 	}
 	return genesis
 }
 
-func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (core.Message, error) {
+func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (validation.Message, error) {
 	// Derive sender from private key if present.
-	var from common.Address
+	var from util.Address
 	if len(tx.PrivateKey) > 0 {
 		key, err := crypto.ToECDSA(tx.PrivateKey)
 		if err != nil {
@@ -301,9 +301,9 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (core.Messa
 		from = crypto.PubkeyToAddress(key.PublicKey)
 	}
 	// Parse recipient if present.
-	var to *common.Address
+	var to *util.Address
 	if tx.To != "" {
-		to = new(common.Address)
+		to = new(util.Address)
 		if err := to.UnmarshalText([]byte(tx.To)); err != nil {
 			return nil, fmt.Errorf("invalid to address: %v", err)
 		}
@@ -363,13 +363,13 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (core.Messa
 	return msg, nil
 }
 
-func rlpHash(x any) (h common.Hash) {
+func rlpHash(x any) (h util.Hash) {
 	hw := sha3.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h
 }
 
-func vmTestBlockHash(n uint64) common.Hash {
-	return common.BytesToHash(crypto.Keccak256([]byte(big.NewInt(int64(n)).String())))
+func vmTestBlockHash(n uint64) util.Hash {
+	return util.BytesToHash(crypto.Keccak256([]byte(big.NewInt(int64(n)).String())))
 }

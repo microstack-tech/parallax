@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -30,15 +30,15 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/cmd/pvm/internal/compiler"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/vm"
-	"github.com/ParallaxProtocol/parallax/core/vm/runtime"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prl/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/script/runtime"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -52,7 +52,7 @@ var runCommand = cli.Command{
 
 // readGenesis will read the given JSON format genesis file and return
 // the initialized Genesis structure
-func readGenesis(genesisPath string) *core.Genesis {
+func readGenesis(genesisPath string) *validation.Genesis {
 	// Make sure we have a valid genesis JSON
 	// genesisPath := ctx.Args().First()
 	if len(genesisPath) == 0 {
@@ -64,7 +64,7 @@ func readGenesis(genesisPath string) *core.Genesis {
 	}
 	defer file.Close()
 
-	genesis := new(core.Genesis)
+	genesis := new(validation.Genesis)
 	if err := json.NewDecoder(file).Decode(genesis); err != nil {
 		utils.Fatalf("invalid genesis file: %v", err)
 	}
@@ -105,9 +105,9 @@ func timedExec(bench bool, execFunc func() ([]byte, uint64, error)) (output []by
 }
 
 func runCmd(ctx *cli.Context) error {
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(ctx.GlobalInt(VerbosityFlag.Name)))
-	log.Root().SetHandler(glogger)
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.Lvl(ctx.GlobalInt(VerbosityFlag.Name)))
+	logging.Root().SetHandler(glogger)
 	logconfig := &logger.Config{
 		EnableMemory:     !ctx.GlobalBool(DisableMemoryFlag.Name),
 		DisableStack:     ctx.GlobalBool(DisableStackFlag.Name),
@@ -117,13 +117,13 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	var (
-		tracer        vm.PVMLogger
+		tracer        script.PVMLogger
 		debugLogger   *logger.StructLogger
 		statedb       *state.StateDB
-		chainConfig   *params.ChainConfig
-		sender        = common.BytesToAddress([]byte("sender"))
-		receiver      = common.BytesToAddress([]byte("receiver"))
-		genesisConfig *core.Genesis
+		chainConfig   *chainparams.ChainConfig
+		sender        = util.BytesToAddress([]byte("sender"))
+		receiver      = util.BytesToAddress([]byte("receiver"))
+		genesisConfig *validation.Genesis
 	)
 	if ctx.GlobalBool(MachineFlag.Name) {
 		tracer = logger.NewJSONLogger(logconfig, os.Stdout)
@@ -141,16 +141,16 @@ func runCmd(ctx *cli.Context) error {
 		statedb, _ = state.New(genesis.Root(), state.NewDatabase(db), nil)
 		chainConfig = gen.Config
 	} else {
-		statedb, _ = state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-		genesisConfig = new(core.Genesis)
+		statedb, _ = state.New(util.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+		genesisConfig = new(validation.Genesis)
 	}
 	if ctx.GlobalString(SenderFlag.Name) != "" {
-		sender = common.HexToAddress(ctx.GlobalString(SenderFlag.Name))
+		sender = util.HexToAddress(ctx.GlobalString(SenderFlag.Name))
 	}
 	statedb.CreateAccount(sender)
 
 	if ctx.GlobalString(ReceiverFlag.Name) != "" {
-		receiver = common.HexToAddress(ctx.GlobalString(ReceiverFlag.Name))
+		receiver = util.HexToAddress(ctx.GlobalString(ReceiverFlag.Name))
 	}
 
 	var code []byte
@@ -184,7 +184,7 @@ func runCmd(ctx *cli.Context) error {
 			fmt.Printf("Invalid input length for hex data (%d)\n", len(hexcode))
 			os.Exit(1)
 		}
-		code = common.FromHex(string(hexcode))
+		code = util.FromHex(string(hexcode))
 	} else if fn := ctx.Args().First(); len(fn) > 0 {
 		// EASM-file to compile
 		src, err := os.ReadFile(fn)
@@ -195,7 +195,7 @@ func runCmd(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		code = common.Hex2Bytes(bin)
+		code = util.Hex2Bytes(bin)
 	}
 	initialGas := ctx.GlobalUint64(GasFlag.Name)
 	if genesisConfig.GasLimit != 0 {
@@ -211,7 +211,7 @@ func runCmd(ctx *cli.Context) error {
 		Time:        new(big.Int).SetUint64(genesisConfig.Timestamp),
 		Coinbase:    genesisConfig.Coinbase,
 		BlockNumber: new(big.Int).SetUint64(genesisConfig.Number),
-		PVMConfig: vm.Config{
+		PVMConfig: script.Config{
 			Tracer: tracer,
 			Debug:  ctx.GlobalBool(DebugFlag.Name) || ctx.GlobalBool(MachineFlag.Name),
 		},
@@ -233,7 +233,7 @@ func runCmd(ctx *cli.Context) error {
 	if chainConfig != nil {
 		runtimeConfig.ChainConfig = chainConfig
 	} else {
-		runtimeConfig.ChainConfig = params.AllXHashProtocolChanges
+		runtimeConfig.ChainConfig = chainparams.AllXHashProtocolChanges
 	}
 
 	var hexInput []byte
@@ -251,7 +251,7 @@ func runCmd(ctx *cli.Context) error {
 		fmt.Println("input length must be even")
 		os.Exit(1)
 	}
-	input := common.FromHex(string(hexInput))
+	input := util.FromHex(string(hexInput))
 
 	var execFunc func() ([]byte, uint64, error)
 	if ctx.GlobalBool(CreateFlag.Name) {

@@ -1,18 +1,18 @@
-// Copyright 2018 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package rpc
 
@@ -20,7 +20,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 )
 
 // StartIPCEndpoint starts an IPC endpoint.
@@ -33,7 +33,7 @@ func StartIPCEndpoint(ipcEndpoint string, apis []API) (net.Listener, *Server, er
 	)
 	for _, api := range apis {
 		if err := handler.RegisterName(api.Namespace, api.Service); err != nil {
-			log.Info("IPC registration failed", "namespace", api.Namespace, "error", err)
+			logging.Info("IPC registration failed", "namespace", api.Namespace, "error", err)
 			return nil, nil, err
 		}
 		if _, ok := regMap[api.Namespace]; !ok {
@@ -41,7 +41,7 @@ func StartIPCEndpoint(ipcEndpoint string, apis []API) (net.Listener, *Server, er
 			regMap[api.Namespace] = struct{}{}
 		}
 	}
-	log.Debug("IPCs registered", "namespaces", strings.Join(registered, ","))
+	logging.Debug("IPCs registered", "namespaces", strings.Join(registered, ","))
 	// All APIs registered, start the IPC listener.
 	listener, err := ipcListen(ipcEndpoint)
 	if err != nil {

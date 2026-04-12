@@ -1,20 +1,20 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
-// Package utils contains internal helper functions for go-ethereum commands.
+// Package utils contains internal helper functions for parallax commands.
 package utils
 
 import (
@@ -30,17 +30,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/prl/prlconfig"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -88,12 +88,12 @@ func StartNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 		}
 
 		shutdown := func() {
-			log.Info("Got interrupt, shutting down...")
+			logging.Info("Got interrupt, shutting down...")
 			go stack.Close()
 			for i := 10; i > 0; i-- {
 				<-sigc
 				if i > 1 {
-					log.Warn("Already shutting down, interrupt more to panic.", "times", i-1)
+					logging.Warn("Already shutting down, interrupt more to panic.", "times", i-1)
 				}
 			}
 			debug.Exit() // ensure trace and CPU profile data is flushed.
@@ -121,21 +121,21 @@ func monitorFreeDiskSpace(sigc chan os.Signal, path string, freeDiskSpaceCritica
 	for {
 		freeSpace, err := getFreeDiskSpace(path)
 		if err != nil {
-			log.Warn("Failed to get free disk space", "path", path, "err", err)
+			logging.Warn("Failed to get free disk space", "path", path, "err", err)
 			break
 		}
 		if freeSpace < freeDiskSpaceCritical {
-			log.Error("Low disk space. Gracefully shutting down Geth to prevent database corruption.", "available", common.StorageSize(freeSpace))
+			logging.Error("Low disk space. Gracefully shutting down Geth to prevent database corruption.", "available", util.StorageSize(freeSpace))
 			sigc <- syscall.SIGTERM
 			break
 		} else if freeSpace < 2*freeDiskSpaceCritical {
-			log.Warn("Disk space is running low. Geth will shutdown if disk space runs below critical level.", "available", common.StorageSize(freeSpace), "critical_level", common.StorageSize(freeDiskSpaceCritical))
+			logging.Warn("Disk space is running low. Geth will shutdown if disk space runs below critical level.", "available", util.StorageSize(freeSpace), "critical_level", util.StorageSize(freeDiskSpaceCritical))
 		}
 		time.Sleep(30 * time.Second)
 	}
 }
 
-func ImportChain(chain *core.BlockChain, fn string) error {
+func ImportChain(chain *validation.BlockChain, fn string) error {
 	// Watch for Ctrl-C while the import is running.
 	// If a signal is received, the import will stop at the next batch.
 	interrupt := make(chan os.Signal, 1)
@@ -145,7 +145,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	defer close(interrupt)
 	go func() {
 		if _, ok := <-interrupt; ok {
-			log.Info("Interrupted during import, stopping at next batch")
+			logging.Info("Interrupted during import, stopping at next batch")
 		}
 		close(stop)
 	}()
@@ -158,7 +158,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 		}
 	}
 
-	log.Info("Importing blockchain", "file", fn)
+	logging.Info("Importing blockchain", "file", fn)
 
 	// Open the file handle and potentially unwrap the gzip stream
 	fh, err := os.Open(fn)
@@ -208,7 +208,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 		}
 		missing := missingBlocks(chain, blocks[:i])
 		if len(missing) == 0 {
-			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
+			logging.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
 			continue
 		}
 		if _, err := chain.InsertChain(missing); err != nil {
@@ -218,7 +218,7 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
-func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block {
+func missingBlocks(chain *validation.BlockChain, blocks []*types.Block) []*types.Block {
 	head := chain.CurrentBlock()
 	for i, block := range blocks {
 		// If we're behind the chain head, only check block, state is available at head
@@ -238,8 +238,8 @@ func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block
 
 // ExportChain exports a blockchain into the specified file, truncating any data
 // already present in the file.
-func ExportChain(blockchain *core.BlockChain, fn string) error {
-	log.Info("Exporting blockchain", "file", fn)
+func ExportChain(blockchain *validation.BlockChain, fn string) error {
+	logging.Info("Exporting blockchain", "file", fn)
 
 	// Open the file handle and potentially wrap with a gzip stream
 	fh, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
@@ -257,15 +257,15 @@ func ExportChain(blockchain *core.BlockChain, fn string) error {
 	if err := blockchain.Export(writer); err != nil {
 		return err
 	}
-	log.Info("Exported blockchain", "file", fn)
+	logging.Info("Exported blockchain", "file", fn)
 
 	return nil
 }
 
 // ExportAppendChain exports a blockchain into the specified file, appending to
 // the file if data already exists in it.
-func ExportAppendChain(blockchain *core.BlockChain, fn string, first uint64, last uint64) error {
-	log.Info("Exporting blockchain", "file", fn)
+func ExportAppendChain(blockchain *validation.BlockChain, fn string, first uint64, last uint64) error {
+	logging.Info("Exporting blockchain", "file", fn)
 
 	// Open the file handle and potentially wrap with a gzip stream
 	fh, err := os.OpenFile(fn, os.O_CREATE|os.O_APPEND|os.O_WRONLY, os.ModePerm)
@@ -283,14 +283,14 @@ func ExportAppendChain(blockchain *core.BlockChain, fn string, first uint64, las
 	if err := blockchain.ExportN(writer, first, last); err != nil {
 		return err
 	}
-	log.Info("Exported blockchain to", "file", fn)
+	logging.Info("Exported blockchain to", "file", fn)
 	return nil
 }
 
 // ImportPreimages imports a batch of exported hash preimages into the database.
 // It's a part of the deprecated functionality, should be removed in the future.
-func ImportPreimages(db prldb.Database, fn string) error {
-	log.Info("Importing preimages", "file", fn)
+func ImportPreimages(db dbstore.Database, fn string) error {
+	logging.Info("Importing preimages", "file", fn)
 
 	// Open the file handle and potentially unwrap the gzip stream
 	fh, err := os.Open(fn)
@@ -308,7 +308,7 @@ func ImportPreimages(db prldb.Database, fn string) error {
 	stream := rlp.NewStream(reader, 0)
 
 	// Import the preimages in batches to prevent disk thrashing
-	preimages := make(map[common.Hash][]byte)
+	preimages := make(map[util.Hash][]byte)
 
 	for {
 		// Read the next entry and ensure it's not junk
@@ -321,10 +321,10 @@ func ImportPreimages(db prldb.Database, fn string) error {
 			return err
 		}
 		// Accumulate the preimages and flush when enough ws gathered
-		preimages[crypto.Keccak256Hash(blob)] = common.CopyBytes(blob)
+		preimages[crypto.Keccak256Hash(blob)] = util.CopyBytes(blob)
 		if len(preimages) > 1024 {
 			rawdb.WritePreimages(db, preimages)
-			preimages = make(map[common.Hash][]byte)
+			preimages = make(map[util.Hash][]byte)
 		}
 	}
 	// Flush the last batch preimage data
@@ -337,8 +337,8 @@ func ImportPreimages(db prldb.Database, fn string) error {
 // ExportPreimages exports all known hash preimages into the specified file,
 // truncating any data already present in the file.
 // It's a part of the deprecated functionality, should be removed in the future.
-func ExportPreimages(db prldb.Database, fn string) error {
-	log.Info("Exporting preimages", "file", fn)
+func ExportPreimages(db dbstore.Database, fn string) error {
+	logging.Info("Exporting preimages", "file", fn)
 
 	// Open the file handle and potentially wrap with a gzip stream
 	fh, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
@@ -361,7 +361,7 @@ func ExportPreimages(db prldb.Database, fn string) error {
 			return err
 		}
 	}
-	log.Info("Exported preimages", "file", fn)
+	logging.Info("Exported preimages", "file", fn)
 	return nil
 }
 
@@ -384,8 +384,8 @@ const (
 )
 
 // ImportLDBData imports a batch of snapshot data into the database
-func ImportLDBData(db prldb.Database, f string, startIndex int64, interrupt chan struct{}) error {
-	log.Info("Importing leveldb data", "file", f)
+func ImportLDBData(db dbstore.Database, f string, startIndex int64, interrupt chan struct{}) error {
+	logging.Info("Importing leveldb data", "file", f)
 
 	// Open the file handle and potentially unwrap the gzip stream
 	fh, err := os.Open(f)
@@ -413,8 +413,8 @@ func ImportLDBData(db prldb.Database, f string, startIndex int64, interrupt chan
 	if header.Version != 0 {
 		return fmt.Errorf("incompatible version %d, (support only 0)", header.Version)
 	}
-	log.Info("Importing data", "file", f, "type", header.Kind, "data age",
-		common.PrettyDuration(time.Since(time.Unix(int64(header.UnixTime), 0))))
+	logging.Info("Importing data", "file", f, "type", header.Kind, "data age",
+		util.PrettyDuration(time.Since(time.Unix(int64(header.UnixTime), 0))))
 
 	// Import the snapshot in batches to prevent disk thrashing
 	var (
@@ -453,7 +453,7 @@ func ImportLDBData(db prldb.Database, f string, startIndex int64, interrupt chan
 		default:
 			return fmt.Errorf("unknown op %d\n", op)
 		}
-		if batch.ValueSize() > prldb.IdealBatchSize {
+		if batch.ValueSize() > dbstore.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				return err
 			}
@@ -466,13 +466,13 @@ func ImportLDBData(db prldb.Database, f string, startIndex int64, interrupt chan
 				if err := batch.Write(); err != nil {
 					return err
 				}
-				log.Info("External data import interrupted", "file", f, "count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+				logging.Info("External data import interrupted", "file", f, "count", count, "elapsed", util.PrettyDuration(time.Since(start)))
 				return nil
 			default:
 			}
 		}
 		if count%1000 == 0 && time.Since(logged) > 8*time.Second {
-			log.Info("Importing external data", "file", f, "count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+			logging.Info("Importing external data", "file", f, "count", count, "elapsed", util.PrettyDuration(time.Since(start)))
 			logged = time.Now()
 		}
 		count += 1
@@ -483,8 +483,8 @@ func ImportLDBData(db prldb.Database, f string, startIndex int64, interrupt chan
 			return err
 		}
 	}
-	log.Info("Imported chain data", "file", f, "count", count,
-		"elapsed", common.PrettyDuration(time.Since(start)))
+	logging.Info("Imported chain data", "file", f, "count", count,
+		"elapsed", util.PrettyDuration(time.Since(start)))
 	return nil
 }
 
@@ -503,7 +503,7 @@ type ChainDataIterator interface {
 // ExportChaindata exports the given data type (truncating any data already present)
 // in the file. If the suffix is 'gz', gzip compression is used.
 func ExportChaindata(fn string, kind string, iter ChainDataIterator, interrupt chan struct{}) error {
-	log.Info("Exporting chain data", "file", fn, "kind", kind)
+	logging.Info("Exporting chain data", "file", fn, "kind", kind)
 	defer iter.Release()
 
 	// Open the file handle and potentially wrap with a gzip stream
@@ -551,20 +551,20 @@ func ExportChaindata(fn string, kind string, iter ChainDataIterator, interrupt c
 			// Check interruption emitted by ctrl+c
 			select {
 			case <-interrupt:
-				log.Info("Chain data exporting interrupted", "file", fn,
-					"kind", kind, "count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+				logging.Info("Chain data exporting interrupted", "file", fn,
+					"kind", kind, "count", count, "elapsed", util.PrettyDuration(time.Since(start)))
 				return nil
 			default:
 			}
 			if time.Since(logged) > 8*time.Second {
-				log.Info("Exporting chain data", "file", fn, "kind", kind,
-					"count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+				logging.Info("Exporting chain data", "file", fn, "kind", kind,
+					"count", count, "elapsed", util.PrettyDuration(time.Since(start)))
 				logged = time.Now()
 			}
 		}
 		count++
 	}
-	log.Info("Exported chain data", "file", fn, "kind", kind, "count", count,
-		"elapsed", common.PrettyDuration(time.Since(start)))
+	logging.Info("Exported chain data", "file", fn, "kind", kind, "count", count,
+		"elapsed", util.PrettyDuration(time.Since(start)))
 	return nil
 }

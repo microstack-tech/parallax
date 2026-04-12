@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package prltest
 
@@ -25,18 +25,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/forkid"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/forkid"
 )
 
 type Chain struct {
-	genesis     core.Genesis
+	genesis     validation.Genesis
 	blocks      []*types.Block
-	chainConfig *params.ChainConfig
+	chainConfig *chainparams.ChainConfig
 }
 
 // Len returns the length of the chain.
@@ -67,11 +67,11 @@ func (c *Chain) TotalDifficultyAt(height int) *big.Int {
 	return sum
 }
 
-func (c *Chain) RootAt(height int) common.Hash {
+func (c *Chain) RootAt(height int) util.Hash {
 	if height < c.Len() {
 		return c.blocks[height].Root()
 	}
-	return common.Hash{}
+	return util.Hash{}
 }
 
 // ForkID gets the fork id of the chain.
@@ -150,14 +150,14 @@ func loadChain(chainfile string, genesis string) (*Chain, error) {
 	return c, nil
 }
 
-func loadGenesis(genesisFile string) (core.Genesis, error) {
+func loadGenesis(genesisFile string) (validation.Genesis, error) {
 	chainConfig, err := os.ReadFile(genesisFile)
 	if err != nil {
-		return core.Genesis{}, err
+		return validation.Genesis{}, err
 	}
-	var gen core.Genesis
+	var gen validation.Genesis
 	if err := json.Unmarshal(chainConfig, &gen); err != nil {
-		return core.Genesis{}, err
+		return validation.Genesis{}, err
 	}
 	return gen, nil
 }

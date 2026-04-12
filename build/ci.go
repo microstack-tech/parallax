@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 //go:build none
 // +build none
@@ -56,10 +56,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/crypto/signify"
 	"github.com/ParallaxProtocol/parallax/internal/build"
-	"github.com/ParallaxProtocol/parallax/params"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/cespare/cp"
 )
 
@@ -112,7 +112,7 @@ var (
 	// A debian package is created for all executables listed here.
 	debParallax = debPackage{
 		Name:        "prlx",
-		Version:     params.Version,
+		Version:     chainparams.Version,
 		Executables: debExecutables,
 	}
 
@@ -178,7 +178,7 @@ func executablePath(name string) string {
 func main() {
 	log.SetFlags(log.Lshortfile)
 
-	if !common.FileExist(filepath.Join("build", "ci.go")) {
+	if !util.FileExist(filepath.Join("build", "ci.go")) {
 		log.Fatal("this script must be run from the root of the repository")
 	}
 	if len(os.Args) < 2 {
@@ -401,7 +401,7 @@ func doArchive(cmdline []string) {
 
 	var (
 		env      = build.Env()
-		baseprlx = archiveBasename(*arch, params.ArchiveVersion(env.Commit))
+		baseprlx = archiveBasename(*arch, chainparams.ArchiveVersion(env.Commit))
 		prlx     = "prlx-" + baseprlx + ext
 		alltools = "prlx-alltools-" + baseprlx + ext
 	)
@@ -526,12 +526,12 @@ func doDocker(cmdline []string) {
 	case env.Branch == "master":
 		tags = []string{"latest"}
 	case strings.HasPrefix(env.Tag, "v1."):
-		tags = []string{"stable", fmt.Sprintf("release-1.%d", params.VersionMinor), "v" + params.Version}
+		tags = []string{"stable", fmt.Sprintf("release-1.%d", chainparams.VersionMinor), "v" + chainparams.Version}
 	}
 	// If architecture specific image builds are requested, build and push them
 	if *image {
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+chainparams.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+chainparams.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
 
 		// Tag and upload the images to Docker Hub
 		for _, tag := range tags {
@@ -693,7 +693,7 @@ func doDebianSource(cmdline []string) {
 	// Create Debian packages and upload them.
 	for _, pkg := range debPackages {
 		for distro, goboot := range debDistroGoBoots {
-			// Prepare the debian package with the go-ethereum sources.
+			// Prepare the debian package with the parallax sources.
 			meta := newDebMetadata(distro, goboot, *signer, env, now, pkg.Name, pkg.Version, pkg.Executables)
 			pkgdir := stageDebianSource(*workdir, meta)
 
@@ -756,7 +756,7 @@ func ppaUpload(workdir, ppa, sshUser string, files []string) {
 	var idfile string
 	if sshkey := getenvBase64("PPA_SSH_KEY"); len(sshkey) > 0 {
 		idfile = filepath.Join(workdir, "sshkey")
-		if !common.FileExist(idfile) {
+		if !util.FileExist(idfile) {
 			os.WriteFile(idfile, sshkey, 0600)
 		}
 	}
@@ -808,7 +808,7 @@ type debMetadata struct {
 
 	PackageName string
 
-	// go-ethereum version being built. Note that this
+	// parallax version being built. Note that this
 	// is not the debian package version. The package version
 	// is constructed by VersionString.
 	Version string
@@ -986,11 +986,11 @@ func doWindowsInstaller(cmdline []string) {
 	// Build the installer. This assumes that all the needed files have been previously
 	// built (don't mix building and packaging to keep cross compilation complexity to a
 	// minimum).
-	version := strings.Split(params.Version, ".")
+	version := strings.Split(chainparams.Version, ".")
 	if env.Commit != "" {
 		version[2] += "-" + env.Commit[:8]
 	}
-	installer, _ := filepath.Abs("prlx-" + archiveBasename(*arch, params.ArchiveVersion(env.Commit)) + ".exe")
+	installer, _ := filepath.Abs("prlx-" + archiveBasename(*arch, chainparams.ArchiveVersion(env.Commit)) + ".exe")
 	build.MustRunCommand("makensis.exe",
 		"/DOUTPUTFILE="+installer,
 		"/DMAJORVERSION="+version[0],
@@ -1049,7 +1049,7 @@ func doAndroidArchive(cmdline []string) {
 	maybeSkipArchive(env)
 
 	// Sign and upload the archive to Azure
-	archive := "prlx-" + archiveBasename("android", params.ArchiveVersion(env.Commit)) + ".aar"
+	archive := "prlx-" + archiveBasename("android", chainparams.ArchiveVersion(env.Commit)) + ".aar"
 	os.Rename("prlx.aar", archive)
 
 	if err := archiveUpload(archive, *upload, *signer, *signify); err != nil {
@@ -1129,7 +1129,7 @@ func newMavenMetadata(env build.Environment) mavenMetadata {
 		}
 	}
 	// Render the version and package strings
-	version := params.Version
+	version := chainparams.Version
 	if isUnstableBuild(env) {
 		version += "-SNAPSHOT"
 	}
@@ -1170,7 +1170,7 @@ func doXCodeFramework(cmdline []string) {
 
 	// Create the archive.
 	maybeSkipArchive(env)
-	archive := "prlx-" + archiveBasename("ios", params.ArchiveVersion(env.Commit))
+	archive := "prlx-" + archiveBasename("ios", chainparams.ArchiveVersion(env.Commit))
 	if err := os.MkdirAll(archive, 0755); err != nil {
 		log.Fatal(err)
 	}
@@ -1223,7 +1223,7 @@ func newPodMetadata(env build.Environment, archive string) podMetadata {
 			}
 		}
 	}
-	version := params.Version
+	version := chainparams.Version
 	if isUnstableBuild(env) {
 		version += "-unstable." + env.Buildnum
 	}

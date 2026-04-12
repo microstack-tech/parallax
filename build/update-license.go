@@ -1,18 +1,18 @@
-// Copyright 2018 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 //go:build none
 // +build none
@@ -90,13 +90,13 @@ var (
 	licenseCommentRE = regexp.MustCompile(`^//\s*(Copyright|This file is part of).*?\n(?://.*?\n)*\n*`)
 
 	// this text appears at the start of AUTHORS
-	authorsFileHeader = "# This is the official list of go-ethereum authors for copyright purposes.\n\n"
+	authorsFileHeader = "# This is the official list of parallax authors for copyright purposes.\n\n"
 )
 
 // this template generates the license comment.
 // its input is an info structure.
 var licenseT = template.Must(template.New("").Parse(`
-// Copyright {{.Year}} The go-ethereum Authors
+// Copyright {{.Year}} The parallax Authors
 // This file is part of {{.Whole false}}.
 //
 // {{.Whole true}} is free software: you can redistribute it and/or modify
@@ -135,12 +135,12 @@ func (i info) ShortLicense() string {
 
 func (i info) Whole(startOfSentence bool) string {
 	if i.gpl() {
-		return "go-ethereum"
+		return "parallax"
 	}
 	if startOfSentence {
-		return "The go-ethereum library"
+		return "The parallax library"
 	}
-	return "the go-ethereum library"
+	return "the parallax library"
 }
 
 func (i info) gpl() bool {
@@ -218,7 +218,7 @@ func getFiles() []string {
 		files = append(files, line)
 	})
 	if err != nil {
-		log.Fatal("error getting files:", err)
+		logging.Fatal("error getting files:", err)
 	}
 	return files
 }
@@ -237,7 +237,7 @@ func gitAuthors(files []string) []string {
 		}
 	})
 	if err != nil {
-		log.Fatalln("error getting authors:", err)
+		logging.Fatalln("error getting authors:", err)
 	}
 	return authors
 }
@@ -245,7 +245,7 @@ func gitAuthors(files []string) []string {
 func readAuthors() []string {
 	content, err := os.ReadFile("AUTHORS")
 	if err != nil && !os.IsNotExist(err) {
-		log.Fatalln("error reading AUTHORS:", err)
+		logging.Fatalln("error reading AUTHORS:", err)
 	}
 	var authors []string
 	for _, a := range bytes.Split(content, []byte("\n")) {
@@ -271,7 +271,7 @@ func mailmapLookup(authors []string) []string {
 		translated = append(translated, line)
 	})
 	if err != nil {
-		log.Fatalln("error translating authors:", err)
+		logging.Fatalln("error translating authors:", err)
 	}
 	return translated
 }
@@ -308,7 +308,7 @@ func writeAuthors(files []string) {
 	}
 	fmt.Println("writing AUTHORS")
 	if err := os.WriteFile("AUTHORS", content.Bytes(), 0644); err != nil {
-		log.Fatalln(err)
+		logging.Fatalln(err)
 	}
 }
 
@@ -381,11 +381,11 @@ func writeLicense(info *info) {
 		return
 	}
 	if err != nil {
-		log.Fatalf("error stat'ing %s: %v\n", info.file, err)
+		logging.Fatalf("error stat'ing %s: %v\n", info.file, err)
 	}
 	content, err := os.ReadFile(info.file)
 	if err != nil {
-		log.Fatalf("error reading %s: %v\n", info.file, err)
+		logging.Fatalf("error reading %s: %v\n", info.file, err)
 	}
 	// Construct new file content.
 	buf := new(bytes.Buffer)
@@ -403,7 +403,7 @@ func writeLicense(info *info) {
 	}
 	fmt.Println("writing", info.ShortLicense(), info.file)
 	if err := os.WriteFile(info.file, buf.Bytes(), fi.Mode()); err != nil {
-		log.Fatalf("error writing %s: %v", info.file, err)
+		logging.Fatalf("error writing %s: %v", info.file, err)
 	}
 }
 

@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package rpc
 
@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
 )
 
 // API describes the set of methods offered over the RPC interface
@@ -129,7 +129,7 @@ func (bn BlockNumber) Int64() int64 {
 
 type BlockNumberOrHash struct {
 	BlockNumber      *BlockNumber `json:"blockNumber,omitempty"`
-	BlockHash        *common.Hash `json:"blockHash,omitempty"`
+	BlockHash        *util.Hash   `json:"blockHash,omitempty"`
 	RequireCanonical bool         `json:"requireCanonical,omitempty"`
 }
 
@@ -170,7 +170,7 @@ func (bnh *BlockNumberOrHash) UnmarshalJSON(data []byte) error {
 		return nil
 	default:
 		if len(input) == 66 {
-			hash := common.Hash{}
+			hash := util.Hash{}
 			err := hash.UnmarshalText([]byte(input))
 			if err != nil {
 				return err
@@ -209,11 +209,11 @@ func (bnh *BlockNumberOrHash) String() string {
 	return "nil"
 }
 
-func (bnh *BlockNumberOrHash) Hash() (common.Hash, bool) {
+func (bnh *BlockNumberOrHash) Hash() (util.Hash, bool) {
 	if bnh.BlockHash != nil {
 		return *bnh.BlockHash, true
 	}
-	return common.Hash{}, false
+	return util.Hash{}, false
 }
 
 func BlockNumberOrHashWithNumber(blockNr BlockNumber) BlockNumberOrHash {
@@ -224,7 +224,7 @@ func BlockNumberOrHashWithNumber(blockNr BlockNumber) BlockNumberOrHash {
 	}
 }
 
-func BlockNumberOrHashWithHash(hash common.Hash, canonical bool) BlockNumberOrHash {
+func BlockNumberOrHashWithHash(hash util.Hash, canonical bool) BlockNumberOrHash {
 	return BlockNumberOrHash{
 		BlockNumber:      nil,
 		BlockHash:        &hash,

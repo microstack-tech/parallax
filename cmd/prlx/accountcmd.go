@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/wallet"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -203,7 +203,7 @@ func accountList(ctx *cli.Context) error {
 }
 
 // tries unlocking the specified account a few times.
-func unlockAccount(ks *keystore.KeyStore, address string, i int, passwords []string) (accounts.Account, string) {
+func unlockAccount(ks *keystore.KeyStore, address string, i int, passwords []string) (wallet.Account, string) {
 	account, err := utils.MakeAddress(ks, address)
 	if err != nil {
 		utils.Fatalf("Could not list accounts: %v", err)
@@ -213,11 +213,11 @@ func unlockAccount(ks *keystore.KeyStore, address string, i int, passwords []str
 		password := utils.GetPassPhraseWithList(prompt, false, i, passwords)
 		err = ks.Unlock(account, password)
 		if err == nil {
-			log.Info("Unlocked account", "address", account.Address.Hex())
+			logging.Info("Unlocked account", "address", account.Address.Hex())
 			return account, password
 		}
 		if err, ok := err.(*keystore.AmbiguousAddrError); ok {
-			log.Info("Unlocked account", "address", account.Address.Hex())
+			logging.Info("Unlocked account", "address", account.Address.Hex())
 			return ambiguousAddrRecovery(ks, err, password), password
 		}
 		if err != keystore.ErrDecrypt {
@@ -228,16 +228,16 @@ func unlockAccount(ks *keystore.KeyStore, address string, i int, passwords []str
 	// All trials expended to unlock account, bail out
 	utils.Fatalf("Failed to unlock account %s (%v)", address, err)
 
-	return accounts.Account{}, ""
+	return wallet.Account{}, ""
 }
 
-func ambiguousAddrRecovery(ks *keystore.KeyStore, err *keystore.AmbiguousAddrError, auth string) accounts.Account {
+func ambiguousAddrRecovery(ks *keystore.KeyStore, err *keystore.AmbiguousAddrError, auth string) wallet.Account {
 	fmt.Printf("Multiple key files exist for address %x:\n", err.Addr)
 	for _, a := range err.Matches {
 		fmt.Println("  ", a.URL)
 	}
 	fmt.Println("Testing your password against all of them...")
-	var match *accounts.Account
+	var match *wallet.Account
 	for _, a := range err.Matches {
 		if err := ks.Unlock(a, auth); err == nil {
 			match = &a

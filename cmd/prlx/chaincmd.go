@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -27,17 +27,17 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/prldb"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -184,7 +184,7 @@ func initGenesis(ctx *cli.Context) error {
 	}
 	defer file.Close()
 
-	genesis := new(core.Genesis)
+	genesis := new(validation.Genesis)
 	if err := json.NewDecoder(file).Decode(genesis); err != nil {
 		utils.Fatalf("invalid genesis file: %v", err)
 	}
@@ -196,12 +196,12 @@ func initGenesis(ctx *cli.Context) error {
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
-		_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+		_, hash, err := validation.SetupGenesisBlock(chaindb, genesis)
 		if err != nil {
 			utils.Fatalf("Failed to write genesis block: %v", err)
 		}
 		chaindb.Close()
-		log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
+		logging.Info("Successfully wrote genesis state", "database", name, "hash", hash)
 	}
 	return nil
 }
@@ -210,7 +210,7 @@ func dumpGenesis(ctx *cli.Context) error {
 	// TODO(rjl493456442) support loading from the custom datadir
 	genesis := utils.MakeGenesis(ctx)
 	if genesis == nil {
-		genesis = core.DefaultGenesisBlock()
+		genesis = validation.DefaultGenesisBlock()
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(genesis); err != nil {
 		utils.Fatalf("could not encode genesis")
@@ -256,13 +256,13 @@ func importChain(ctx *cli.Context) error {
 	if len(ctx.Args()) == 1 {
 		if err := utils.ImportChain(chain, ctx.Args().First()); err != nil {
 			importErr = err
-			log.Error("Import error", "err", err)
+			logging.Error("Import error", "err", err)
 		}
 	} else {
 		for _, arg := range ctx.Args() {
 			if err := utils.ImportChain(chain, arg); err != nil {
 				importErr = err
-				log.Error("Import error", "file", arg, "err", err)
+				logging.Error("Import error", "file", arg, "err", err)
 			}
 		}
 	}
@@ -372,30 +372,30 @@ func exportPreimages(ctx *cli.Context) error {
 	return nil
 }
 
-func parseDumpConfig(ctx *cli.Context, stack *node.Node) (*state.DumpConfig, prldb.Database, common.Hash, error) {
+func parseDumpConfig(ctx *cli.Context, stack *node.Node) (*state.DumpConfig, dbstore.Database, util.Hash, error) {
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	var header *types.Header
 	if ctx.NArg() > 1 {
-		return nil, nil, common.Hash{}, fmt.Errorf("expected 1 argument (number or hash), got %d", ctx.NArg())
+		return nil, nil, util.Hash{}, fmt.Errorf("expected 1 argument (number or hash), got %d", ctx.NArg())
 	}
 	if ctx.NArg() == 1 {
 		arg := ctx.Args().First()
 		if hashish(arg) {
-			hash := common.HexToHash(arg)
+			hash := util.HexToHash(arg)
 			if number := rawdb.ReadHeaderNumber(db, hash); number != nil {
 				header = rawdb.ReadHeader(db, hash, *number)
 			} else {
-				return nil, nil, common.Hash{}, fmt.Errorf("block %x not found", hash)
+				return nil, nil, util.Hash{}, fmt.Errorf("block %x not found", hash)
 			}
 		} else {
 			number, err := strconv.Atoi(arg)
 			if err != nil {
-				return nil, nil, common.Hash{}, err
+				return nil, nil, util.Hash{}, err
 			}
-			if hash := rawdb.ReadCanonicalHash(db, uint64(number)); hash != (common.Hash{}) {
+			if hash := rawdb.ReadCanonicalHash(db, uint64(number)); hash != (util.Hash{}) {
 				header = rawdb.ReadHeader(db, hash, uint64(number))
 			} else {
-				return nil, nil, common.Hash{}, fmt.Errorf("header for block %d not found", number)
+				return nil, nil, util.Hash{}, fmt.Errorf("header for block %d not found", number)
 			}
 		}
 	} else {
@@ -403,19 +403,19 @@ func parseDumpConfig(ctx *cli.Context, stack *node.Node) (*state.DumpConfig, prl
 		header = rawdb.ReadHeadHeader(db)
 	}
 	if header == nil {
-		return nil, nil, common.Hash{}, errors.New("no head block found")
+		return nil, nil, util.Hash{}, errors.New("no head block found")
 	}
-	startArg := common.FromHex(ctx.String(utils.StartKeyFlag.Name))
-	var start common.Hash
+	startArg := util.FromHex(ctx.String(utils.StartKeyFlag.Name))
+	var start util.Hash
 	switch len(startArg) {
 	case 0: // common.Hash
 	case 32:
-		start = common.BytesToHash(startArg)
+		start = util.BytesToHash(startArg)
 	case 20:
 		start = crypto.Keccak256Hash(startArg)
-		log.Info("Converting start-address to hash", "address", common.BytesToAddress(startArg), "hash", start.Hex())
+		logging.Info("Converting start-address to hash", "address", util.BytesToAddress(startArg), "hash", start.Hex())
 	default:
-		return nil, nil, common.Hash{}, fmt.Errorf("invalid start argument: %x. 20 or 32 hex-encoded bytes required", startArg)
+		return nil, nil, util.Hash{}, fmt.Errorf("invalid start argument: %x. 20 or 32 hex-encoded bytes required", startArg)
 	}
 	conf := &state.DumpConfig{
 		SkipCode:          ctx.Bool(utils.ExcludeCodeFlag.Name),
@@ -424,7 +424,7 @@ func parseDumpConfig(ctx *cli.Context, stack *node.Node) (*state.DumpConfig, prl
 		Start:             start.Bytes(),
 		Max:               ctx.Uint64(utils.DumpLimitFlag.Name),
 	}
-	log.Info("State dump configured", "block", header.Number, "hash", header.Hash().Hex(),
+	logging.Info("State dump configured", "block", header.Number, "hash", header.Hash().Hex(),
 		"skipcode", conf.SkipCode, "skipstorage", conf.SkipStorage,
 		"start", hexutil.Encode(conf.Start), "limit", conf.Max)
 	return conf, db, header.Root, nil

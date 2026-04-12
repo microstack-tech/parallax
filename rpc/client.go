@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package rpc
 
@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 )
 
 var (
@@ -521,7 +521,7 @@ func (c *Client) reconnect(ctx context.Context) error {
 	}
 	newconn, err := c.reconnectFunc(ctx)
 	if err != nil {
-		log.Trace("RPC client reconnect failed", "err", err)
+		logging.Trace("RPC client reconnect failed", "err", err)
 		return err
 	}
 	select {
@@ -576,7 +576,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 
 		// Reconnect:
 		case newcodec := <-c.reconnected:
-			log.Debug("RPC client reconnected", "reading", reading, "conn", newcodec.remoteAddr())
+			logging.Debug("RPC client reconnected", "reading", reading, "conn", newcodec.remoteAddr())
 			if reading {
 				// Wait for the previous read loop to exit. This is a rare case which
 				// happens if this loop isn't notified in time after the connection breaks.

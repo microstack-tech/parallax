@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package txfetcher
 
@@ -23,10 +23,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/mclock"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/prl/fetcher"
+	"github.com/ParallaxProtocol/parallax/node/protocol/fetcher"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 var (
@@ -44,7 +44,7 @@ func init() {
 	}
 	txs = make([]*types.Transaction, 65536) // We need to bump enough to hit all the limits
 	for i := 0; i < len(txs); i++ {
-		txs[i] = types.NewTransaction(rand.Uint64(), common.Address{byte(rand.Intn(256))}, new(big.Int), 0, new(big.Int), nil)
+		txs[i] = types.NewTransaction(rand.Uint64(), util.Address{byte(rand.Intn(256))}, new(big.Int), 0, new(big.Int), nil)
 	}
 }
 
@@ -78,11 +78,11 @@ func Fuzz(input []byte) int {
 	rand := rand.New(rand.NewSource(0x3a29)) // Same used in package tests!!!
 
 	f := fetcher.NewTxFetcherForTests(
-		func(common.Hash) bool { return false },
+		func(util.Hash) bool { return false },
 		func(txs []*types.Transaction) []error {
 			return make([]error, len(txs))
 		},
-		func(string, []common.Hash) error { return nil },
+		func(string, []util.Hash) error { return nil },
 		clock, rand,
 	)
 	f.Start()
@@ -115,7 +115,7 @@ func Fuzz(input []byte) int {
 
 			var (
 				announceIdxs = make([]int, announce)
-				announces    = make([]common.Hash, announce)
+				announces    = make([]util.Hash, announce)
 			)
 			for i := 0; i < len(announces); i++ {
 				annBuf := make([]byte, 2)

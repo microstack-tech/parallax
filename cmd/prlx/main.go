@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 // geth is the official command-line client for Parallax.
 package main
@@ -25,24 +25,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
+	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/console/prompt"
+	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
 	"github.com/ParallaxProtocol/parallax/internal/flags"
-	"github.com/ParallaxProtocol/parallax/internal/prlapi"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/prl"
-	"github.com/ParallaxProtocol/parallax/prl/downloader"
-	"github.com/ParallaxProtocol/parallax/prlclient"
+	"github.com/ParallaxProtocol/parallax/node/console/prompt"
+	"github.com/ParallaxProtocol/parallax/node/protocol"
+	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/wallet"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
 
 	// Force-load the tracer engines to trigger registration
-	_ "github.com/ParallaxProtocol/parallax/prl/tracers/js"
-	_ "github.com/ParallaxProtocol/parallax/prl/tracers/native"
+	_ "github.com/ParallaxProtocol/parallax/node/protocol/tracers/js"
+	_ "github.com/ParallaxProtocol/parallax/node/protocol/tracers/native"
 
 	"gopkg.in/urfave/cli.v1"
 )
@@ -205,7 +205,7 @@ func init() {
 	// Initialize the CLI app and start Geth
 	app.Action = geth
 	app.HideVersion = true // we have a command to print the version
-	app.Copyright = "Copyright 2013-2022 The go-ethereum Authors"
+	app.Copyright = "Copyright 2025-2026 The Parallax Protocol Authors"
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,
@@ -269,11 +269,11 @@ func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
 	switch {
 	case ctx.GlobalBool(utils.TestnetFlag.Name):
-		log.Info("Starting Parallax testnet...")
+		logging.Info("Starting Parallax testnet...")
 
 	case ctx.GlobalIsSet(utils.DeveloperFlag.Name):
-		log.Info("Starting Geth in ephemeral dev mode...")
-		log.Warn(`You are running Geth in --dev mode. Please note the following:
+		logging.Info("Starting Geth in ephemeral dev mode...")
+		logging.Warn(`You are running Geth in --dev mode. Please note the following:
 
   1. This mode is only intended for fast, iterative development without assumptions on
      security or persistence.
@@ -290,7 +290,7 @@ func prepare(ctx *cli.Context) {
 `)
 
 	case !ctx.GlobalIsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Parallax mainnet...")
+		logging.Info("Starting Parallax mainnet...")
 	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if ctx.GlobalString(utils.SyncModeFlag.Name) != "light" && !ctx.GlobalIsSet(utils.CacheFlag.Name) && !ctx.GlobalIsSet(utils.NetworkIdFlag.Name) {
@@ -299,13 +299,13 @@ func prepare(ctx *cli.Context) {
 		if !ctx.GlobalIsSet(utils.TestnetFlag.Name) &&
 			!ctx.GlobalIsSet(utils.DeveloperFlag.Name) {
 			// Nope, we're really on mainnet. Bump that cache up!
-			log.Info("Bumping default cache on mainnet", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 4096)
+			logging.Info("Bumping default cache on mainnet", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 4096)
 			ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(4096))
 		}
 	}
 	// If we're running a light client on any network, drop the cache to some meaningfully low amount
 	if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" && !ctx.GlobalIsSet(utils.CacheFlag.Name) {
-		log.Info("Dropping default light client cache", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 128)
+		logging.Info("Dropping default light client cache", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 128)
 		ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(128))
 	}
 
@@ -344,7 +344,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend prlapi.Backend, isCon
 	unlockAccounts(ctx, stack)
 
 	// Register wallet event handlers to open and auto-derive wallets
-	events := make(chan accounts.WalletEvent, 16)
+	events := make(chan wallet.WalletEvent, 16)
 	stack.AccountManager().Subscribe(events)
 
 	// Create a client to interact with local geth node.
@@ -352,36 +352,36 @@ func startNode(ctx *cli.Context, stack *node.Node, backend prlapi.Backend, isCon
 	if err != nil {
 		utils.Fatalf("Failed to attach to self: %v", err)
 	}
-	prlclient := prlclient.NewClient(rpcClient)
+	prlclient := client.NewClient(rpcClient)
 
 	go func() {
 		// Open any wallets already attached
 		for _, wallet := range stack.AccountManager().Wallets() {
 			if err := wallet.Open(""); err != nil {
-				log.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
+				logging.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
 			}
 		}
 		// Listen for wallet event till termination
 		for event := range events {
 			switch event.Kind {
-			case accounts.WalletArrived:
+			case wallet.WalletArrived:
 				if err := event.Wallet.Open(""); err != nil {
-					log.Warn("New wallet appeared, failed to open", "url", event.Wallet.URL(), "err", err)
+					logging.Warn("New wallet appeared, failed to open", "url", event.Wallet.URL(), "err", err)
 				}
-			case accounts.WalletOpened:
+			case wallet.WalletOpened:
 				status, _ := event.Wallet.Status()
-				log.Info("New wallet appeared", "url", event.Wallet.URL(), "status", status)
+				logging.Info("New wallet appeared", "url", event.Wallet.URL(), "status", status)
 
-				var derivationPaths []accounts.DerivationPath
+				var derivationPaths []wallet.DerivationPath
 				if event.Wallet.URL().Scheme == "ledger" {
-					derivationPaths = append(derivationPaths, accounts.LegacyLedgerBaseDerivationPath)
+					derivationPaths = append(derivationPaths, wallet.LegacyLedgerBaseDerivationPath)
 				}
-				derivationPaths = append(derivationPaths, accounts.DefaultBaseDerivationPath)
+				derivationPaths = append(derivationPaths, wallet.DefaultBaseDerivationPath)
 
 				event.Wallet.SelfDerive(derivationPaths, prlclient)
 
-			case accounts.WalletDropped:
-				log.Info("Old wallet dropped", "url", event.Wallet.URL())
+			case wallet.WalletDropped:
+				logging.Info("Old wallet dropped", "url", event.Wallet.URL())
 				event.Wallet.Close()
 			}
 		}
@@ -403,8 +403,8 @@ func startNode(ctx *cli.Context, stack *node.Node, backend prlapi.Backend, isCon
 					continue
 				}
 				if timestamp := time.Unix(int64(done.Latest.Time), 0); time.Since(timestamp) < 10*time.Minute {
-					log.Info("Synchronisation completed", "latestnum", done.Latest.Number, "latesthash", done.Latest.Hash(),
-						"age", common.PrettyAge(timestamp))
+					logging.Info("Synchronisation completed", "latestnum", done.Latest.Number, "latesthash", done.Latest.Hash(),
+						"age", util.PrettyAge(timestamp))
 					stack.Close()
 				}
 			}
@@ -417,7 +417,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend prlapi.Backend, isCon
 		if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
 			utils.Fatalf("Light clients do not support mining")
 		}
-		parallaxBackend, ok := backend.(*prl.PrlAPIBackend)
+		parallaxBackend, ok := backend.(*protocol.PrlAPIBackend)
 		if !ok {
 			utils.Fatalf("Parallax service not running")
 		}

@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package snap
 
@@ -23,53 +23,53 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/vm"
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prl/protocols/snap"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/node/protocol/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	fuzz "github.com/google/gofuzz"
 )
 
-var trieRoot common.Hash
+var trieRoot util.Hash
 
-func getChain() *core.BlockChain {
+func getChain() *validation.BlockChain {
 	db := rawdb.NewMemoryDatabase()
-	ga := make(core.GenesisAlloc, 1000)
+	ga := make(validation.GenesisAlloc, 1000)
 	a := make([]byte, 20)
-	mkStorage := func(k, v int) (common.Hash, common.Hash) {
+	mkStorage := func(k, v int) (util.Hash, util.Hash) {
 		kB := make([]byte, 32)
 		vB := make([]byte, 32)
 		binary.LittleEndian.PutUint64(kB, uint64(k))
 		binary.LittleEndian.PutUint64(vB, uint64(v))
-		return common.BytesToHash(kB), common.BytesToHash(vB)
+		return util.BytesToHash(kB), util.BytesToHash(vB)
 	}
-	storage := make(map[common.Hash]common.Hash)
+	storage := make(map[util.Hash]util.Hash)
 	for i := 0; i < 10; i++ {
 		k, v := mkStorage(i, i)
 		storage[k] = v
 	}
 	for i := 0; i < 1000; i++ {
 		binary.LittleEndian.PutUint64(a, uint64(i+0xff))
-		acc := core.GenesisAccount{Balance: big.NewInt(int64(i))}
+		acc := validation.GenesisAccount{Balance: big.NewInt(int64(i))}
 		if i%2 == 1 {
 			acc.Storage = storage
 		}
-		ga[common.BytesToAddress(a)] = acc
+		ga[util.BytesToAddress(a)] = acc
 	}
-	gspec := core.Genesis{
-		Config: params.TestChainConfig,
+	gspec := validation.Genesis{
+		Config: chainparams.TestChainConfig,
 		Alloc:  ga,
 	}
 	genesis := gspec.MustCommit(db)
-	blocks, _ := core.GenerateChain(gspec.Config, genesis, xhash.NewFaker(), db, 2,
-		func(i int, gen *core.BlockGen) {})
-	cacheConf := &core.CacheConfig{
+	blocks, _ := validation.GenerateChain(gspec.Config, genesis, xhash.NewFaker(), db, 2,
+		func(i int, gen *validation.BlockGen) {})
+	cacheConf := &validation.CacheConfig{
 		TrieCleanLimit:      0,
 		TrieDirtyLimit:      0,
 		TrieTimeLimit:       5 * time.Minute,
@@ -79,7 +79,7 @@ func getChain() *core.BlockChain {
 		SnapshotWait:        true,
 	}
 	trieRoot = blocks[len(blocks)-1].Root()
-	bc, _ := core.NewBlockChain(db, cacheConf, gspec.Config, xhash.NewFaker(), vm.Config{}, nil, nil)
+	bc, _ := validation.NewBlockChain(db, cacheConf, gspec.Config, xhash.NewFaker(), script.Config{}, nil, nil)
 	if _, err := bc.InsertChain(blocks); err != nil {
 		panic(err)
 	}
@@ -87,10 +87,10 @@ func getChain() *core.BlockChain {
 }
 
 type dummyBackend struct {
-	chain *core.BlockChain
+	chain *validation.BlockChain
 }
 
-func (d *dummyBackend) Chain() *core.BlockChain                { return d.chain }
+func (d *dummyBackend) Chain() *validation.BlockChain          { return d.chain }
 func (d *dummyBackend) RunPeer(*snap.Peer, snap.Handler) error { return nil }
 func (d *dummyBackend) PeerInfo(enode.ID) any                  { return "Foo" }
 func (d *dummyBackend) Handle(*snap.Peer, snap.Packet) error   { return nil }

@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package node
 
@@ -27,15 +27,15 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/event"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/prldb"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/wallet"
 	"github.com/prometheus/tsdb/fileutil"
 )
 
@@ -43,8 +43,8 @@ import (
 type Node struct {
 	eventmux      *event.TypeMux
 	config        *Config
-	accman        *accounts.Manager
-	log           log.Logger
+	accman        *wallet.Manager
+	log           logging.Logger
 	keyDir        string            // key store directory
 	keyDirTemp    bool              // If true, key directory will be removed by Stop
 	dirLock       fileutil.Releaser // prevents concurrent use of instance directory
@@ -86,7 +86,7 @@ func New(conf *Config) (*Node, error) {
 		conf.DataDir = absdatadir
 	}
 	if conf.Logger == nil {
-		conf.Logger = log.New()
+		conf.Logger = logging.New()
 	}
 
 	// Ensure that the instance name doesn't cause weird conflicts with
@@ -126,7 +126,7 @@ func New(conf *Config) (*Node, error) {
 	node.keyDirTemp = isEphem
 	// Creates an empty AccountManager with no backends. Callers (e.g. cmd/geth)
 	// are required to add the backends later on.
-	node.accman = accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: conf.InsecureUnlockAllowed})
+	node.accman = wallet.NewManager(&wallet.Config{InsecureUnlockAllowed: conf.InsecureUnlockAllowed})
 
 	// Initialize the p2p server. This creates the node key and discovery databases.
 	node.server.Config.PrivateKey = node.config.NodeKey()
@@ -352,13 +352,13 @@ func (n *Node) obtainJWTSecret(cliParam string) ([]byte, error) {
 		fileName = n.ResolvePath(datadirJWTKey)
 	}
 	// try reading from file
-	log.Debug("Reading JWT secret", "path", fileName)
+	logging.Debug("Reading JWT secret", "path", fileName)
 	if data, err := os.ReadFile(fileName); err == nil {
-		jwtSecret := common.FromHex(strings.TrimSpace(string(data)))
+		jwtSecret := util.FromHex(strings.TrimSpace(string(data)))
 		if len(jwtSecret) == 32 {
 			return jwtSecret, nil
 		}
-		log.Error("Invalid JWT secret", "path", fileName, "length", len(jwtSecret))
+		logging.Error("Invalid JWT secret", "path", fileName, "length", len(jwtSecret))
 		return nil, errors.New("invalid JWT secret")
 	}
 	// Need to generate one
@@ -366,13 +366,13 @@ func (n *Node) obtainJWTSecret(cliParam string) ([]byte, error) {
 	crand.Read(jwtSecret)
 	// if we're in --dev mode, don't bother saving, just show it
 	if fileName == "" {
-		log.Info("Generated ephemeral JWT secret", "secret", hexutil.Encode(jwtSecret))
+		logging.Info("Generated ephemeral JWT secret", "secret", hexutil.Encode(jwtSecret))
 		return jwtSecret, nil
 	}
 	if err := os.WriteFile(fileName, []byte(hexutil.Encode(jwtSecret)), 0600); err != nil {
 		return nil, err
 	}
-	log.Info("Generated JWT secret", "path", fileName)
+	logging.Info("Generated JWT secret", "path", fileName)
 	return jwtSecret, nil
 }
 
@@ -644,7 +644,7 @@ func (n *Node) KeyStoreDir() string {
 }
 
 // AccountManager retrieves the account manager used by the protocol stack.
-func (n *Node) AccountManager() *accounts.Manager {
+func (n *Node) AccountManager() *wallet.Manager {
 	return n.accman
 }
 
@@ -676,14 +676,14 @@ func (n *Node) EventMux() *event.TypeMux {
 // OpenDatabase opens an existing database with the given name (or creates one if no
 // previous can be found) from within the node's instance directory. If the node is
 // ephemeral, a memory database is returned.
-func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, readonly bool) (prldb.Database, error) {
+func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, readonly bool) (dbstore.Database, error) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 	if n.state == closedState {
 		return nil, ErrNodeStopped
 	}
 
-	var db prldb.Database
+	var db dbstore.Database
 	var err error
 	if n.config.DataDir == "" {
 		db = rawdb.NewMemoryDatabase()
@@ -702,14 +702,14 @@ func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, r
 // also attaching a chain freezer to it that moves ancient chain data from the
 // database to immutable append-only files. If the node is an ephemeral one, a
 // memory database is returned.
-func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer, namespace string, readonly bool) (prldb.Database, error) {
+func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer, namespace string, readonly bool) (dbstore.Database, error) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 	if n.state == closedState {
 		return nil, ErrNodeStopped
 	}
 
-	var db prldb.Database
+	var db dbstore.Database
 	var err error
 	if n.config.DataDir == "" {
 		db = rawdb.NewMemoryDatabase()
@@ -739,7 +739,7 @@ func (n *Node) ResolvePath(x string) string {
 // service, the wrapper removes it from the node's database map. This ensures that Node
 // won't auto-close the database if it is closed by the service that opened it.
 type closeTrackingDB struct {
-	prldb.Database
+	dbstore.Database
 	n *Node
 }
 
@@ -751,7 +751,7 @@ func (db *closeTrackingDB) Close() error {
 }
 
 // wrapDatabase ensures the database will be auto-closed when Node is closed.
-func (n *Node) wrapDatabase(db prldb.Database) prldb.Database {
+func (n *Node) wrapDatabase(db dbstore.Database) dbstore.Database {
 	wrapper := &closeTrackingDB{db, n}
 	n.databases[wrapper] = struct{}{}
 	return wrapper

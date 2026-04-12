@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package les
 
@@ -22,30 +22,30 @@ import (
 	"io"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	l "github.com/ParallaxProtocol/parallax/les"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	l "github.com/ParallaxProtocol/parallax/net/les"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 )
 
 var (
 	bankKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	bankAddr   = crypto.PubkeyToAddress(bankKey.PublicKey)
-	bankFunds  = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
+	bankFunds  = new(big.Int).Mul(big.NewInt(100), big.NewInt(chainparams.Ether))
 
 	testChainLen     = 256
-	testContractCode = common.Hex2Bytes("606060405260cc8060106000396000f360606040526000357c01000000000000000000000000000000000000000000000000000000009004806360cd2685146041578063c16431b914606b57603f565b005b6055600480803590602001909190505060a9565b6040518082815260200191505060405180910390f35b60886004808035906020019091908035906020019091905050608a565b005b80600060005083606481101560025790900160005b50819055505b5050565b6000600060005082606481101560025790900160005b5054905060c7565b91905056")
+	testContractCode = util.Hex2Bytes("606060405260cc8060106000396000f360606040526000357c01000000000000000000000000000000000000000000000000000000009004806360cd2685146041578063c16431b914606b57603f565b005b6055600480803590602001909190505060a9565b6040518082815260200191505060405180910390f35b60886004808035906020019091908035906020019091905050608a565b005b80600060005083606481101560025790900160005b50819055505b5050565b6000600060005082606481101560025790900160005b5054905060c7565b91905056")
 
-	chain      *core.BlockChain
-	addrHashes []common.Hash
-	txHashes   []common.Hash
+	chain      *validation.BlockChain
+	addrHashes []util.Hash
+	txHashes   []util.Hash
 
 	chtTrie   *trie.Trie
 	bloomTrie *trie.Trie
@@ -53,34 +53,34 @@ var (
 	bloomKeys [][]byte
 )
 
-func makechain() (bc *core.BlockChain, addrHashes, txHashes []common.Hash) {
+func makechain() (bc *validation.BlockChain, addrHashes, txHashes []util.Hash) {
 	db := rawdb.NewMemoryDatabase()
-	gspec := core.Genesis{
-		Config:   params.TestChainConfig,
-		Alloc:    core.GenesisAlloc{bankAddr: {Balance: bankFunds}},
+	gspec := validation.Genesis{
+		Config:   chainparams.TestChainConfig,
+		Alloc:    validation.GenesisAlloc{bankAddr: {Balance: bankFunds}},
 		GasLimit: 100000000,
 	}
 	genesis := gspec.MustCommit(db)
 	signer := types.HomesteadSigner{}
-	blocks, _ := core.GenerateChain(gspec.Config, genesis, xhash.NewFaker(), db, testChainLen,
-		func(i int, gen *core.BlockGen) {
+	blocks, _ := validation.GenerateChain(gspec.Config, genesis, xhash.NewFaker(), db, testChainLen,
+		func(i int, gen *validation.BlockGen) {
 			var (
 				tx   *types.Transaction
-				addr common.Address
+				addr util.Address
 			)
 			nonce := uint64(i)
 			if i%4 == 0 {
 				tx, _ = types.SignTx(types.NewContractCreation(nonce, big.NewInt(0), 200000, big.NewInt(0), testContractCode), signer, bankKey)
 				addr = crypto.CreateAddress(bankAddr, nonce)
 			} else {
-				addr = common.BigToAddress(big.NewInt(int64(i)))
-				tx, _ = types.SignTx(types.NewTransaction(nonce, addr, big.NewInt(10000), params.TxGas, big.NewInt(params.GWei), nil), signer, bankKey)
+				addr = util.BigToAddress(big.NewInt(int64(i)))
+				tx, _ = types.SignTx(types.NewTransaction(nonce, addr, big.NewInt(10000), chainparams.TxGas, big.NewInt(chainparams.GWei), nil), signer, bankKey)
 			}
 			gen.AddTx(tx)
 			addrHashes = append(addrHashes, crypto.Keccak256Hash(addr[:]))
 			txHashes = append(txHashes, tx.Hash())
 		})
-	bc, _ = core.NewBlockChain(db, nil, gspec.Config, xhash.NewFaker(), vm.Config{}, nil, nil)
+	bc, _ = validation.NewBlockChain(db, nil, gspec.Config, xhash.NewFaker(), script.Config{}, nil, nil)
 	if _, err := bc.InsertChain(blocks); err != nil {
 		panic(err)
 	}
@@ -88,8 +88,8 @@ func makechain() (bc *core.BlockChain, addrHashes, txHashes []common.Hash) {
 }
 
 func makeTries() (chtTrie *trie.Trie, bloomTrie *trie.Trie, chtKeys, bloomKeys [][]byte) {
-	chtTrie, _ = trie.New(common.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
-	bloomTrie, _ = trie.New(common.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
+	chtTrie, _ = trie.New(util.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
+	bloomTrie, _ = trie.New(util.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase()))
 	for i := 0; i < testChainLen; i++ {
 		// The element in CHT is <big-endian block number> -> <block hash>
 		key := make([]byte, 8)
@@ -112,11 +112,11 @@ func init() {
 }
 
 type fuzzer struct {
-	chain *core.BlockChain
-	pool  *core.TxPool
+	chain *validation.BlockChain
+	pool  *validation.TxPool
 
 	chainLen  int
-	addr, txs []common.Hash
+	addr, txs []util.Hash
 	nonce     uint64
 
 	chtKeys   [][]byte
@@ -139,7 +139,7 @@ func newFuzzer(input []byte) *fuzzer {
 		chtKeys:   chtKeys,
 		bloomKeys: bloomKeys,
 		nonce:     uint64(len(txHashes)),
-		pool:      core.NewTxPool(core.DefaultTxPoolConfig, params.TestChainConfig, chain),
+		pool:      validation.NewTxPool(validation.DefaultTxPoolConfig, chainparams.TestChainConfig, chain),
 		input:     bytes.NewReader(input),
 	}
 }
@@ -187,12 +187,12 @@ func (f *fuzzer) randomX(max int) uint64 {
 	return (uint64(1)<<(a%64+1) - 1) & (uint64(a) * 343897772345826595)
 }
 
-func (f *fuzzer) randomBlockHash() common.Hash {
+func (f *fuzzer) randomBlockHash() util.Hash {
 	h := f.chain.GetCanonicalHash(uint64(f.randomInt(3 * f.chainLen)))
-	if h != (common.Hash{}) {
+	if h != (util.Hash{}) {
 		return h
 	}
-	return common.BytesToHash(f.read(common.HashLength))
+	return util.BytesToHash(f.read(util.HashLength))
 }
 
 func (f *fuzzer) randomAddrHash() []byte {
@@ -200,7 +200,7 @@ func (f *fuzzer) randomAddrHash() []byte {
 	if i < len(f.addr) {
 		return f.addr[i].Bytes()
 	}
-	return f.read(common.HashLength)
+	return f.read(util.HashLength)
 }
 
 func (f *fuzzer) randomCHTTrieKey() []byte {
@@ -219,19 +219,19 @@ func (f *fuzzer) randomBloomTrieKey() []byte {
 	return f.read(10)
 }
 
-func (f *fuzzer) randomTxHash() common.Hash {
+func (f *fuzzer) randomTxHash() util.Hash {
 	i := f.randomInt(3 * len(f.txs))
 	if i < len(f.txs) {
 		return f.txs[i]
 	}
-	return common.BytesToHash(f.read(common.HashLength))
+	return util.BytesToHash(f.read(util.HashLength))
 }
 
-func (f *fuzzer) BlockChain() *core.BlockChain {
+func (f *fuzzer) BlockChain() *validation.BlockChain {
 	return f.chain
 }
 
-func (f *fuzzer) TxPool() *core.TxPool {
+func (f *fuzzer) TxPool() *validation.TxPool {
 	return f.pool
 }
 
@@ -302,7 +302,7 @@ func Fuzz(input []byte) int {
 			f.doFuzz(l.GetBlockHeadersMsg, req)
 
 		case 1:
-			req := &l.GetBlockBodiesPacket{Hashes: make([]common.Hash, f.randomInt(l.MaxBodyFetch+1))}
+			req := &l.GetBlockBodiesPacket{Hashes: make([]util.Hash, f.randomInt(l.MaxBodyFetch+1))}
 			for i := range req.Hashes {
 				req.Hashes[i] = f.randomBlockHash()
 			}
@@ -319,7 +319,7 @@ func Fuzz(input []byte) int {
 			f.doFuzz(l.GetCodeMsg, req)
 
 		case 3:
-			req := &l.GetReceiptsPacket{Hashes: make([]common.Hash, f.randomInt(l.MaxReceiptFetch+1))}
+			req := &l.GetReceiptsPacket{Hashes: make([]util.Hash, f.randomInt(l.MaxReceiptFetch+1))}
 			for i := range req.Hashes {
 				req.Hashes[i] = f.randomBlockHash()
 			}
@@ -391,12 +391,12 @@ func Fuzz(input []byte) int {
 					nonce = f.nonce
 					f.nonce += 1
 				}
-				req.Txs[i], _ = types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(10000), params.TxGas, big.NewInt(1000000000*int64(f.randomByte())), nil), signer, bankKey)
+				req.Txs[i], _ = types.SignTx(types.NewTransaction(nonce, util.Address{}, big.NewInt(10000), chainparams.TxGas, big.NewInt(1000000000*int64(f.randomByte())), nil), signer, bankKey)
 			}
 			f.doFuzz(l.SendTxV2Msg, req)
 
 		case 7:
-			req := &l.GetTxStatusPacket{Hashes: make([]common.Hash, f.randomInt(l.MaxTxStatus+1))}
+			req := &l.GetTxStatusPacket{Hashes: make([]util.Hash, f.randomInt(l.MaxTxStatus+1))}
 			for i := range req.Hashes {
 				req.Hashes[i] = f.randomTxHash()
 			}

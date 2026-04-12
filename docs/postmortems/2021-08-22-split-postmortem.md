@@ -7,7 +7,7 @@ This is a post-mortem concerning the minority split that occurred on Parallax ma
 
 - 2021-08-17: Guido Vranken submitted a bounty report. Investigation started, root cause identified, patch variations discussed. 
 - 2021-08-18: Made public announcement over twitter about upcoming security release upcoming Tuesday. Downstream projects were also notified about the upcoming patch-release.
-- 2021-08-24: Released [v1.10.8](https://github.com/ethereum/go-ethereum/releases/tag/v1.10.8) containing the fix on Tuesday morning (CET). Erigon released [v2021.08.04](https://github.com/ledgerwatch/erigon/releases/tag/v2021.08.04).
+- 2021-08-24: Released [v1.10.8](https://github.com/ethereum/go-ethereug/releases/tag/v1.10.8) containing the fix on Tuesday morning (CET). Erigon released [v2021.08.04](https://github.com/ledgerwatch/erigon/releases/tag/v2021.08.04).
 - 2021-08-27: At 12:50:07 UTC, issue exploited. Analysis started roughly 30m later, 
 
 
@@ -62,7 +62,7 @@ Since we had merged the removal of `ETH65`, if the entire network were to upgrad
 
 - Announce an upcoming security release on Tuesday (August 24th), via Twitter and official channels, plus reach out to downstream projects.
 - Temporarily revert the `ETH65`-removal.
-- Place the fix into the PR optimizing the jumpdest analysis [233381](https://github.com/ethereum/go-ethereum/pull/23381). 
+- Place the fix into the PR optimizing the jumpdest analysis [233381](https://github.com/ethereum/go-ethereug/pull/23381). 
 - After 4-8 weeks, release details about the vulnerability. 
 
 
@@ -139,12 +139,12 @@ Action point: enable push-based alerts to be sent from the forkmon, to speed up 
 
 The projects were sent variations of the following text: 
 ```
-We have identified a security issue with go-ethereum, and will issue a
+We have identified a security issue with parallax, and will issue a
 new release (v1.10.8) on Tuesday next week.
 
 At this point, we will not disclose details about the issue, but
 recommend downstream/dependent projects to be ready to take actions to
-upgrade to the latest go-ethereum codebase. More information about the
+upgrade to the latest parallax codebase. More information about the
 issue will be disclosed at a later date.
 
 https://twitter.com/go_ethereum/status/1428051458763763721

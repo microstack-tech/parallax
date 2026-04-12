@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
 	"github.com/cloudflare/cloudflare-go"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -72,14 +72,14 @@ func (c *cloudflareClient) deploy(name string, t *dnsdisc.Tree) error {
 // checkZone verifies permissions on the CloudFlare DNS Zone for name.
 func (c *cloudflareClient) checkZone(name string) error {
 	if c.zoneID == "" {
-		log.Info(fmt.Sprintf("Finding CloudFlare zone ID for %s", name))
+		logging.Info(fmt.Sprintf("Finding CloudFlare zone ID for %s", name))
 		id, err := c.ZoneIDByName(name)
 		if err != nil {
 			return err
 		}
 		c.zoneID = id
 	}
-	log.Info(fmt.Sprintf("Checking Permissions on zone %s", c.zoneID))
+	logging.Info(fmt.Sprintf("Checking Permissions on zone %s", c.zoneID))
 	zone, err := c.ZoneDetails(context.Background(), c.zoneID)
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ func (c *cloudflareClient) uploadRecords(name string, records map[string]string)
 	}
 	records = lrecords
 
-	log.Info(fmt.Sprintf("Retrieving existing TXT records on %s", name))
+	logging.Info(fmt.Sprintf("Retrieving existing TXT records on %s", name))
 	entries, err := c.DNSRecords(context.Background(), c.zoneID, cloudflare.DNSRecord{Type: "TXT"})
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (c *cloudflareClient) uploadRecords(name string, records map[string]string)
 	}
 
 	// Iterate over the new records and inject anything missing.
-	log.Info("Updating DNS entries")
+	logging.Info("Updating DNS entries")
 	created := 0
 	updated := 0
 	skipped := 0
@@ -134,7 +134,7 @@ func (c *cloudflareClient) uploadRecords(name string, records map[string]string)
 		old, exists := existing[path]
 		if !exists {
 			// Entry is unknown, push a new one to Cloudflare.
-			log.Debug(fmt.Sprintf("Creating %s = %q", path, val))
+			logging.Debug(fmt.Sprintf("Creating %s = %q", path, val))
 			created++
 			ttl := rootTTL
 			if path != name {
@@ -144,35 +144,35 @@ func (c *cloudflareClient) uploadRecords(name string, records map[string]string)
 			_, err = c.CreateDNSRecord(context.Background(), c.zoneID, record)
 		} else if old.Content != val {
 			// Entry already exists, only change its content.
-			log.Debug(fmt.Sprintf("Updating %s from %q to %q", path, old.Content, val))
+			logging.Debug(fmt.Sprintf("Updating %s from %q to %q", path, old.Content, val))
 			updated++
 			old.Content = val
 			err = c.UpdateDNSRecord(context.Background(), c.zoneID, old.ID, old)
 		} else {
 			skipped++
-			log.Debug(fmt.Sprintf("Skipping %s = %q", path, val))
+			logging.Debug(fmt.Sprintf("Skipping %s = %q", path, val))
 		}
 		if err != nil {
 			return fmt.Errorf("failed to publish %s: %v", path, err)
 		}
 	}
 
-	log.Info("Updated DNS entries", "new", created, "updated", updated, "untouched", skipped)
+	logging.Info("Updated DNS entries", "new", created, "updated", updated, "untouched", skipped)
 
 	// Iterate over the old records and delete anything stale.
 	deleted := 0
-	log.Info("Deleting stale DNS entries")
+	logging.Info("Deleting stale DNS entries")
 	for path, entry := range existing {
 		if _, ok := records[path]; ok {
 			continue
 		}
 		// Stale entry, nuke it.
-		log.Debug(fmt.Sprintf("Deleting %s = %q", path, entry.Content))
+		logging.Debug(fmt.Sprintf("Deleting %s = %q", path, entry.Content))
 		deleted++
 		if err := c.DeleteDNSRecord(context.Background(), c.zoneID, entry.ID); err != nil {
 			return fmt.Errorf("failed to delete %s: %v", path, err)
 		}
 	}
-	log.Info("Deleted stale DNS entries", "count", deleted)
+	logging.Info("Deleted stale DNS entries", "count", deleted)
 	return nil
 }

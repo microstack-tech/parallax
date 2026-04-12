@@ -1,43 +1,43 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
 import (
 	"strconv"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/accounts/abi/bind"
-	"github.com/ParallaxProtocol/parallax/accounts/external"
+	"github.com/ParallaxProtocol/parallax/abi/bind"
+	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/contracts/checkpointoracle"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prlclient"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/wallet"
+	"github.com/ParallaxProtocol/parallax/wallet/external"
 	"gopkg.in/urfave/cli.v1"
 )
 
 // newClient creates a client with specified remote URL.
-func newClient(ctx *cli.Context) *prlclient.Client {
-	client, err := prlclient.Dial(ctx.GlobalString(nodeURLFlag.Name))
+func newClient(ctx *cli.Context) *client.Client {
+	c, err := client.Dial(ctx.GlobalString(nodeURLFlag.Name))
 	if err != nil {
 		utils.Fatalf("Failed to connect to Parallax node: %v", err)
 	}
-	return client
+	return c
 }
 
 // newRPCClient creates a rpc client with specified node URL.
@@ -51,18 +51,18 @@ func newRPCClient(url string) *rpc.Client {
 
 // getContractAddr retrieves the register contract address through
 // rpc request.
-func getContractAddr(client *rpc.Client) common.Address {
+func getContractAddr(client *rpc.Client) util.Address {
 	var addr string
 	if err := client.Call(&addr, "les_getCheckpointContractAddress"); err != nil {
 		utils.Fatalf("Failed to fetch checkpoint oracle address: %v", err)
 	}
-	return common.HexToAddress(addr)
+	return util.HexToAddress(addr)
 }
 
 // getCheckpoint retrieves the specified checkpoint or the latest one
 // through rpc request.
-func getCheckpoint(ctx *cli.Context, client *rpc.Client) *params.TrustedCheckpoint {
-	var checkpoint *params.TrustedCheckpoint
+func getCheckpoint(ctx *cli.Context, client *rpc.Client) *chainparams.TrustedCheckpoint {
+	var checkpoint *chainparams.TrustedCheckpoint
 
 	if ctx.GlobalIsSet(indexFlag.Name) {
 		var result [3]string
@@ -70,11 +70,11 @@ func getCheckpoint(ctx *cli.Context, client *rpc.Client) *params.TrustedCheckpoi
 		if err := client.Call(&result, "les_getCheckpoint", index); err != nil {
 			utils.Fatalf("Failed to get local checkpoint %v, please ensure the les API is exposed", err)
 		}
-		checkpoint = &params.TrustedCheckpoint{
+		checkpoint = &chainparams.TrustedCheckpoint{
 			SectionIndex: index,
-			SectionHead:  common.HexToHash(result[0]),
-			CHTRoot:      common.HexToHash(result[1]),
-			BloomRoot:    common.HexToHash(result[2]),
+			SectionHead:  util.HexToHash(result[0]),
+			CHTRoot:      util.HexToHash(result[1]),
+			BloomRoot:    util.HexToHash(result[2]),
 		}
 	} else {
 		var result [4]string
@@ -86,11 +86,11 @@ func getCheckpoint(ctx *cli.Context, client *rpc.Client) *params.TrustedCheckpoi
 		if err != nil {
 			utils.Fatalf("Failed to parse checkpoint index %v", err)
 		}
-		checkpoint = &params.TrustedCheckpoint{
+		checkpoint = &chainparams.TrustedCheckpoint{
 			SectionIndex: index,
-			SectionHead:  common.HexToHash(result[1]),
-			CHTRoot:      common.HexToHash(result[2]),
-			BloomRoot:    common.HexToHash(result[3]),
+			SectionHead:  util.HexToHash(result[1]),
+			CHTRoot:      util.HexToHash(result[2]),
+			BloomRoot:    util.HexToHash(result[3]),
 		}
 	}
 	return checkpoint
@@ -98,12 +98,12 @@ func getCheckpoint(ctx *cli.Context, client *rpc.Client) *params.TrustedCheckpoi
 
 // newContract creates a registrar contract instance with specified
 // contract address or the default contracts for mainnet or testnet.
-func newContract(client *rpc.Client) (common.Address, *checkpointoracle.CheckpointOracle) {
-	addr := getContractAddr(client)
-	if addr == (common.Address{}) {
+func newContract(conn *rpc.Client) (util.Address, *checkpointoracle.CheckpointOracle) {
+	addr := getContractAddr(conn)
+	if addr == (util.Address{}) {
 		utils.Fatalf("No specified registrar contract address")
 	}
-	contract, err := checkpointoracle.NewCheckpointOracle(addr, prlclient.NewClient(client))
+	contract, err := checkpointoracle.NewCheckpointOracle(addr, client.NewClient(conn))
 	if err != nil {
 		utils.Fatalf("Failed to setup registrar contract %s: %v", addr, err)
 	}
@@ -116,5 +116,5 @@ func newClefSigner(ctx *cli.Context) *bind.TransactOpts {
 	if err != nil {
 		utils.Fatalf("Failed to create clef signer %v", err)
 	}
-	return bind.NewClefTransactor(clef, accounts.Account{Address: common.HexToAddress(ctx.String(signerFlag.Name))})
+	return bind.NewClefTransactor(clef, wallet.Account{Address: util.HexToAddress(ctx.String(signerFlag.Name))})
 }
