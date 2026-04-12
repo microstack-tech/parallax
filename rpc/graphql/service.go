@@ -55,7 +55,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // New constructs a new GraphQL service instance.
-func New(stack *node.Node, backend prlapi.Backend, cors, vhosts []string) error {
+func New(stack *node.Node, backend api.Backend, cors, vhosts []string) error {
 	if backend == nil {
 		panic("missing backend")
 	}
@@ -65,7 +65,7 @@ func New(stack *node.Node, backend prlapi.Backend, cors, vhosts []string) error 
 
 // newHandler returns a new `http.Handler` that will answer GraphQL queries.
 // It additionally exports an interactive query browser on the / endpoint.
-func newHandler(stack *node.Node, backend prlapi.Backend, cors, vhosts []string) error {
+func newHandler(stack *node.Node, backend api.Backend, cors, vhosts []string) error {
 	q := Resolver{backend}
 
 	s, err := graphql.ParseSchema(schema, &q)

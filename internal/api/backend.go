@@ -15,7 +15,7 @@
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package prlapi implements the general Parallax API functions.
-package prlapi
+package api
 
 import (
 	"context"

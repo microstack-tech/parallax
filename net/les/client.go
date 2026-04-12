@@ -74,7 +74,7 @@ type LightParallax struct {
 	eventMux       *event.TypeMux
 	engine         consensus.Engine
 	accountManager *wallet.Manager
-	netRPCService  *prlapi.PublicNetAPI
+	netRPCService  *api.PublicNetAPI
 
 	p2pServer  *p2p.Server
 	p2pConfig  *p2p.Config
@@ -181,7 +181,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 		leth.blockchain.DisableCheckFreq()
 	}
 
-	leth.netRPCService = prlapi.NewPublicNetAPI(leth.p2pServer, leth.config.NetworkId)
+	leth.netRPCService = api.NewPublicNetAPI(leth.p2pServer, leth.config.NetworkId)
 
 	// Register the backend on the node
 	stack.RegisterAPIs(leth.APIs())
@@ -276,7 +276,7 @@ func (s *LightDummyAPI) Mining() bool {
 // APIs returns the collection of RPC services the parallax package offers.
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (s *LightParallax) APIs() []rpc.API {
-	apis := prlapi.GetAPIs(s.ApiBackend)
+	apis := api.GetAPIs(s.ApiBackend)
 	// Append consensus engine APIs based on engine type
 	switch e := s.engine.(type) {
 	case *xhash.XHash:
@@ -284,7 +284,7 @@ func (s *LightParallax) APIs() []rpc.API {
 		apis = append(apis, rpc.API{Namespace: "eth", Version: "1.0", Service: api, Public: true})
 		apis = append(apis, rpc.API{Namespace: "xhash", Version: "1.0", Service: api, Public: true})
 	case *clique.Clique:
-		apis = append(apis, rpc.API{Namespace: "clique", Version: "1.0", Service: prlapi.NewCliqueAPI(s.BlockChain().HeaderChain(), e), Public: false})
+		apis = append(apis, rpc.API{Namespace: "clique", Version: "1.0", Service: api.NewCliqueAPI(s.BlockChain().HeaderChain(), e), Public: false})
 	}
 	return append(apis, []rpc.API{
 		{

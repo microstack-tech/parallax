@@ -537,12 +537,6 @@ func (m *mockTxPool) remove(hash util.Hash) {
 	delete(m.txs, hash)
 }
 
-func (m *mockTxPool) size() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.txs)
-}
-
 type pipelineSim struct {
 	oracle    *Oracle
 	pool      *mockTxPool

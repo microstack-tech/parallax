@@ -92,7 +92,7 @@ type Parallax struct {
 	coinbase util.Address
 
 	networkID     uint64
-	netRPCService *prlapi.PublicNetAPI
+	netRPCService *api.PublicNetAPI
 
 	p2pServer *p2p.Server
 
@@ -255,7 +255,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 	}
 
 	// Start the RPC service
-	prl.netRPCService = prlapi.NewPublicNetAPI(prl.p2pServer, config.NetworkId)
+	prl.netRPCService = api.NewPublicNetAPI(prl.p2pServer, config.NetworkId)
 
 	// Register the backend on the node
 	stack.RegisterAPIs(prl.APIs())
@@ -288,7 +288,7 @@ func makeExtraData(extra []byte) []byte {
 // APIs return the collection of RPC services the parallax package offers.
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (s *Parallax) APIs() []rpc.API {
-	apis := prlapi.GetAPIs(s.APIBackend)
+	apis := api.GetAPIs(s.APIBackend)
 
 	// Append consensus engine APIs based on engine type
 	switch e := s.engine.(type) {
@@ -297,7 +297,7 @@ func (s *Parallax) APIs() []rpc.API {
 		apis = append(apis, rpc.API{Namespace: "eth", Version: "1.0", Service: api, Public: true})
 		apis = append(apis, rpc.API{Namespace: "xhash", Version: "1.0", Service: api, Public: true})
 	case *clique.Clique:
-		apis = append(apis, rpc.API{Namespace: "clique", Version: "1.0", Service: prlapi.NewCliqueAPI(s.BlockChain(), e), Public: false})
+		apis = append(apis, rpc.API{Namespace: "clique", Version: "1.0", Service: api.NewCliqueAPI(s.BlockChain(), e), Public: false})
 	}
 
 	// Append all the local APIs and return

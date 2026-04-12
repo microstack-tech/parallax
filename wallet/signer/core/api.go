@@ -54,7 +54,7 @@ type ExternalAPI interface {
 	// New request to create a new account
 	New(ctx context.Context) (util.Address, error)
 	// SignTransaction request to sign the specified transaction
-	SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*prlapi.SignTransactionResult, error)
+	SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*api.SignTransactionResult, error)
 	// SignData - request to sign the given data (plus prefix)
 	SignData(ctx context.Context, contentType string, addr util.MixedcaseAddress, data any) (hexutil.Bytes, error)
 	// SignTypedData - request to sign the given structured data (plus prefix)
@@ -85,7 +85,7 @@ type UIClientAPI interface {
 	ShowInfo(message string)
 	// OnApprovedTx notifies the UI about a transaction having been successfully signed.
 	// This method can be used by a UI to keep track of e.g. how much has been sent to a particular recipient.
-	OnApprovedTx(tx prlapi.SignTransactionResult)
+	OnApprovedTx(tx api.SignTransactionResult)
 	// OnSignerStartup is invoked when the signer boots, and tells the UI info about external API location and version
 	// information
 	OnSignerStartup(info StartupInfo)
@@ -292,8 +292,8 @@ func NewSignerAPI(am *wallet.Manager, chainID int64, noUSB bool, ui UIClientAPI,
 	return signer
 }
 
-func (api *SignerAPI) openTrezor(url wallet.URL) {
-	resp, err := api.UI.OnInputRequired(UserInputRequest{
+func (s *SignerAPI) openTrezor(url wallet.URL) {
+	resp, err := s.UI.OnInputRequired(UserInputRequest{
 		Prompt: "Pin required to open Trezor wallet\n" +
 			"Look at the device for number positions\n\n" +
 			"7 | 8 | 9\n" +
@@ -310,7 +310,7 @@ func (api *SignerAPI) openTrezor(url wallet.URL) {
 	}
 	// We're using the URL instead of the pointer to the
 	// Wallet -- perhaps it is not actually present anymore
-	w, err := api.am.Wallet(url.String())
+	w, err := s.am.Wallet(url.String())
 	if err != nil {
 		logging.Warn("wallet unavailable", "url", url)
 		return
@@ -323,24 +323,24 @@ func (api *SignerAPI) openTrezor(url wallet.URL) {
 }
 
 // startUSBListener starts a listener for USB events, for hardware wallet interaction
-func (api *SignerAPI) startUSBListener() {
+func (s *SignerAPI) startUSBListener() {
 	eventCh := make(chan wallet.WalletEvent, 16)
-	am := api.am
+	am := s.am
 	am.Subscribe(eventCh)
 	// Open any wallets already attached
 	for _, wallet := range am.Wallets() {
 		if err := wallet.Open(""); err != nil {
 			logging.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
 			if err == usbwallet.ErrTrezorPINNeeded {
-				go api.openTrezor(wallet.URL())
+				go s.openTrezor(wallet.URL())
 			}
 		}
 	}
-	go api.derivationLoop(eventCh)
+	go s.derivationLoop(eventCh)
 }
 
 // derivationLoop listens for wallet events
-func (api *SignerAPI) derivationLoop(events chan wallet.WalletEvent) {
+func (s *SignerAPI) derivationLoop(events chan wallet.WalletEvent) {
 	// Listen for wallet event till termination
 	for event := range events {
 		switch event.Kind {
@@ -348,7 +348,7 @@ func (api *SignerAPI) derivationLoop(events chan wallet.WalletEvent) {
 			if err := event.Wallet.Open(""); err != nil {
 				logging.Warn("New wallet appeared, failed to open", "url", event.Wallet.URL(), "err", err)
 				if err == usbwallet.ErrTrezorPINNeeded {
-					go api.openTrezor(event.Wallet.URL())
+					go s.openTrezor(event.Wallet.URL())
 				}
 			}
 		case wallet.WalletOpened:
@@ -387,14 +387,14 @@ func (api *SignerAPI) derivationLoop(events chan wallet.WalletEvent) {
 
 // List returns the set of wallet this signer manages. Each wallet can contain
 // multiple accounts.
-func (api *SignerAPI) List(ctx context.Context) ([]util.Address, error) {
+func (s *SignerAPI) List(ctx context.Context) ([]util.Address, error) {
 	accs := make([]wallet.Account, 0)
 	// accs is initialized as empty list, not nil. We use 'nil' to signal
 	// rejection, as opposed to an empty list.
-	for _, wallet := range api.am.Wallets() {
+	for _, wallet := range s.am.Wallets() {
 		accs = append(accs, wallet.Accounts()...)
 	}
-	result, err := api.UI.ApproveListing(&ListRequest{Accounts: accs, Meta: MetadataFromContext(ctx)})
+	result, err := s.UI.ApproveListing(&ListRequest{Accounts: accs, Meta: MetadataFromContext(ctx)})
 	if err != nil {
 		return nil, err
 	}
@@ -411,28 +411,28 @@ func (api *SignerAPI) List(ctx context.Context) ([]util.Address, error) {
 // New creates a new password protected Account. The private key is protected with
 // the given password. Users are responsible to backup the private key that is stored
 // in the keystore location thas was specified when this API was created.
-func (api *SignerAPI) New(ctx context.Context) (util.Address, error) {
-	if be := api.am.Backends(keystore.KeyStoreType); len(be) == 0 {
+func (s *SignerAPI) New(ctx context.Context) (util.Address, error) {
+	if be := s.am.Backends(keystore.KeyStoreType); len(be) == 0 {
 		return util.Address{}, errors.New("password based accounts not supported")
 	}
-	if resp, err := api.UI.ApproveNewAccount(&NewAccountRequest{MetadataFromContext(ctx)}); err != nil {
+	if resp, err := s.UI.ApproveNewAccount(&NewAccountRequest{MetadataFromContext(ctx)}); err != nil {
 		return util.Address{}, err
 	} else if !resp.Approved {
 		return util.Address{}, ErrRequestDenied
 	}
-	return api.newAccount()
+	return s.newAccount()
 }
 
 // newAccount is the internal method to create a new account. It should be used
 // _after_ user-approval has been obtained
-func (api *SignerAPI) newAccount() (util.Address, error) {
-	be := api.am.Backends(keystore.KeyStoreType)
+func (s *SignerAPI) newAccount() (util.Address, error) {
+	be := s.am.Backends(keystore.KeyStoreType)
 	if len(be) == 0 {
 		return util.Address{}, errors.New("password based accounts not supported")
 	}
 	// Three retries to get a valid password
 	for i := 0; i < 3; i++ {
-		resp, err := api.UI.OnInputRequired(UserInputRequest{
+		resp, err := s.UI.OnInputRequired(UserInputRequest{
 			"New account password",
 			fmt.Sprintf("Please enter a password for the new account to be created (attempt %d of 3)", i),
 			true,
@@ -442,7 +442,7 @@ func (api *SignerAPI) newAccount() (util.Address, error) {
 			continue
 		}
 		if pwErr := ValidatePasswordFormat(resp.Text); pwErr != nil {
-			api.UI.ShowError(fmt.Sprintf("Account creation attempt #%d failed due to password requirements: %v", i+1, pwErr))
+			s.UI.ShowError(fmt.Sprintf("Account creation attempt #%d failed due to password requirements: %v", i+1, pwErr))
 		} else {
 			// No error
 			acc, err := be[0].(*keystore.KeyStore).NewAccount(resp.Text)
@@ -520,17 +520,17 @@ func logDiff(original *SignTxRequest, new *SignTxResponse) bool {
 	return modified
 }
 
-func (api *SignerAPI) lookupPassword(address util.Address) (string, error) {
-	return api.credentials.Get(address.Hex())
+func (s *SignerAPI) lookupPassword(address util.Address) (string, error) {
+	return s.credentials.Get(address.Hex())
 }
 
-func (api *SignerAPI) lookupOrQueryPassword(address util.Address, title, prompt string) (string, error) {
+func (s *SignerAPI) lookupOrQueryPassword(address util.Address, title, prompt string) (string, error) {
 	// Look up the password and return if available
-	if pw, err := api.lookupPassword(address); err == nil {
+	if pw, err := s.lookupPassword(address); err == nil {
 		return pw, nil
 	}
 	// Password unavailable, request it from the user
-	pwResp, err := api.UI.OnInputRequired(UserInputRequest{title, prompt, true})
+	pwResp, err := s.UI.OnInputRequired(UserInputRequest{title, prompt, true})
 	if err != nil {
 		logging.Warn("error obtaining password", "error", err)
 		// We'll not forward the error here, in case the error contains info about the response from the UI,
@@ -541,25 +541,25 @@ func (api *SignerAPI) lookupOrQueryPassword(address util.Address, title, prompt 
 }
 
 // SignTransaction signs the given Transaction and returns it both as json and rlp-encoded form
-func (api *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*prlapi.SignTransactionResult, error) {
+func (s *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*api.SignTransactionResult, error) {
 	var (
 		err    error
 		result SignTxResponse
 	)
-	msgs, err := api.validator.ValidateTransaction(methodSelector, &args)
+	msgs, err := s.validator.ValidateTransaction(methodSelector, &args)
 	if err != nil {
 		return nil, err
 	}
 	// If we are in 'rejectMode', then reject rather than show the user warnings
-	if api.rejectMode {
+	if s.rejectMode {
 		if err := msgs.GetWarnings(); err != nil {
 			return nil, err
 		}
 	}
 	if args.ChainID != nil {
 		requestedChainId := (*big.Int)(args.ChainID)
-		if api.chainID.Cmp(requestedChainId) != 0 {
-			logging.Error("Signing request with wrong chain id", "requested", requestedChainId, "configured", api.chainID)
+		if s.chainID.Cmp(requestedChainId) != 0 {
+			logging.Error("Signing request with wrong chain id", "requested", requestedChainId, "configured", s.chainID)
 			return nil, fmt.Errorf("requested chainid %d does not match the configuration of the signer",
 				requestedChainId)
 		}
@@ -570,7 +570,7 @@ func (api *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxA
 		Callinfo:    msgs.Messages,
 	}
 	// Process approval
-	result, err = api.UI.ApproveTx(&req)
+	result, err = s.UI.ApproveTx(&req)
 	if err != nil {
 		return nil, err
 	}
@@ -584,22 +584,22 @@ func (api *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxA
 		w   wallet.Wallet
 	)
 	acc = wallet.Account{Address: result.Transaction.From.Address()}
-	w, err = api.am.Find(acc)
+	w, err = s.am.Find(acc)
 	if err != nil {
 		return nil, err
 	}
 	// Convert fields into a real transaction
 	unsignedTx := result.Transaction.ToTransaction()
 	// Get the password for the transaction
-	pw, err := api.lookupOrQueryPassword(acc.Address, "Account password",
+	pw, err := s.lookupOrQueryPassword(acc.Address, "Account password",
 		fmt.Sprintf("Please enter the password for account %s", acc.Address.String()))
 	if err != nil {
 		return nil, err
 	}
 	// The one to sign is the one that was returned from the UI
-	signedTx, err := w.SignTxWithPassphrase(acc, pw, unsignedTx, api.chainID)
+	signedTx, err := w.SignTxWithPassphrase(acc, pw, unsignedTx, s.chainID)
 	if err != nil {
-		api.UI.ShowError(err.Error())
+		s.UI.ShowError(err.Error())
 		return nil, err
 	}
 
@@ -607,29 +607,29 @@ func (api *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxA
 	if err != nil {
 		return nil, err
 	}
-	response := prlapi.SignTransactionResult{Raw: data, Tx: signedTx}
+	response := api.SignTransactionResult{Raw: data, Tx: signedTx}
 
 	// Finally, send the signed tx to the UI
-	api.UI.OnApprovedTx(response)
+	s.UI.OnApprovedTx(response)
 	// ...and to the external caller
 	return &response, nil
 }
 
-func (api *SignerAPI) SignGnosisSafeTx(ctx context.Context, signerAddress util.MixedcaseAddress, gnosisTx GnosisSafeTx, methodSelector *string) (*GnosisSafeTx, error) {
+func (s *SignerAPI) SignGnosisSafeTx(ctx context.Context, signerAddress util.MixedcaseAddress, gnosisTx GnosisSafeTx, methodSelector *string) (*GnosisSafeTx, error) {
 	// Do the usual validations, but on the last-stage transaction
 	args := gnosisTx.ArgsForValidation()
-	msgs, err := api.validator.ValidateTransaction(methodSelector, args)
+	msgs, err := s.validator.ValidateTransaction(methodSelector, args)
 	if err != nil {
 		return nil, err
 	}
 	// If we are in 'rejectMode', then reject rather than show the user warnings
-	if api.rejectMode {
+	if s.rejectMode {
 		if err := msgs.GetWarnings(); err != nil {
 			return nil, err
 		}
 	}
 	typedData := gnosisTx.ToTypedData()
-	signature, preimage, err := api.signTypedData(ctx, signerAddress, typedData, msgs)
+	signature, preimage, err := s.signTypedData(ctx, signerAddress, typedData, msgs)
 	if err != nil {
 		return nil, err
 	}
@@ -644,6 +644,6 @@ func (api *SignerAPI) SignGnosisSafeTx(ctx context.Context, signerAddress util.M
 
 // Returns the external api version. This method does not require user acceptance. Available methods are
 // available via enumeration anyway, and this info does not contain user-specific data
-func (api *SignerAPI) Version(ctx context.Context) (string, error) {
+func (s *SignerAPI) Version(ctx context.Context) (string, error) {
 	return ExternalAPIVersion, nil
 }

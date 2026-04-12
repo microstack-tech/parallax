@@ -74,7 +74,7 @@ func (b *Long) UnmarshalGraphQL(input any) error {
 
 // Account represents an Parallax account at a particular block.
 type Account struct {
-	backend       prlapi.Backend
+	backend       api.Backend
 	address       util.Address
 	blockNrOrHash rpc.BlockNumberOrHash
 }
@@ -135,7 +135,7 @@ func (a *Account) Storage(ctx context.Context, args struct{ Slot util.Hash }) (u
 
 // Log represents an individual log message. All arguments are mandatory.
 type Log struct {
-	backend     prlapi.Backend
+	backend     api.Backend
 	transaction *Transaction
 	log         *types.Log
 }
@@ -181,7 +181,7 @@ func (at *AccessTuple) StorageKeys(ctx context.Context) []util.Hash {
 // Transaction represents an Parallax transaction.
 // backend and hash are mandatory; all others will be fetched when required.
 type Transaction struct {
-	backend prlapi.Backend
+	backend api.Backend
 	hash    util.Hash
 	tx      *types.Transaction
 	block   *Block
@@ -537,7 +537,7 @@ type BlockType int
 // backend, and numberOrHash are mandatory. All other fields are lazily fetched
 // when required.
 type Block struct {
-	backend      prlapi.Backend
+	backend      api.Backend
 	numberOrHash *rpc.BlockNumberOrHash
 	hash         util.Hash
 	header       *types.Header
@@ -912,7 +912,7 @@ type BlockFilterCriteria struct {
 
 // runFilter accepts a filter and executes it, returning all its results as
 // `Log` objects.
-func runFilter(ctx context.Context, be prlapi.Backend, filter *filters.Filter) ([]*Log, error) {
+func runFilter(ctx context.Context, be api.Backend, filter *filters.Filter) ([]*Log, error) {
 	logs, err := filter.Logs(ctx)
 	if err != nil || logs == nil {
 		return nil, err
@@ -1002,7 +1002,7 @@ func (c *CallResult) Status() Long {
 }
 
 func (b *Block) Call(ctx context.Context, args struct {
-	Data prlapi.TransactionArgs
+	Data api.TransactionArgs
 },
 ) (*CallResult, error) {
 	if b.numberOrHash == nil {
@@ -1011,7 +1011,7 @@ func (b *Block) Call(ctx context.Context, args struct {
 			return nil, err
 		}
 	}
-	result, err := prlapi.DoCall(ctx, b.backend, args.Data, *b.numberOrHash, nil, b.backend.RPCPVMTimeout(), b.backend.RPCGasCap())
+	result, err := api.DoCall(ctx, b.backend, args.Data, *b.numberOrHash, nil, b.backend.RPCPVMTimeout(), b.backend.RPCGasCap())
 	if err != nil {
 		return nil, err
 	}
@@ -1028,7 +1028,7 @@ func (b *Block) Call(ctx context.Context, args struct {
 }
 
 func (b *Block) EstimateGas(ctx context.Context, args struct {
-	Data prlapi.TransactionArgs
+	Data api.TransactionArgs
 },
 ) (Long, error) {
 	if b.numberOrHash == nil {
@@ -1037,12 +1037,12 @@ func (b *Block) EstimateGas(ctx context.Context, args struct {
 			return 0, err
 		}
 	}
-	gas, err := prlapi.DoEstimateGas(ctx, b.backend, args.Data, *b.numberOrHash, b.backend.RPCGasCap())
+	gas, err := api.DoEstimateGas(ctx, b.backend, args.Data, *b.numberOrHash, b.backend.RPCGasCap())
 	return Long(gas), err
 }
 
 type Pending struct {
-	backend prlapi.Backend
+	backend api.Backend
 }
 
 func (p *Pending) TransactionCount(ctx context.Context) (int32, error) {
@@ -1080,11 +1080,11 @@ func (p *Pending) Account(ctx context.Context, args struct {
 }
 
 func (p *Pending) Call(ctx context.Context, args struct {
-	Data prlapi.TransactionArgs
+	Data api.TransactionArgs
 },
 ) (*CallResult, error) {
 	pendingBlockNr := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
-	result, err := prlapi.DoCall(ctx, p.backend, args.Data, pendingBlockNr, nil, p.backend.RPCPVMTimeout(), p.backend.RPCGasCap())
+	result, err := api.DoCall(ctx, p.backend, args.Data, pendingBlockNr, nil, p.backend.RPCPVMTimeout(), p.backend.RPCGasCap())
 	if err != nil {
 		return nil, err
 	}
@@ -1101,17 +1101,17 @@ func (p *Pending) Call(ctx context.Context, args struct {
 }
 
 func (p *Pending) EstimateGas(ctx context.Context, args struct {
-	Data prlapi.TransactionArgs
+	Data api.TransactionArgs
 },
 ) (Long, error) {
 	pendingBlockNr := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
-	gas, err := prlapi.DoEstimateGas(ctx, p.backend, args.Data, pendingBlockNr, p.backend.RPCGasCap())
+	gas, err := api.DoEstimateGas(ctx, p.backend, args.Data, pendingBlockNr, p.backend.RPCGasCap())
 	return Long(gas), err
 }
 
 // Resolver is the top-level object in the GraphQL hierarchy.
 type Resolver struct {
-	backend prlapi.Backend
+	backend api.Backend
 }
 
 func (r *Resolver) Block(ctx context.Context, args struct {
@@ -1217,7 +1217,7 @@ func (r *Resolver) SendRawTransaction(ctx context.Context, args struct{ Data hex
 	if err := tx.UnmarshalBinary(args.Data); err != nil {
 		return util.Hash{}, err
 	}
-	hash, err := prlapi.SubmitTransaction(ctx, r.backend, tx)
+	hash, err := api.SubmitTransaction(ctx, r.backend, tx)
 	return hash, err
 }
 

@@ -1756,7 +1756,7 @@ func SetDNSDiscoveryDefaults(cfg *prlconfig.Config, genesis util.Hash) {
 // RegisterParallaxService adds an Parallax client to the stack.
 // The second return value is the full node instance, which may be nil if the
 // node is running as a light client.
-func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (prlapi.Backend, *protocol.Parallax) {
+func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (api.Backend, *protocol.Parallax) {
 	if cfg.SyncMode == downloader.LightSync {
 		backend, err := les.New(stack, cfg)
 		if err != nil {
@@ -1781,14 +1781,14 @@ func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (prlapi.Ba
 
 // RegisterPrlStatsService configures the Parallax Stats daemon and adds it to
 // the given node.
-func RegisterPrlStatsService(stack *node.Node, backend prlapi.Backend, url string) {
+func RegisterPrlStatsService(stack *node.Node, backend api.Backend, url string) {
 	if err := stats.New(stack, backend, backend.Engine(), url); err != nil {
 		Fatalf("Failed to register the Parallax Stats service: %v", err)
 	}
 }
 
 // RegisterGraphQLService is a utility function to construct a new service and register it against a node.
-func RegisterGraphQLService(stack *node.Node, backend prlapi.Backend, cfg node.Config) {
+func RegisterGraphQLService(stack *node.Node, backend api.Backend, cfg node.Config) {
 	if err := graphql.New(stack, backend, cfg.GraphQLCors, cfg.GraphQLVirtualHosts); err != nil {
 		Fatalf("Failed to register the GraphQL service: %v", err)
 	}

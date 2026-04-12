@@ -308,8 +308,8 @@ func NewPrivateDebugAPI(prl *Parallax) *PrivateDebugAPI {
 }
 
 // Preimage is a debug API function that returns the preimage for a sha3 hash, if known.
-func (api *PrivateDebugAPI) Preimage(ctx context.Context, hash util.Hash) (hexutil.Bytes, error) {
-	if preimage := rawdb.ReadPreimage(api.prl.ChainDb(), hash); preimage != nil {
+func (s *PrivateDebugAPI) Preimage(ctx context.Context, hash util.Hash) (hexutil.Bytes, error) {
+	if preimage := rawdb.ReadPreimage(s.prl.ChainDb(), hash); preimage != nil {
 		return preimage, nil
 	}
 	return nil, errors.New("unknown preimage")
@@ -324,10 +324,10 @@ type BadBlockArgs struct {
 
 // GetBadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
 // and returns them as a JSON list of block-hashes
-func (api *PrivateDebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
+func (s *PrivateDebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
 	var (
 		err     error
-		blocks  = rawdb.ReadAllBadBlocks(api.prl.chainDb)
+		blocks  = rawdb.ReadAllBadBlocks(s.prl.chainDb)
 		results = make([]*BadBlockArgs, 0, len(blocks))
 	)
 	for _, block := range blocks {
@@ -340,7 +340,7 @@ func (api *PrivateDebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, 
 		} else {
 			blockRlp = fmt.Sprintf("0x%x", rlpBytes)
 		}
-		if blockJSON, err = prlapi.RPCMarshalBlock(block, true, true, api.prl.APIBackend.ChainConfig()); err != nil {
+		if blockJSON, err = api.RPCMarshalBlock(block, true, true, s.prl.APIBackend.ChainConfig()); err != nil {
 			blockJSON = map[string]any{"error": err.Error()}
 		}
 		results = append(results, &BadBlockArgs{
@@ -423,13 +423,13 @@ type storageEntry struct {
 }
 
 // StorageRangeAt returns the storage at the given block height and transaction index.
-func (api *PrivateDebugAPI) StorageRangeAt(blockHash util.Hash, txIndex int, contractAddress util.Address, keyStart hexutil.Bytes, maxResult int) (StorageRangeResult, error) {
+func (s *PrivateDebugAPI) StorageRangeAt(blockHash util.Hash, txIndex int, contractAddress util.Address, keyStart hexutil.Bytes, maxResult int) (StorageRangeResult, error) {
 	// Retrieve the block
-	block := api.prl.blockchain.GetBlockByHash(blockHash)
+	block := s.prl.blockchain.GetBlockByHash(blockHash)
 	if block == nil {
 		return StorageRangeResult{}, fmt.Errorf("block %#x not found", blockHash)
 	}
-	_, _, statedb, err := api.prl.stateAtTransaction(block, txIndex, 0)
+	_, _, statedb, err := s.prl.stateAtTransaction(block, txIndex, 0)
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
@@ -468,27 +468,27 @@ func storageRangeAt(st state.Trie, start []byte, maxResult int) (StorageRangeRes
 // code hash, or storage hash.
 //
 // With one parameter, returns the list of accounts modified in the specified block.
-func (api *PrivateDebugAPI) GetModifiedAccountsByNumber(startNum uint64, endNum *uint64) ([]util.Address, error) {
+func (s *PrivateDebugAPI) GetModifiedAccountsByNumber(startNum uint64, endNum *uint64) ([]util.Address, error) {
 	var startBlock, endBlock *types.Block
 
-	startBlock = api.prl.blockchain.GetBlockByNumber(startNum)
+	startBlock = s.prl.blockchain.GetBlockByNumber(startNum)
 	if startBlock == nil {
 		return nil, fmt.Errorf("start block %x not found", startNum)
 	}
 
 	if endNum == nil {
 		endBlock = startBlock
-		startBlock = api.prl.blockchain.GetBlockByHash(startBlock.ParentHash())
+		startBlock = s.prl.blockchain.GetBlockByHash(startBlock.ParentHash())
 		if startBlock == nil {
 			return nil, fmt.Errorf("block %x has no parent", endBlock.Number())
 		}
 	} else {
-		endBlock = api.prl.blockchain.GetBlockByNumber(*endNum)
+		endBlock = s.prl.blockchain.GetBlockByNumber(*endNum)
 		if endBlock == nil {
 			return nil, fmt.Errorf("end block %d not found", *endNum)
 		}
 	}
-	return api.getModifiedAccounts(startBlock, endBlock)
+	return s.getModifiedAccounts(startBlock, endBlock)
 }
 
 // GetModifiedAccountsByHash returns all accounts that have changed between the
@@ -496,33 +496,33 @@ func (api *PrivateDebugAPI) GetModifiedAccountsByNumber(startNum uint64, endNum 
 // code hash, or storage hash.
 //
 // With one parameter, returns the list of accounts modified in the specified block.
-func (api *PrivateDebugAPI) GetModifiedAccountsByHash(startHash util.Hash, endHash *util.Hash) ([]util.Address, error) {
+func (s *PrivateDebugAPI) GetModifiedAccountsByHash(startHash util.Hash, endHash *util.Hash) ([]util.Address, error) {
 	var startBlock, endBlock *types.Block
-	startBlock = api.prl.blockchain.GetBlockByHash(startHash)
+	startBlock = s.prl.blockchain.GetBlockByHash(startHash)
 	if startBlock == nil {
 		return nil, fmt.Errorf("start block %x not found", startHash)
 	}
 
 	if endHash == nil {
 		endBlock = startBlock
-		startBlock = api.prl.blockchain.GetBlockByHash(startBlock.ParentHash())
+		startBlock = s.prl.blockchain.GetBlockByHash(startBlock.ParentHash())
 		if startBlock == nil {
 			return nil, fmt.Errorf("block %x has no parent", endBlock.Number())
 		}
 	} else {
-		endBlock = api.prl.blockchain.GetBlockByHash(*endHash)
+		endBlock = s.prl.blockchain.GetBlockByHash(*endHash)
 		if endBlock == nil {
 			return nil, fmt.Errorf("end block %x not found", *endHash)
 		}
 	}
-	return api.getModifiedAccounts(startBlock, endBlock)
+	return s.getModifiedAccounts(startBlock, endBlock)
 }
 
-func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]util.Address, error) {
+func (s *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]util.Address, error) {
 	if startBlock.Number().Uint64() >= endBlock.Number().Uint64() {
 		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
 	}
-	triedb := api.prl.BlockChain().StateCache().TrieDB()
+	triedb := s.prl.BlockChain().StateCache().TrieDB()
 
 	oldTrie, err := trie.NewSecure(startBlock.Root(), triedb)
 	if err != nil {
@@ -551,8 +551,8 @@ func (api *PrivateDebugAPI) getModifiedAccounts(startBlock, endBlock *types.Bloc
 // of the next block.
 // The (from, to) parameters are the sequence of blocks to search, which can go
 // either forwards or backwards
-func (api *PrivateDebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64, error) {
-	db := api.prl.ChainDb()
+func (s *PrivateDebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64, error) {
+	db := s.prl.ChainDb()
 	var pivot uint64
 	if p := rawdb.ReadLastPivotNumber(db); p != nil {
 		pivot = *p
@@ -561,7 +561,7 @@ func (api *PrivateDebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64
 	resolveNum := func(num rpc.BlockNumber) (uint64, error) {
 		// We don't have state for pending (-2), so treat it as latest
 		if num.Int64() < 0 {
-			block := api.prl.blockchain.CurrentBlock()
+			block := s.prl.blockchain.CurrentBlock()
 			if block == nil {
 				return 0, fmt.Errorf("current block missing")
 			}
@@ -596,11 +596,11 @@ func (api *PrivateDebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64
 		if i < int64(pivot) {
 			continue
 		}
-		h := api.prl.BlockChain().GetHeaderByNumber(uint64(i))
+		h := s.prl.BlockChain().GetHeaderByNumber(uint64(i))
 		if h == nil {
 			return 0, fmt.Errorf("missing header %d", i)
 		}
-		if ok, _ := api.prl.ChainDb().Has(h.Root[:]); ok {
+		if ok, _ := s.prl.ChainDb().Has(h.Root[:]); ok {
 			return uint64(i), nil
 		}
 	}

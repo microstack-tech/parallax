@@ -98,7 +98,7 @@ func (ui *StdIOUI) ShowInfo(message string) {
 	}
 }
 
-func (ui *StdIOUI) OnApprovedTx(tx prlapi.SignTransactionResult) {
+func (ui *StdIOUI) OnApprovedTx(tx api.SignTransactionResult) {
 	err := ui.notify("ui_onApprovedTx", tx)
 	if err != nil {
 		logging.Info("Error calling 'ui_onApprovedTx'", "exc", err.Error(), "tx", tx)

@@ -153,7 +153,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, prlxConfig) {
 }
 
 // makeFullNode loads geth configuration and creates the Parallax backend.
-func makeFullNode(ctx *cli.Context) (*node.Node, prlapi.Backend) {
+func makeFullNode(ctx *cli.Context) (*node.Node, api.Backend) {
 	stack, cfg := makeConfigNode(ctx)
 	backend, parallax := utils.RegisterParallaxService(stack, &cfg.Parallax)
 	// Warn users to migrate if they have a legacy freezer format.

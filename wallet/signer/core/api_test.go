@@ -50,9 +50,9 @@ func (ui *headlessUi) OnInputRequired(info core.UserInputRequest) (core.UserInpu
 	return core.UserInputResponse{Text: input}, nil
 }
 
-func (ui *headlessUi) OnSignerStartup(info core.StartupInfo)        {}
-func (ui *headlessUi) RegisterUIServer(api *core.UIServerAPI)       {}
-func (ui *headlessUi) OnApprovedTx(tx prlapi.SignTransactionResult) {}
+func (ui *headlessUi) OnSignerStartup(info core.StartupInfo)     {}
+func (ui *headlessUi) RegisterUIServer(api *core.UIServerAPI)    {}
+func (ui *headlessUi) OnApprovedTx(tx api.SignTransactionResult) {}
 
 func (ui *headlessUi) ApproveTx(request *core.SignTxRequest) (core.SignTxResponse, error) {
 	switch <-ui.approveCh {
@@ -239,7 +239,7 @@ func mkTestTx(from util.MixedcaseAddress) apitypes.SendTxArgs {
 func TestSignTx(t *testing.T) {
 	var (
 		list      []util.Address
-		res, res2 *prlapi.SignTransactionResult
+		res, res2 *api.SignTransactionResult
 		err       error
 	)
 

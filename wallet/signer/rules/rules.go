@@ -228,7 +228,7 @@ func (r *rulesetUI) OnSignerStartup(info core.StartupInfo) {
 	}
 }
 
-func (r *rulesetUI) OnApprovedTx(tx prlapi.SignTransactionResult) {
+func (r *rulesetUI) OnApprovedTx(tx api.SignTransactionResult) {
 	jsonTx, err := json.Marshal(tx)
 	if err != nil {
 		logging.Warn("failed marshalling transaction", "tx", tx)

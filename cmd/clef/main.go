@@ -335,7 +335,7 @@ func initializeSecrets(c *cli.Context) error {
 	}
 	// Ensure the master key does not yet exist, we're not willing to overwrite
 	configDir := c.GlobalString(configdirFlag.Name)
-	if err := os.Mkdir(configDir, 0700); err != nil && !os.IsExist(err) {
+	if err := os.Mkdir(configDir, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
 	location := filepath.Join(configDir, "masterseed.json")
@@ -371,14 +371,14 @@ func initializeSecrets(c *cli.Context) error {
 		return fmt.Errorf("failed to encrypt master seed: %v", err)
 	}
 	// Double check the master key path to ensure nothing wrote there in between
-	if err = os.Mkdir(configDir, 0700); err != nil && !os.IsExist(err) {
+	if err = os.Mkdir(configDir, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
 	if _, err := os.Stat(location); err == nil {
 		return fmt.Errorf("master key %v already exists, will not overwrite", location)
 	}
 	// Write the file and print the usual warning message
-	if err = os.WriteFile(location, cipherSeed, 0400); err != nil {
+	if err = os.WriteFile(location, cipherSeed, 0o400); err != nil {
 		return err
 	}
 	fmt.Printf("A master seed has been generated into %s\n", location)
@@ -783,7 +783,7 @@ func readMasterKey(ctx *cli.Context, ui core.UIClientAPI) ([]byte, error) {
 	}
 	// Create vault location
 	vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), masterSeed)[:10]))
-	err = os.Mkdir(vaultLocation, 0700)
+	err = os.Mkdir(vaultLocation, 0o700)
 	if err != nil && !os.IsExist(err) {
 		return nil, err
 	}
@@ -801,7 +801,7 @@ func checkFile(filename string) error {
 	// Check the unix permission bits
 	// However, on windows, we cannot use the unix perm-bits, see
 	// https://github.com/ParallaxProtocol/parallax/issues/20123
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0377 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o377 != 0 {
 		return fmt.Errorf("file (%v) has insecure file permissions (%v)", filename, info.Mode().String())
 	}
 	return nil
@@ -1111,7 +1111,7 @@ func GenDoc(ctx *cli.Context) {
 		rlpdata := util.FromHex("0xf85d640101948a8eafb1cf62bfbeb1741769dae1a9dd47996192018026a0716bd90515acb1e68e5ac5867aa11a1e65399c3349d479f5fb698554ebc6f293a04e8a4ebfff434e971e0ef12c5bf3a881b06fd04fc3f8b8a7291fb67a26a1d4ed")
 		var tx types.Transaction
 		tx.UnmarshalBinary(rlpdata)
-		add("OnApproved - SignTransactionResult", desc, &prlapi.SignTransactionResult{Raw: rlpdata, Tx: &tx})
+		add("OnApproved - SignTransactionResult", desc, &api.SignTransactionResult{Raw: rlpdata, Tx: &tx})
 	}
 	{ // User input
 		add("UserInputRequest", "Sent when clef needs the user to provide data. If 'password' is true, the input field should be treated accordingly (echo-free)",

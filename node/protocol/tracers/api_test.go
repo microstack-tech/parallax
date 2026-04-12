@@ -189,7 +189,7 @@ func TestTraceCall(t *testing.T) {
 	}}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
-	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
+	tracerAPI := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
@@ -199,7 +199,7 @@ func TestTraceCall(t *testing.T) {
 
 	testSuite := []struct {
 		blockNumber rpc.BlockNumber
-		call        prlapi.TransactionArgs
+		call        api.TransactionArgs
 		config      *TraceCallConfig
 		expectErr   error
 		expect      any
@@ -207,7 +207,7 @@ func TestTraceCall(t *testing.T) {
 		// Standard JSON trace upon the genesis, plain transfer.
 		{
 			blockNumber: rpc.BlockNumber(0),
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &accounts[0].addr,
 				To:    &accounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -224,7 +224,7 @@ func TestTraceCall(t *testing.T) {
 		// Standard JSON trace upon the head, plain transfer.
 		{
 			blockNumber: rpc.BlockNumber(genBlocks),
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &accounts[0].addr,
 				To:    &accounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -241,7 +241,7 @@ func TestTraceCall(t *testing.T) {
 		// Standard JSON trace upon the non-existent block, error expects
 		{
 			blockNumber: rpc.BlockNumber(genBlocks + 1),
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &accounts[0].addr,
 				To:    &accounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -253,7 +253,7 @@ func TestTraceCall(t *testing.T) {
 		// Standard JSON trace upon the latest block
 		{
 			blockNumber: rpc.LatestBlockNumber,
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &accounts[0].addr,
 				To:    &accounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -270,7 +270,7 @@ func TestTraceCall(t *testing.T) {
 		// Standard JSON trace upon the pending block
 		{
 			blockNumber: rpc.PendingBlockNumber,
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &accounts[0].addr,
 				To:    &accounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -286,7 +286,7 @@ func TestTraceCall(t *testing.T) {
 		},
 	}
 	for _, testspec := range testSuite {
-		result, err := api.TraceCall(context.Background(), testspec.call, rpc.BlockNumberOrHash{BlockNumber: &testspec.blockNumber}, testspec.config)
+		result, err := tracerAPI.TraceCall(context.Background(), testspec.call, rpc.BlockNumberOrHash{BlockNumber: &testspec.blockNumber}, testspec.config)
 		if testspec.expectErr != nil {
 			if err == nil {
 				t.Errorf("Expect error %v, get nothing", testspec.expectErr)
@@ -322,7 +322,7 @@ func TestTraceTransaction(t *testing.T) {
 	}}
 	target := util.Hash{}
 	signer := types.HomesteadSigner{}
-	api := NewAPI(newTestBackend(t, 1, genesis, func(i int, b *validation.BlockGen) {
+	tracerAPI := NewAPI(newTestBackend(t, 1, genesis, func(i int, b *validation.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
@@ -330,7 +330,7 @@ func TestTraceTransaction(t *testing.T) {
 		b.AddTx(tx)
 		target = tx.Hash()
 	}))
-	result, err := api.TraceTransaction(context.Background(), target, nil)
+	result, err := tracerAPI.TraceTransaction(context.Background(), target, nil)
 	if err != nil {
 		t.Errorf("Failed to trace transaction %v", err)
 	}
@@ -360,7 +360,7 @@ func TestTraceBlock(t *testing.T) {
 	}}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
-	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
+	tracerAPI := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
@@ -401,7 +401,7 @@ func TestTraceBlock(t *testing.T) {
 		},
 	}
 	for i, tc := range testSuite {
-		result, err := api.TraceBlockByNumber(context.Background(), tc.blockNumber, tc.config)
+		result, err := tracerAPI.TraceBlockByNumber(context.Background(), tc.blockNumber, tc.config)
 		if tc.expectErr != nil {
 			if err == nil {
 				t.Errorf("test %d, want error %v", i, tc.expectErr)
@@ -435,7 +435,7 @@ func TestTracingWithOverrides(t *testing.T) {
 	}}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
-	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
+	tracerAPI := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *validation.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
@@ -449,7 +449,7 @@ func TestTracingWithOverrides(t *testing.T) {
 	}
 	testSuite := []struct {
 		blockNumber rpc.BlockNumber
-		call        prlapi.TransactionArgs
+		call        api.TransactionArgs
 		config      *TraceCallConfig
 		expectErr   error
 		want        string
@@ -457,14 +457,14 @@ func TestTracingWithOverrides(t *testing.T) {
 		// Call which can only succeed if state is state overridden
 		{
 			blockNumber: rpc.PendingBlockNumber,
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &randomAccounts[0].addr,
 				To:    &randomAccounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
 			},
 			config: &TraceCallConfig{
-				StateOverrides: &prlapi.StateOverride{
-					randomAccounts[0].addr: prlapi.OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(chainparams.Ether)))},
+				StateOverrides: &api.StateOverride{
+					randomAccounts[0].addr: api.OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(chainparams.Ether)))},
 				},
 			},
 			want: `{"gas":21000,"failed":false,"returnValue":""}`,
@@ -472,7 +472,7 @@ func TestTracingWithOverrides(t *testing.T) {
 		// Invalid call without state overriding
 		{
 			blockNumber: rpc.PendingBlockNumber,
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From:  &randomAccounts[0].addr,
 				To:    &randomAccounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
@@ -498,15 +498,15 @@ func TestTracingWithOverrides(t *testing.T) {
 		//  }
 		{
 			blockNumber: rpc.PendingBlockNumber,
-			call: prlapi.TransactionArgs{
+			call: api.TransactionArgs{
 				From: &randomAccounts[0].addr,
 				To:   &randomAccounts[2].addr,
 				Data: newRPCBytes(util.Hex2Bytes("8381f58a")), // call number()
 			},
 			config: &TraceCallConfig{
 				// Tracer: &tracer,
-				StateOverrides: &prlapi.StateOverride{
-					randomAccounts[2].addr: prlapi.OverrideAccount{
+				StateOverrides: &api.StateOverride{
+					randomAccounts[2].addr: api.OverrideAccount{
 						Code:      newRPCBytes(util.Hex2Bytes("6080604052348015600f57600080fd5b506004361060285760003560e01c80638381f58a14602d575b600080fd5b60336049565b6040518082815260200191505060405180910390f35b6000548156fea2646970667358221220eab35ffa6ab2adfe380772a48b8ba78e82a1b820a18fcb6f59aa4efb20a5f60064736f6c63430007040033")),
 						StateDiff: newStates([]util.Hash{{}}, []util.Hash{util.BigToHash(big.NewInt(123))}),
 					},
@@ -516,7 +516,7 @@ func TestTracingWithOverrides(t *testing.T) {
 		},
 	}
 	for i, tc := range testSuite {
-		result, err := api.TraceCall(context.Background(), tc.call, rpc.BlockNumberOrHash{BlockNumber: &tc.blockNumber}, tc.config)
+		result, err := tracerAPI.TraceCall(context.Background(), tc.call, rpc.BlockNumberOrHash{BlockNumber: &tc.blockNumber}, tc.config)
 		if tc.expectErr != nil {
 			if err == nil {
 				t.Errorf("test %d: want error %v, have nothing", i, tc.expectErr)

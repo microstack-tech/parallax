@@ -109,7 +109,7 @@ func (alwaysDenyUI) ShowInfo(message string) {
 	panic("implement me")
 }
 
-func (alwaysDenyUI) OnApprovedTx(tx prlapi.SignTransactionResult) {
+func (alwaysDenyUI) OnApprovedTx(tx api.SignTransactionResult) {
 	panic("implement me")
 }
 
@@ -236,7 +236,7 @@ func (d *dummyUI) ShowInfo(message string) {
 	d.calls = append(d.calls, "ShowInfo")
 }
 
-func (d *dummyUI) OnApprovedTx(tx prlapi.SignTransactionResult) {
+func (d *dummyUI) OnApprovedTx(tx api.SignTransactionResult) {
 	d.calls = append(d.calls, "OnApprovedTx")
 }
 
@@ -263,7 +263,7 @@ func TestForwarding(t *testing.T) {
 	r.ShowInfo("test")
 
 	// This one is not forwarded
-	r.OnApprovedTx(prlapi.SignTransactionResult{})
+	r.OnApprovedTx(api.SignTransactionResult{})
 
 	expCalls := 6
 	if len(ui.calls) != expCalls {
@@ -476,7 +476,7 @@ func TestLimitWindow(t *testing.T) {
 		}
 		// Create a dummy signed transaction
 
-		response := prlapi.SignTransactionResult{
+		response := api.SignTransactionResult{
 			Tx:  dummySigned(v),
 			Raw: util.Hex2Bytes("deadbeef"),
 		}
@@ -533,7 +533,7 @@ func (d *dontCallMe) ShowInfo(message string) {
 	d.t.Fatalf("Did not expect next-handler to be called")
 }
 
-func (d *dontCallMe) OnApprovedTx(tx prlapi.SignTransactionResult) {
+func (d *dontCallMe) OnApprovedTx(tx api.SignTransactionResult) {
 	d.t.Fatalf("Did not expect next-handler to be called")
 }
 

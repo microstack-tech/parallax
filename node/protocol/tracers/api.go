@@ -178,7 +178,7 @@ type TraceCallConfig struct {
 	Tracer         *string
 	Timeout        *string
 	Reexec         *uint64
-	StateOverrides *prlapi.StateOverride
+	StateOverrides *api.StateOverride
 }
 
 // StdTraceConfig holds extra parameters to standard-json trace functions.
@@ -807,7 +807,7 @@ func (api *API) TraceTransaction(ctx context.Context, hash util.Hash, config *Tr
 // created during the execution of PVM if the given transaction was added on
 // top of the provided block and returns them as a JSON object.
 // You can provide -2 as a block number to trace on top of the pending block.
-func (api *API) TraceCall(ctx context.Context, args prlapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (any, error) {
+func (api *API) TraceCall(ctx context.Context, args api.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (any, error) {
 	// Try to retrieve the specified block
 	var (
 		err   error
