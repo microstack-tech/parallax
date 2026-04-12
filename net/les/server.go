@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/net/les/flowcontrol"
 	"github.com/ParallaxProtocol/parallax/net/les/light"
 	vfs "github.com/ParallaxProtocol/parallax/net/les/vflux/server"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
@@ -96,8 +96,8 @@ func NewLesServer(node *node.Node, e prlBackend, config *prlconfig.Config) (*Les
 			chainDb:          e.ChainDb(),
 			lesDb:            lesDb,
 			chainReader:      e.BlockChain(),
-			chtIndexer:       light.NewChtIndexer(e.ChainDb(), nil, chainparams.CHTFrequency, chainparams.HelperTrieProcessConfirmations, true),
-			bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), nil, chainparams.BloomBitsBlocks, chainparams.BloomTrieFrequency, true),
+			chtIndexer:       light.NewChtIndexer(e.ChainDb(), nil, netparams.CHTFrequency, netparams.HelperTrieProcessConfirmations, true),
+			bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), nil, netparams.BloomBitsBlocks, netparams.BloomTrieFrequency, true),
 			closeCh:          make(chan struct{}),
 		},
 		archiveMode:  e.ArchiveMode(),

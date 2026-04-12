@@ -14,9 +14,12 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-package chainparams
+package netparams
 
-import "github.com/ParallaxProtocol/parallax/util"
+import (
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/util"
+)
 
 // MainnetBootnodes are the enode URLs of the P2P bootstrap nodes running on
 // the main Parallax network.
@@ -48,7 +51,7 @@ const dnsPrefix = "enrtree://AJCNZNPUXUUJASCE35AIA2FFLGBQBF2SKWBUVXHTZLJCJZFHMJH
 func KnownDNSNetwork(genesis util.Hash, protocol string) string {
 	var net string
 	switch genesis {
-	case MainnetGenesisHash:
+	case chainparams.MainnetGenesisHash:
 		net = "mainnet"
 	default:
 		return ""

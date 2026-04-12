@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -63,21 +63,21 @@ type IndexerConfig struct {
 var (
 	// DefaultServerIndexerConfig wraps a set of configs as a default indexer config for server side.
 	DefaultServerIndexerConfig = &IndexerConfig{
-		ChtSize:           chainparams.CHTFrequency,
-		ChtConfirms:       chainparams.HelperTrieProcessConfirmations,
-		BloomSize:         chainparams.BloomBitsBlocks,
-		BloomConfirms:     chainparams.BloomConfirms,
-		BloomTrieSize:     chainparams.BloomTrieFrequency,
-		BloomTrieConfirms: chainparams.HelperTrieProcessConfirmations,
+		ChtSize:           netparams.CHTFrequency,
+		ChtConfirms:       netparams.HelperTrieProcessConfirmations,
+		BloomSize:         netparams.BloomBitsBlocks,
+		BloomConfirms:     netparams.BloomConfirms,
+		BloomTrieSize:     netparams.BloomTrieFrequency,
+		BloomTrieConfirms: netparams.HelperTrieProcessConfirmations,
 	}
 	// DefaultClientIndexerConfig wraps a set of configs as a default indexer config for client side.
 	DefaultClientIndexerConfig = &IndexerConfig{
-		ChtSize:           chainparams.CHTFrequency,
-		ChtConfirms:       chainparams.HelperTrieConfirmations,
-		BloomSize:         chainparams.BloomBitsBlocksClient,
-		BloomConfirms:     chainparams.HelperTrieConfirmations,
-		BloomTrieSize:     chainparams.BloomTrieFrequency,
-		BloomTrieConfirms: chainparams.HelperTrieConfirmations,
+		ChtSize:           netparams.CHTFrequency,
+		ChtConfirms:       netparams.HelperTrieConfirmations,
+		BloomSize:         netparams.BloomBitsBlocksClient,
+		BloomConfirms:     netparams.HelperTrieConfirmations,
+		BloomTrieSize:     netparams.BloomTrieFrequency,
+		BloomTrieConfirms: netparams.HelperTrieConfirmations,
 	}
 	// TestServerIndexerConfig wraps a set of configs as a test indexer config for server side.
 	TestServerIndexerConfig = &IndexerConfig{

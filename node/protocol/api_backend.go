@@ -27,6 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/node/miner"
 	"github.com/ParallaxProtocol/parallax/node/protocol/gasprice"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -342,7 +343,7 @@ func (b *PrlAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *PrlAPIBackend) BloomStatus() (uint64, uint64) {
 	sections, _, _ := b.eth.bloomIndexer.Sections()
-	return chainparams.BloomBitsBlocks, sections
+	return netparams.BloomBitsBlocks, sections
 }
 
 func (b *PrlAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {

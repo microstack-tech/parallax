@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 
@@ -62,7 +62,7 @@ func newChainFreezer(datadir string, namespace string, readonly bool, maxTableSi
 	}
 	return &chainFreezer{
 		Freezer:   freezer,
-		threshold: chainparams.FullImmutabilityThreshold,
+		threshold: netparams.FullImmutabilityThreshold,
 		quit:      make(chan struct{}),
 		trigger:   make(chan chan struct{}),
 	}, nil

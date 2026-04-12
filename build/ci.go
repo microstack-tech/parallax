@@ -56,9 +56,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/crypto/signify"
 	"github.com/ParallaxProtocol/parallax/internal/build"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/cespare/cp"
 )
@@ -112,7 +112,7 @@ var (
 	// A debian package is created for all executables listed here.
 	debParallax = debPackage{
 		Name:        "prlx",
-		Version:     chainparams.Version,
+		Version:     parallax.Version,
 		Executables: debExecutables,
 	}
 
@@ -401,7 +401,7 @@ func doArchive(cmdline []string) {
 
 	var (
 		env      = build.Env()
-		baseprlx = archiveBasename(*arch, chainparams.ArchiveVersion(env.Commit))
+		baseprlx = archiveBasename(*arch, parallax.ArchiveVersion(env.Commit))
 		prlx     = "prlx-" + baseprlx + ext
 		alltools = "prlx-alltools-" + baseprlx + ext
 	)
@@ -526,12 +526,12 @@ func doDocker(cmdline []string) {
 	case env.Branch == "master":
 		tags = []string{"latest"}
 	case strings.HasPrefix(env.Tag, "v1."):
-		tags = []string{"stable", fmt.Sprintf("release-1.%d", chainparams.VersionMinor), "v" + chainparams.Version}
+		tags = []string{"stable", fmt.Sprintf("release-1.%d", parallax.VersionMinor), "v" + parallax.Version}
 	}
 	// If architecture specific image builds are requested, build and push them
 	if *image {
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+chainparams.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+chainparams.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+parallax.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+parallax.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
 
 		// Tag and upload the images to Docker Hub
 		for _, tag := range tags {
@@ -986,11 +986,11 @@ func doWindowsInstaller(cmdline []string) {
 	// Build the installer. This assumes that all the needed files have been previously
 	// built (don't mix building and packaging to keep cross compilation complexity to a
 	// minimum).
-	version := strings.Split(chainparams.Version, ".")
+	version := strings.Split(parallax.Version, ".")
 	if env.Commit != "" {
 		version[2] += "-" + env.Commit[:8]
 	}
-	installer, _ := filepath.Abs("prlx-" + archiveBasename(*arch, chainparams.ArchiveVersion(env.Commit)) + ".exe")
+	installer, _ := filepath.Abs("prlx-" + archiveBasename(*arch, parallax.ArchiveVersion(env.Commit)) + ".exe")
 	build.MustRunCommand("makensis.exe",
 		"/DOUTPUTFILE="+installer,
 		"/DMAJORVERSION="+version[0],
@@ -1034,6 +1034,7 @@ func doAndroidArchive(cmdline []string) {
 	build.MustRun(tc.Go("mod", "download"))
 
 	// Build the Android archive and Maven resources
+	"github.com/ParallaxProtocol/parallax"
 	build.MustRun(gomobileTool("bind", "-ldflags", "-s -w", "--target", "android", "--javapkg", "org.ethereum", "-v", "github.com/ParallaxProtocol/parallax/mobile"))
 
 	if *local {
@@ -1049,7 +1050,7 @@ func doAndroidArchive(cmdline []string) {
 	maybeSkipArchive(env)
 
 	// Sign and upload the archive to Azure
-	archive := "prlx-" + archiveBasename("android", chainparams.ArchiveVersion(env.Commit)) + ".aar"
+	archive := "prlx-" + archiveBasename("android", parallax.ArchiveVersion(env.Commit)) + ".aar"
 	os.Rename("prlx.aar", archive)
 
 	if err := archiveUpload(archive, *upload, *signer, *signify); err != nil {
@@ -1129,7 +1130,7 @@ func newMavenMetadata(env build.Environment) mavenMetadata {
 		}
 	}
 	// Render the version and package strings
-	version := chainparams.Version
+	version := parallax.Version
 	if isUnstableBuild(env) {
 		version += "-SNAPSHOT"
 	}
@@ -1159,6 +1160,7 @@ func doXCodeFramework(cmdline []string) {
 	build.MustRun(tc.Install(GOBIN, "golang.org/x/mobile/cmd/gomobile", "golang.org/x/mobile/cmd/gobind"))
 
 	// Build the iOS XCode framework
+	"github.com/ParallaxProtocol/parallax"
 	bind := gomobileTool("bind", "-ldflags", "-s -w", "--target", "ios", "-v", "github.com/ParallaxProtocol/parallax/mobile")
 
 	if *local {
@@ -1170,7 +1172,7 @@ func doXCodeFramework(cmdline []string) {
 
 	// Create the archive.
 	maybeSkipArchive(env)
-	archive := "prlx-" + archiveBasename("ios", chainparams.ArchiveVersion(env.Commit))
+	archive := "prlx-" + archiveBasename("ios", parallax.ArchiveVersion(env.Commit))
 	if err := os.MkdirAll(archive, 0755); err != nil {
 		log.Fatal(err)
 	}
@@ -1223,7 +1225,7 @@ func newPodMetadata(env build.Environment, archive string) podMetadata {
 			}
 		}
 	}
-	version := chainparams.Version
+	version := parallax.Version
 	if isUnstableBuild(env) {
 		version += "-unstable." + env.Buildnum
 	}

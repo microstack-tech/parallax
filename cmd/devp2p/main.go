@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -35,7 +35,7 @@ var (
 	app       = &cli.App{
 		Name:        filepath.Base(os.Args[0]),
 		Usage:       "parallax devp2p tool",
-		Version:     chainparams.VersionWithCommit(gitCommit, gitDate),
+		Version:     parallax.VersionWithCommit(gitCommit, gitDate),
 		Writer:      os.Stdout,
 		HideVersion: true,
 	}

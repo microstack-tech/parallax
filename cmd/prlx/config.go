@@ -26,6 +26,7 @@ import (
 
 	"gopkg.in/urfave/cli.v1"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
@@ -109,7 +110,7 @@ func loadConfig(file string, cfg *prlxConfig) error {
 func defaultNodeConfig() node.Config {
 	cfg := node.DefaultConfig
 	cfg.Name = clientIdentifier
-	cfg.Version = chainparams.VersionWithCommit(gitCommit, gitDate)
+	cfg.Version = parallax.VersionWithCommit(gitCommit, gitDate)
 	cfg.HTTPModules = append(cfg.HTTPModules, "eth")
 	cfg.WSModules = append(cfg.WSModules, "eth")
 	cfg.IPCPath = "prlx.ipc"

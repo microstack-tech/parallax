@@ -26,6 +26,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
@@ -520,7 +521,7 @@ func testCheckpointChallenge(t *testing.T, syncmode downloader.SyncMode, checkpo
 	}
 	var response *types.Header
 	if checkpoint {
-		number := (uint64(rand.Intn(500))+1)*chainparams.CHTFrequency - 1
+		number := (uint64(rand.Intn(500))+1)*netparams.CHTFrequency - 1
 		response = &types.Header{Number: big.NewInt(int64(number)), Extra: []byte("valid")}
 
 		handler.handler.checkpointNumber = number

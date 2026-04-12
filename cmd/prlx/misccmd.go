@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -39,7 +39,7 @@ var (
 		Name:  "check.version",
 		Usage: "Version to check",
 		Value: fmt.Sprintf("Parallax/v%v/%v-%v/%v",
-			chainparams.VersionWithCommit(gitCommit, gitDate),
+			parallax.VersionWithCommit(gitCommit, gitDate),
 			runtime.GOOS, runtime.GOARCH, runtime.Version()),
 	}
 	makecacheCommand = cli.Command{
@@ -134,7 +134,7 @@ func makedag(ctx *cli.Context) error {
 
 func version(ctx *cli.Context) error {
 	fmt.Println(strings.Title(clientIdentifier))
-	fmt.Println("Version:", chainparams.VersionWithMeta)
+	fmt.Println("Version:", parallax.VersionWithMeta)
 	if gitCommit != "" {
 		fmt.Println("Git Commit:", gitCommit)
 	}

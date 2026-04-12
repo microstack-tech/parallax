@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -147,7 +147,7 @@ func NewApp(gitCommit, gitDate, usage string) *cli.App {
 	app.Name = filepath.Base(os.Args[0])
 	app.Author = ""
 	app.Email = ""
-	app.Version = chainparams.VersionWithCommit(gitCommit, gitDate)
+	app.Version = parallax.VersionWithCommit(gitCommit, gitDate)
 	app.Usage = usage
 	return app
 }

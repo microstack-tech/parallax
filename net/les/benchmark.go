@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/net/les/flowcontrol"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
@@ -133,7 +133,7 @@ func (b *benchmarkHelperTrie) init(h *serverHandler, count int) error {
 		b.sectionCount, b.headNum, _ = h.server.bloomTrieIndexer.Sections()
 	} else {
 		b.sectionCount, _, _ = h.server.chtIndexer.Sections()
-		b.headNum = b.sectionCount*chainparams.CHTFrequency - 1
+		b.headNum = b.sectionCount*netparams.CHTFrequency - 1
 	}
 	if b.sectionCount == 0 {
 		return fmt.Errorf("no processed sections available")

@@ -32,6 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/net/les/light"
 	"github.com/ParallaxProtocol/parallax/net/les/vflux"
 	vfc "github.com/ParallaxProtocol/parallax/net/les/vflux/client"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
@@ -116,7 +117,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 		accountManager:  stack.AccountManager(),
 		engine:          prlconfig.CreateConsensusEngine(stack, chainConfig, &config.XHash, nil, false, chainDb),
 		bloomRequests:   make(chan chan *bloombits.Retrieval),
-		bloomIndexer:    validation.NewBloomIndexer(chainDb, chainparams.BloomBitsBlocksClient, chainparams.HelperTrieConfirmations),
+		bloomIndexer:    validation.NewBloomIndexer(chainDb, netparams.BloomBitsBlocksClient, netparams.HelperTrieConfirmations),
 		p2pServer:       stack.Server(),
 		p2pConfig:       &stack.Config().P2P,
 		udpEnabled:      stack.Config().P2P.DiscoveryV5,
@@ -134,8 +135,8 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 	leth.relay = newLesTxRelay(peers, leth.retriever)
 
 	leth.odr = NewLesOdr(chainDb, light.DefaultClientIndexerConfig, leth.peers, leth.retriever)
-	leth.chtIndexer = light.NewChtIndexer(chainDb, leth.odr, chainparams.CHTFrequency, chainparams.HelperTrieConfirmations, config.LightNoPrune)
-	leth.bloomTrieIndexer = light.NewBloomTrieIndexer(chainDb, leth.odr, chainparams.BloomBitsBlocksClient, chainparams.BloomTrieFrequency, config.LightNoPrune)
+	leth.chtIndexer = light.NewChtIndexer(chainDb, leth.odr, netparams.CHTFrequency, netparams.HelperTrieConfirmations, config.LightNoPrune)
+	leth.bloomTrieIndexer = light.NewBloomTrieIndexer(chainDb, leth.odr, netparams.BloomBitsBlocksClient, netparams.BloomTrieFrequency, config.LightNoPrune)
 	leth.odr.SetIndexers(leth.chtIndexer, leth.bloomTrieIndexer, leth.bloomIndexer)
 
 	checkpoint := config.Checkpoint
@@ -362,7 +363,7 @@ func (s *LightParallax) Start() error {
 	s.serverPool.Start()
 	// Start bloom request workers.
 	s.wg.Add(bloomServiceThreads)
-	s.startBloomHandlers(chainparams.BloomBitsBlocksClient)
+	s.startBloomHandlers(netparams.BloomBitsBlocksClient)
 	s.handler.start()
 
 	return nil

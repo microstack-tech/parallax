@@ -27,6 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
 	"github.com/ParallaxProtocol/parallax/node/protocol/fetcher"
@@ -161,7 +162,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// If we have trusted checkpoints, enforce them on the chain
 	if config.Checkpoint != nil {
-		h.checkpointNumber = (config.Checkpoint.SectionIndex+1)*chainparams.CHTFrequency - 1
+		h.checkpointNumber = (config.Checkpoint.SectionIndex+1)*netparams.CHTFrequency - 1
 		h.checkpointHash = config.Checkpoint.SectionHead
 	}
 	// If sync succeeds, pass a callback to potentially disable snap sync mode

@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/shutdowncheck"
@@ -34,6 +35,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
@@ -155,7 +157,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 		gasPrice:          config.Miner.GasPrice,
 		coinbase:          config.Miner.Coinbase,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
-		bloomIndexer:      validation.NewBloomIndexer(chainDb, chainparams.BloomBitsBlocks, chainparams.BloomConfirms),
+		bloomIndexer:      validation.NewBloomIndexer(chainDb, netparams.BloomBitsBlocks, netparams.BloomConfirms),
 		p2pServer:         stack.Server(),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
 	}
@@ -169,7 +171,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > validation.BlockChainVersion {
-			return nil, fmt.Errorf("database version is v%d, Parallax %s only supports v%d", *bcVersion, chainparams.VersionWithMeta, validation.BlockChainVersion)
+			return nil, fmt.Errorf("database version is v%d, Parallax %s only supports v%d", *bcVersion, parallax.VersionWithMeta, validation.BlockChainVersion)
 		} else if bcVersion == nil || *bcVersion < validation.BlockChainVersion {
 			if bcVersion != nil { // only print warning on upgrade, not on init
 				logging.Warn("Upgrade blockchain database version", "from", dbVer, "to", validation.BlockChainVersion)
@@ -272,7 +274,7 @@ func makeExtraData(extra []byte) []byte {
 	if len(extra) == 0 {
 		// create default extradata
 		extra, _ = rlp.EncodeToBytes([]any{
-			uint(chainparams.VersionMajor<<16 | chainparams.VersionMinor<<8 | chainparams.VersionPatch),
+			uint(parallax.VersionMajor<<16 | parallax.VersionMinor<<8 | parallax.VersionPatch),
 			"prlx",
 			runtime.Version(),
 			runtime.GOOS,
@@ -541,7 +543,7 @@ func (s *Parallax) Start() error {
 	prl.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
 
 	// Start the bloom bits servicing goroutines
-	s.startBloomHandlers(chainparams.BloomBitsBlocks)
+	s.startBloomHandlers(netparams.BloomBitsBlocks)
 
 	// Regularly update shutdown marker
 	s.shutdownTracker.Start()

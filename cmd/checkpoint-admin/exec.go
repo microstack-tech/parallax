@@ -28,10 +28,10 @@ import (
 	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle"
 	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle/contract"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
@@ -109,8 +109,8 @@ func deploy(ctx *cli.Context) error {
 
 	// Deploy the checkpoint oracle
 	fmt.Println("Sending deploy request to Clef...")
-	oracle, tx, _, err := contract.DeployCheckpointOracle(transactor, client, addrs, big.NewInt(int64(chainparams.CheckpointFrequency)),
-		big.NewInt(int64(chainparams.CheckpointProcessConfirmations)), big.NewInt(int64(needed)))
+	oracle, tx, _, err := contract.DeployCheckpointOracle(transactor, client, addrs, big.NewInt(int64(netparams.CheckpointFrequency)),
+		big.NewInt(int64(netparams.CheckpointProcessConfirmations)), big.NewInt(int64(needed)))
 	if err != nil {
 		utils.Fatalf("Failed to deploy checkpoint oracle %v", err)
 	}
@@ -165,7 +165,7 @@ func sign(ctx *cli.Context) error {
 			return err
 		}
 		num := head.Number.Uint64()
-		if num < ((cindex+1)*chainparams.CheckpointFrequency + chainparams.CheckpointProcessConfirmations) {
+		if num < ((cindex+1)*netparams.CheckpointFrequency + netparams.CheckpointProcessConfirmations) {
 			utils.Fatalf("Invalid future checkpoint")
 		}
 		_, oracle = newContract(node)

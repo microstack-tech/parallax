@@ -28,6 +28,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/net/les/downloader"
 	"github.com/ParallaxProtocol/parallax/net/les/light"
+	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/node/protocol/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -71,7 +72,7 @@ func newClientHandler(ulcServers []string, ulcFraction int, checkpoint *chainpar
 	}
 	var height uint64
 	if checkpoint != nil {
-		height = (checkpoint.SectionIndex+1)*chainparams.CHTFrequency - 1
+		height = (checkpoint.SectionIndex+1)*netparams.CHTFrequency - 1
 	}
 	handler.fetcher = newLightFetcher(backend.blockchain, backend.engine, backend.peers, handler.ulc, backend.chainDb, backend.reqDist, handler.synchronise)
 	handler.downloader = downloader.New(height, backend.chainDb, backend.eventMux, nil, backend.blockchain, handler.removePeer)

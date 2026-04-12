@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax"
 )
 
 const (
@@ -61,7 +61,7 @@ func TestConsoleWelcome(t *testing.T) {
 	prlx.SetTemplateFunc("goos", func() string { return runtime.GOOS })
 	prlx.SetTemplateFunc("goarch", func() string { return runtime.GOARCH })
 	prlx.SetTemplateFunc("gover", runtime.Version)
-	prlx.SetTemplateFunc("prlxver", func() string { return chainparams.VersionWithCommit("", "") })
+	prlx.SetTemplateFunc("prlxver", func() string { return parallax.VersionWithCommit("", "") })
 	prlx.SetTemplateFunc("niltime", func() string {
 		return time.Unix(1759695695, 0).Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")
 	})
@@ -131,7 +131,7 @@ func testAttachWelcome(t *testing.T, prlx *testprlx, endpoint, apis string) {
 	attach.SetTemplateFunc("goos", func() string { return runtime.GOOS })
 	attach.SetTemplateFunc("goarch", func() string { return runtime.GOARCH })
 	attach.SetTemplateFunc("gover", runtime.Version)
-	attach.SetTemplateFunc("prlxver", func() string { return chainparams.VersionWithCommit("", "") })
+	attach.SetTemplateFunc("prlxver", func() string { return parallax.VersionWithCommit("", "") })
 	attach.SetTemplateFunc("coinbase", func() string { return prlx.Coinbase })
 	attach.SetTemplateFunc("niltime", func() string {
 		return time.Unix(1759695695, 0).Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")

@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
@@ -155,7 +156,7 @@ func makeMiner(genesis *validation.Genesis) (*node.Node, *protocol.Parallax, err
 
 	config := &node.Config{
 		Name:    "parallax",
-		Version: chainparams.Version,
+		Version: parallax.Version,
 		DataDir: datadir,
 		P2P: p2p.Config{
 			ListenAddr:  "0.0.0.0:0",
