@@ -94,7 +94,7 @@ func TestNull(t *testing.T) {
 	s := newStateTest()
 	address := util.HexToAddress("0x823140710bf13990e4500136726d8b55")
 	s.state.CreateAccount(address)
-	// value := common.FromHex("0x823140710bf13990e4500136726d8b55")
+	// value := util.FromHex("0x823140710bf13990e4500136726d8b55")
 	var value util.Hash
 
 	s.state.SetState(address, util.Hash{}, value)

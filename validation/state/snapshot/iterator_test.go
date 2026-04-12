@@ -145,12 +145,28 @@ func TestFastIteratorBasics(t *testing.T) {
 		expKeys []byte
 	}
 	for i, tc := range []testCase{
-		{lists: [][]byte{{0, 1, 8}, {1, 2, 8}, {2, 9}, {4},
-			{7, 14, 15}, {9, 13, 15, 16}},
-			expKeys: []byte{0, 1, 2, 4, 7, 8, 9, 13, 14, 15, 16}},
-		{lists: [][]byte{{0, 8}, {1, 2, 8}, {7, 14, 15}, {8, 9},
-			{9, 10}, {10, 13, 15, 16}},
-			expKeys: []byte{0, 1, 2, 7, 8, 9, 10, 13, 14, 15, 16}},
+		{
+			lists: [][]byte{
+				{0, 1, 8},
+				{1, 2, 8},
+				{2, 9},
+				{4},
+				{7, 14, 15},
+				{9, 13, 15, 16},
+			},
+			expKeys: []byte{0, 1, 2, 4, 7, 8, 9, 13, 14, 15, 16},
+		},
+		{
+			lists: [][]byte{
+				{0, 8},
+				{1, 2, 8},
+				{7, 14, 15},
+				{8, 9},
+				{9, 10},
+				{10, 13, 15, 16},
+			},
+			expKeys: []byte{0, 1, 2, 7, 8, 9, 10, 13, 14, 15, 16},
+		},
 	} {
 		var iterators []*weightedIterator
 		for i, data := range tc.lists {
@@ -582,7 +598,7 @@ func TestAccountIteratorFlattening(t *testing.T) {
 	if err := snaps.Cap(util.HexToHash("0x04"), 1); err != nil {
 		t.Fatalf("failed to flatten snapshot stack: %v", err)
 	}
-	//verifyIterator(t, 7, it)
+	// verifyIterator(t, 7, it)
 }
 
 func TestAccountIteratorSeek(t *testing.T) {
@@ -1022,9 +1038,9 @@ func BenchmarkFastAccountIteration(b *testing.B) {
 
 func benchmarkAccountIteration(b *testing.B, iterator func(snap snapshot) AccountIterator) {
 	// Create a diff stack and randomize the accounts across them
-	layers := make([]map[common.Hash][]byte, 128)
+	layers := make([]map[util.Hash][]byte, 128)
 	for i := 0; i < len(layers); i++ {
-		layers[i] = make(map[common.Hash][]byte)
+		layers[i] = make(map[util.Hash][]byte)
 	}
 	for i := 0; i < b.N; i++ {
 		depth := rand.Intn(len(layers))
@@ -1032,7 +1048,7 @@ func benchmarkAccountIteration(b *testing.B, iterator func(snap snapshot) Accoun
 	}
 	stack := snapshot(emptyLayer())
 	for _, layer := range layers {
-		stack = stack.Update(common.Hash{}, layer, nil, nil)
+		stack = stack.Update(util.Hash{}, layer, nil, nil)
 	}
 	// Reset the timers and report all the stats
 	it := iterator(stack)

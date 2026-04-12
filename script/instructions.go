@@ -401,7 +401,7 @@ func opExtCodeCopy(pc *uint64, interpreter *PVMInterpreter, scope *ScopeContext)
 //
 //	(2) Caller tries to get the code hash of a non-existent account, state should
 //
-// return common.Hash{} and zero will be set as the result.
+// return util.Hash{} and zero will be set as the result.
 //
 //	(3) Caller tries to get the code hash for an account without contract code,
 //

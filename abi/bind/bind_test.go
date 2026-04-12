@@ -48,13 +48,13 @@ var bindTests = []struct {
 		[]string{`[]`},
 		`"github.com/ParallaxProtocol/parallax/util"`,
 		`
-			if b, err := NewEmpty(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewEmpty(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("combined binding (%v) nil or error (%v) not nil", b, nil)
 			}
-			if b, err := NewEmptyCaller(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewEmptyCaller(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("caller binding (%v) nil or error (%v) not nil", b, nil)
 			}
-			if b, err := NewEmptyTransactor(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewEmptyTransactor(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("transactor binding (%v) nil or error (%v) not nil", b, nil)
 			}
 		`,
@@ -71,7 +71,7 @@ var bindTests = []struct {
 		[]string{`[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"success","type":"bool"}],"type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[],"type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"},{"name":"_extraData","type":"bytes"}],"name":"approveAndCall","outputs":[{"name":"success","type":"bool"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"spentAllowance","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"},{"name":"","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"inputs":[{"name":"initialSupply","type":"uint256"},{"name":"tokenName","type":"string"},{"name":"decimalUnits","type":"uint8"},{"name":"tokenSymbol","type":"string"}],"type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]`},
 		`"github.com/ParallaxProtocol/parallax/util"`,
 		`
-			if b, err := NewToken(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewToken(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("binding (%v) nil or error (%v) not nil", b, nil)
 			}
 		`,
@@ -87,7 +87,7 @@ var bindTests = []struct {
 		[]string{`[{"constant":false,"inputs":[],"name":"checkGoalReached","outputs":[],"type":"function"},{"constant":true,"inputs":[],"name":"deadline","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"beneficiary","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":true,"inputs":[],"name":"tokenReward","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":true,"inputs":[],"name":"fundingGoal","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"amountRaised","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"price","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"uint256"}],"name":"funders","outputs":[{"name":"addr","type":"address"},{"name":"amount","type":"uint256"}],"type":"function"},{"inputs":[{"name":"ifSuccessfulSendTo","type":"address"},{"name":"fundingGoalInEthers","type":"uint256"},{"name":"durationInMinutes","type":"uint256"},{"name":"etherCostOfEachToken","type":"uint256"},{"name":"addressOfTokenUsedAsReward","type":"address"}],"type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"name":"backer","type":"address"},{"indexed":false,"name":"amount","type":"uint256"},{"indexed":false,"name":"isContribution","type":"bool"}],"name":"FundTransfer","type":"event"}]`},
 		`"github.com/ParallaxProtocol/parallax/util"`,
 		`
-			if b, err := NewCrowdsale(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewCrowdsale(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("binding (%v) nil or error (%v) not nil", b, nil)
 			}
 		`,
@@ -103,7 +103,7 @@ var bindTests = []struct {
 		[]string{`[{"constant":true,"inputs":[{"name":"","type":"uint256"}],"name":"proposals","outputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"},{"name":"description","type":"string"},{"name":"votingDeadline","type":"uint256"},{"name":"executed","type":"bool"},{"name":"proposalPassed","type":"bool"},{"name":"numberOfVotes","type":"uint256"},{"name":"currentResult","type":"int256"},{"name":"proposalHash","type":"bytes32"}],"type":"function"},{"constant":false,"inputs":[{"name":"proposalNumber","type":"uint256"},{"name":"transactionBytecode","type":"bytes"}],"name":"executeProposal","outputs":[{"name":"result","type":"int256"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"address"}],"name":"memberId","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"numProposals","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[{"name":"","type":"uint256"}],"name":"members","outputs":[{"name":"member","type":"address"},{"name":"canVote","type":"bool"},{"name":"name","type":"string"},{"name":"memberSince","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"debatingPeriodInMinutes","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"minimumQuorum","outputs":[{"name":"","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[],"name":"owner","outputs":[{"name":"","type":"address"}],"type":"function"},{"constant":false,"inputs":[{"name":"targetMember","type":"address"},{"name":"canVote","type":"bool"},{"name":"memberName","type":"string"}],"name":"changeMembership","outputs":[],"type":"function"},{"constant":true,"inputs":[],"name":"majorityMargin","outputs":[{"name":"","type":"int256"}],"type":"function"},{"constant":false,"inputs":[{"name":"beneficiary","type":"address"},{"name":"etherAmount","type":"uint256"},{"name":"JobDescription","type":"string"},{"name":"transactionBytecode","type":"bytes"}],"name":"newProposal","outputs":[{"name":"proposalID","type":"uint256"}],"type":"function"},{"constant":false,"inputs":[{"name":"minimumQuorumForProposals","type":"uint256"},{"name":"minutesForDebate","type":"uint256"},{"name":"marginOfVotesForMajority","type":"int256"}],"name":"changeVotingRules","outputs":[],"type":"function"},{"constant":false,"inputs":[{"name":"proposalNumber","type":"uint256"},{"name":"supportsProposal","type":"bool"},{"name":"justificationText","type":"string"}],"name":"vote","outputs":[{"name":"voteID","type":"uint256"}],"type":"function"},{"constant":true,"inputs":[{"name":"proposalNumber","type":"uint256"},{"name":"beneficiary","type":"address"},{"name":"etherAmount","type":"uint256"},{"name":"transactionBytecode","type":"bytes"}],"name":"checkProposalCode","outputs":[{"name":"codeChecksOut","type":"bool"}],"type":"function"},{"constant":false,"inputs":[{"name":"newOwner","type":"address"}],"name":"transferOwnership","outputs":[],"type":"function"},{"inputs":[{"name":"minimumQuorumForProposals","type":"uint256"},{"name":"minutesForDebate","type":"uint256"},{"name":"marginOfVotesForMajority","type":"int256"},{"name":"congressLeader","type":"address"}],"type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"name":"proposalID","type":"uint256"},{"indexed":false,"name":"recipient","type":"address"},{"indexed":false,"name":"amount","type":"uint256"},{"indexed":false,"name":"description","type":"string"}],"name":"ProposalAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"proposalID","type":"uint256"},{"indexed":false,"name":"position","type":"bool"},{"indexed":false,"name":"voter","type":"address"},{"indexed":false,"name":"justification","type":"string"}],"name":"Voted","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"proposalID","type":"uint256"},{"indexed":false,"name":"result","type":"int256"},{"indexed":false,"name":"quorum","type":"uint256"},{"indexed":false,"name":"active","type":"bool"}],"name":"ProposalTallied","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"member","type":"address"},{"indexed":false,"name":"isMember","type":"bool"}],"name":"MembershipChanged","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"minimumQuorum","type":"uint256"},{"indexed":false,"name":"debatingPeriodInMinutes","type":"uint256"},{"indexed":false,"name":"majorityMargin","type":"int256"}],"name":"ChangeOfRules","type":"event"}]`},
 		`"github.com/ParallaxProtocol/parallax/util"`,
 		`
-			if b, err := NewDAO(common.Address{}, nil); b == nil || err != nil {
+			if b, err := NewDAO(util.Address{}, nil); b == nil || err != nil {
 				t.Fatalf("binding (%v) nil or error (%v) not nil", b, nil)
 			}
 		`,
@@ -131,7 +131,7 @@ var bindTests = []struct {
 
 			"github.com/ParallaxProtocol/parallax/util"
 		`,
-		`if b, err := NewInputChecker(common.Address{}, nil); b == nil || err != nil {
+		`if b, err := NewInputChecker(util.Address{}, nil); b == nil || err != nil {
 			 t.Fatalf("binding (%v) nil or error (%v) not nil", b, nil)
 		 } else if false { // Don't run, just compile and test types
 			 var err error
@@ -170,7 +170,7 @@ var bindTests = []struct {
 
 			"github.com/ParallaxProtocol/parallax/util"
 		`,
-		`if b, err := NewOutputChecker(common.Address{}, nil); b == nil || err != nil {
+		`if b, err := NewOutputChecker(util.Address{}, nil); b == nil || err != nil {
 			 t.Fatalf("binding (%v) nil or error (%v) not nil", b, nil)
 		 } else if false { // Don't run, just compile and test types
 			 var str1, str2 string
@@ -212,7 +212,7 @@ var bindTests = []struct {
 
 			"github.com/ParallaxProtocol/parallax/util"
 		`,
-		`if e, err := NewEventChecker(common.Address{}, nil); e == nil || err != nil {
+		`if e, err := NewEventChecker(util.Address{}, nil); e == nil || err != nil {
 			 t.Fatalf("binding (%v) nil or error (%v) not nil", e, nil)
 		 } else if false { // Don't run, just compile and test types
 			 var (
@@ -220,12 +220,12 @@ var bindTests = []struct {
 			   res  bool
 				 str  string
 				 dat  []byte
-				 hash common.Hash
+				 hash util.Hash
 			 )
 			 _, err = e.FilterEmpty(nil)
-			 _, err = e.FilterIndexed(nil, []common.Address{}, []*big.Int{})
+			 _, err = e.FilterIndexed(nil, []util.Address{}, []*big.Int{})
 
-			 mit, err := e.FilterMixed(nil, []common.Address{})
+			 mit, err := e.FilterMixed(nil, []util.Address{})
 
 			 res = mit.Next()  // Make sure the iterator has a Next method
 			 err = mit.Error() // Make sure the iterator has an Error method
@@ -243,7 +243,7 @@ var bindTests = []struct {
 			 hash = dit.Event.IdxDat // Make sure indexed bytes turn into hashes
 
 			 sink := make(chan *EventCheckerMixed)
-			 sub, err := e.WatchMixed(nil, sink, []common.Address{})
+			 sub, err := e.WatchMixed(nil, sink, []util.Address{})
 			 defer sub.Unsubscribe()
 
 			 event := <-sink
@@ -300,7 +300,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy an interaction tester contract and call a transaction on it
@@ -355,7 +355,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a tuple tester contract and execute a structured call on it
@@ -401,7 +401,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a tuple tester contract and execute a structured call on it
@@ -459,7 +459,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a slice tester contract and execute a n array call on it
@@ -469,10 +469,10 @@ var bindTests = []struct {
 			}
 			sim.Commit()
 
-			if out, err := slicer.EchoAddresses(nil, []common.Address{auth.From, common.Address{}}); err != nil {
+			if out, err := slicer.EchoAddresses(nil, []util.Address{auth.From, util.Address{}}); err != nil {
 					t.Fatalf("Failed to call slice echoer: %v", err)
-			} else if !reflect.DeepEqual(out, []common.Address{auth.From, common.Address{}}) {
-					t.Fatalf("Slice return mismatch: have %v, want %v", out, []common.Address{auth.From, common.Address{}})
+			} else if !reflect.DeepEqual(out, []util.Address{auth.From, util.Address{}}) {
+					t.Fatalf("Slice return mismatch: have %v, want %v", out, []util.Address{auth.From, util.Address{}})
 			}
 		`,
 		nil,
@@ -507,7 +507,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a default method invoker contract and execute its default method
@@ -572,7 +572,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 		
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 		
 			// Deploy a structs method invoker contract and execute its default method
@@ -615,10 +615,10 @@ var bindTests = []struct {
 		`
 			// Create a simulator and wrap a non-deployed contract
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{}, uint64(10000000000))
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{}, uint64(10000000000))
 			defer sim.Close()
 
-			nonexistent, err := NewNonExistent(common.Address{}, sim)
+			nonexistent, err := NewNonExistent(util.Address{}, sim)
 			if err != nil {
 				t.Fatalf("Failed to access non-existent contract: %v", err)
 			}
@@ -654,10 +654,10 @@ var bindTests = []struct {
 		`
 			// Create a simulator and wrap a non-deployed contract
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{}, uint64(10000000000))
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{}, uint64(10000000000))
 			defer sim.Close()
 
-			nonexistent, err := NewNonExistentStruct(common.Address{}, sim)
+			nonexistent, err := NewNonExistentStruct(util.Address{}, sim)
 			if err != nil {
 				t.Fatalf("Failed to access non-existent contract: %v", err)
 			}
@@ -704,7 +704,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a funky gas pattern contract
@@ -755,7 +755,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a sender tester contract and execute a structured call on it
@@ -767,11 +767,11 @@ var bindTests = []struct {
 
 			if res, err := callfrom.CallFrom(nil); err != nil {
 				t.Errorf("Failed to call constant function: %v", err)
-			} else if res != (common.Address{}) {
-				t.Errorf("Invalid address returned, want: %x, got: %x", (common.Address{}), res)
+			} else if res != (util.Address{}) {
+				t.Errorf("Invalid address returned, want: %x, got: %x", (util.Address{}), res)
 			}
 
-			for _, addr := range []common.Address{common.Address{}, common.Address{1}, common.Address{2}} {
+			for _, addr := range []util.Address{util.Address{}, util.Address{1}, util.Address{2}} {
 				if res, err := callfrom.CallFrom(&bind.CallOpts{From: addr}); err != nil {
 					t.Fatalf("Failed to call constant function: %v", err)
 				} else if res != addr {
@@ -831,7 +831,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a underscorer tester contract and execute a structured call on it
@@ -925,7 +925,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy an eventer contract
@@ -938,14 +938,14 @@ var bindTests = []struct {
 			// Inject a few events into the contract, gradually more in each block
 			for i := 1; i <= 3; i++ {
 				for j := 1; j <= i; j++ {
-					if _, err := eventer.RaiseSimpleEvent(auth, common.Address{byte(j)}, [32]byte{byte(j)}, true, big.NewInt(int64(10*i+j))); err != nil {
+					if _, err := eventer.RaiseSimpleEvent(auth, util.Address{byte(j)}, [32]byte{byte(j)}, true, big.NewInt(int64(10*i+j))); err != nil {
 						t.Fatalf("block %d, event %d: raise failed: %v", i, j, err)
 					}
 				}
 				sim.Commit()
 			}
 			// Test filtering for certain events and ensure they can be found
-			sit, err := eventer.FilterSimpleEvent(nil, []common.Address{common.Address{1}, common.Address{3}}, [][32]byte{{byte(1)}, {byte(2)}, {byte(3)}}, []bool{true})
+			sit, err := eventer.FilterSimpleEvent(nil, []util.Address{util.Address{1}, util.Address{3}}, [][32]byte{{byte(1)}, {byte(2)}, {byte(3)}}, []bool{true})
 			if err != nil {
 				t.Fatalf("failed to filter for simple events: %v", err)
 			}
@@ -1013,7 +1013,7 @@ var bindTests = []struct {
 			if !dit.Next() {
 				t.Fatalf("dynamic log not found: %v", dit.Error())
 			}
-			if dit.Event.NonIndexedString != "Hello" || string(dit.Event.NonIndexedBytes) != "World" ||	dit.Event.IndexedString != common.HexToHash("0x06b3dfaec148fb1bb2b066f10ec285e7c9bf402ab32aa78a5d38e34566810cd2") || dit.Event.IndexedBytes != common.HexToHash("0xf2208c967df089f60420785795c0a9ba8896b0f6f1867fa7f1f12ad6f79c1a18") {
+			if dit.Event.NonIndexedString != "Hello" || string(dit.Event.NonIndexedBytes) != "World" ||	dit.Event.IndexedString != util.HexToHash("0x06b3dfaec148fb1bb2b066f10ec285e7c9bf402ab32aa78a5d38e34566810cd2") || dit.Event.IndexedBytes != util.HexToHash("0xf2208c967df089f60420785795c0a9ba8896b0f6f1867fa7f1f12ad6f79c1a18") {
 				t.Errorf("dynamic log content mismatch: have %v, want {'0x06b3dfaec148fb1bb2b066f10ec285e7c9bf402ab32aa78a5d38e34566810cd2, '0xf2208c967df089f60420785795c0a9ba8896b0f6f1867fa7f1f12ad6f79c1a18', 'Hello', 'World'}", dit.Event)
 			}
 			if dit.Next() {
@@ -1055,7 +1055,7 @@ var bindTests = []struct {
 			if err != nil {
 				t.Fatalf("failed to subscribe to simple events: %v", err)
 			}
-			if _, err := eventer.RaiseSimpleEvent(auth, common.Address{255}, [32]byte{255}, true, big.NewInt(255)); err != nil {
+			if _, err := eventer.RaiseSimpleEvent(auth, util.Address{255}, [32]byte{255}, true, big.NewInt(255)); err != nil {
 				t.Fatalf("failed to raise subscribed simple event: %v", err)
 			}
 			sim.Commit()
@@ -1071,7 +1071,7 @@ var bindTests = []struct {
 			// Unsubscribe from the event and make sure we're not delivered more
 			sub.Unsubscribe()
 
-			if _, err := eventer.RaiseSimpleEvent(auth, common.Address{254}, [32]byte{254}, true, big.NewInt(254)); err != nil {
+			if _, err := eventer.RaiseSimpleEvent(auth, util.Address{254}, [32]byte{254}, true, big.NewInt(254)); err != nil {
 				t.Fatalf("failed to raise subscribed simple event: %v", err)
 			}
 			sim.Commit()
@@ -1115,7 +1115,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			//deploy the test contract
@@ -1252,7 +1252,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			_, _, contract, err := DeployTuple(auth, sim)
@@ -1394,7 +1394,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			//deploy the test contract
@@ -1460,7 +1460,7 @@ var bindTests = []struct {
 		// Initialize test accounts
 		key, _ := crypto.GenerateKey()
 		auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-		sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+		sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 		defer sim.Close()
 
 		// deploy the test contract
@@ -1550,7 +1550,7 @@ var bindTests = []struct {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 
 		// Deploy registrar contract
-		sim := backends.NewSimulatedBackend(core.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+		sim := backends.NewSimulatedBackend(validation.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 		defer sim.Close()
 
 		transactOpts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
@@ -1612,7 +1612,7 @@ var bindTests = []struct {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 
 		// Deploy registrar contract
-		sim := backends.NewSimulatedBackend(core.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+		sim := backends.NewSimulatedBackend(validation.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 		defer sim.Close()
 
 		transactOpts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
@@ -1674,7 +1674,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000)
 			defer sim.Close()
 
 			// Deploy a tester contract and execute a structured call on it
@@ -1734,7 +1734,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			addr := crypto.PubkeyToAddress(key.PublicKey)
 	
-			sim := backends.NewSimulatedBackend(core.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 1000000)
+			sim := backends.NewSimulatedBackend(validation.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 1000000)
 			defer sim.Close()
 	
 			opts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
@@ -1823,7 +1823,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(core.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 
@@ -1893,7 +1893,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(core.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 	
@@ -1945,7 +1945,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(core.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 
@@ -1975,7 +1975,7 @@ func TestGolangBindings(t *testing.T) {
 	ws := t.TempDir()
 
 	pkg := filepath.Join(ws, "bindtest")
-	if err := os.MkdirAll(pkg, 0700); err != nil {
+	if err := os.MkdirAll(pkg, 0o700); err != nil {
 		t.Fatalf("failed to create package: %v", err)
 	}
 	// Generate the test suite for all the contracts
@@ -1992,7 +1992,7 @@ func TestGolangBindings(t *testing.T) {
 			if err != nil {
 				t.Fatalf("test %d: failed to generate binding: %v", i, err)
 			}
-			if err = os.WriteFile(filepath.Join(pkg, strings.ToLower(tt.name)+".go"), []byte(bind), 0600); err != nil {
+			if err = os.WriteFile(filepath.Join(pkg, strings.ToLower(tt.name)+".go"), []byte(bind), 0o600); err != nil {
 				t.Fatalf("test %d: failed to write binding: %v", i, err)
 			}
 			// Generate the test file with the injected test code
@@ -2008,7 +2008,7 @@ func TestGolangBindings(t *testing.T) {
 				%s
 			}
 		`, tt.imports, tt.name, tt.tester)
-			if err := os.WriteFile(filepath.Join(pkg, strings.ToLower(tt.name)+"_test.go"), []byte(code), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(pkg, strings.ToLower(tt.name)+"_test.go"), []byte(code), 0o600); err != nil {
 				t.Fatalf("test %d: failed to write tests: %v", i, err)
 			}
 		})
@@ -2020,7 +2020,7 @@ func TestGolangBindings(t *testing.T) {
 		t.Fatalf("failed to convert binding test to modules: %v\n%s", err, out)
 	}
 	pwd, _ := os.Getwd()
-	replacer := exec.Command(gocmd, "mod", "edit", "-x", "-require", "github.com/ParallaxProtocol/parallax@v0.0.0", "-replace", "github.com/ParallaxProtocol/parallax="+filepath.Join(pwd, "..", "..", "..")) // Repo root
+	replacer := exec.Command(gocmd, "mod", "edit", "-x", "-require", "github.com/ParallaxProtocol/parallax@v0.0.0", "-replace", "github.com/ParallaxProtocol/parallax="+filepath.Join(pwd, "..", "..")) // Repo root
 	replacer.Dir = pkg
 	if out, err := replacer.CombinedOutput(); err != nil {
 		t.Fatalf("failed to replace binding test dependency to current source tree: %v\n%s", err, out)

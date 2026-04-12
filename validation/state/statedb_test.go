@@ -464,7 +464,7 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
 			state.GetRefund(), checkstate.GetRefund())
 	}
 	if !reflect.DeepEqual(state.GetLogs(util.Hash{}, util.Hash{}), checkstate.GetLogs(util.Hash{}, util.Hash{})) {
-		return fmt.Errorf("got GetLogs(common.Hash{}) == %v, want GetLogs(common.Hash{}) == %v",
+		return fmt.Errorf("got GetLogs(util.Hash{}) == %v, want GetLogs(util.Hash{}) == %v",
 			state.GetLogs(util.Hash{}, util.Hash{}), checkstate.GetLogs(util.Hash{}, util.Hash{}))
 	}
 	return nil
@@ -757,7 +757,7 @@ func TestStateDBAccessList(t *testing.T) {
 
 	verifyAddrs := func(astrings ...string) {
 		t.Helper()
-		// convert to common.Address form
+		// convert to util.Address form
 		var addresses []util.Address
 		addressMap := make(map[util.Address]struct{})
 		for _, astring := range astrings {
@@ -783,7 +783,7 @@ func TestStateDBAccessList(t *testing.T) {
 			t.Fatalf("scope missing address/slots %v", addrString)
 		}
 		address := addr(addrString)
-		// convert to common.Hash form
+		// convert to util.Hash form
 		var slots []util.Hash
 		slotMap := make(map[util.Hash]struct{})
 		for _, slotString := range slotStrings {

@@ -465,7 +465,7 @@ func proofHappyStorageRequestHandler(t *testPeer, requestId uint64, root util.Ha
 	return nil
 }
 
-//func emptyCodeRequestHandler(t *testPeer, id uint64, hashes []common.Hash, max uint64) error {
+//func emptyCodeRequestHandler(t *testPeer, id uint64, hashes []util.Hash, max uint64) error {
 //	var bytecodes [][]byte
 //	t.remote.OnByteCodes(t, id, bytecodes)
 //	return nil
@@ -507,7 +507,7 @@ func starvingAccountRequestHandler(t *testPeer, requestId uint64, root util.Hash
 	return defaultAccountRequestHandler(t, requestId, root, origin, limit, 500)
 }
 
-//func misdeliveringAccountRequestHandler(t *testPeer, requestId uint64, root common.Hash, origin common.Hash, cap uint64) error {
+//func misdeliveringAccountRequestHandler(t *testPeer, requestId uint64, root util.Hash, origin util.Hash, cap uint64) error {
 //	return defaultAccountRequestHandler(t, requestId-1, root, origin, 500)
 //}
 

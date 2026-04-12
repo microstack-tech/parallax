@@ -408,7 +408,7 @@ func parseDumpConfig(ctx *cli.Context, stack *node.Node) (*state.DumpConfig, dbs
 	startArg := util.FromHex(ctx.String(utils.StartKeyFlag.Name))
 	var start util.Hash
 	switch len(startArg) {
-	case 0: // common.Hash
+	case 0: // util.Hash
 	case 32:
 		start = util.BytesToHash(startArg)
 	case 20:

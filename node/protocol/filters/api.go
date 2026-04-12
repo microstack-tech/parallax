@@ -407,7 +407,7 @@ func (api *PublicFilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*ty
 // GetFilterChanges returns the logs for the filter with the given id since
 // last time it was called. This can be used for polling.
 //
-// For pending transaction and block filters the result is []common.Hash.
+// For pending transaction and block filters the result is []util.Hash.
 // (pending)Log filters return []Log.
 //
 // https://eth.wiki/json-rpc/API#eth_getfilterchanges
@@ -516,7 +516,7 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 	}
 
 	// topics is an array consisting of strings and/or arrays of strings.
-	// JSON null values are converted to common.Hash{} and ignored by the filter manager.
+	// JSON null values are converted to util.Hash{} and ignored by the filter manager.
 	if len(raw.Topics) > 0 {
 		args.Topics = make([][]util.Hash, len(raw.Topics))
 		for i, t := range raw.Topics {

@@ -123,7 +123,7 @@ type diffLayer struct {
 	lock sync.RWMutex
 }
 
-// destructBloomHasher is a wrapper around a common.Hash to satisfy the interface
+// destructBloomHasher is a wrapper around a util.Hash to satisfy the interface
 // API requirements of the bloom library used. It's used to convert a destruct
 // event into a 64 bit mini hash.
 type destructBloomHasher util.Hash
@@ -137,7 +137,7 @@ func (h destructBloomHasher) Sum64() uint64 {
 	return binary.BigEndian.Uint64(h[bloomDestructHasherOffset : bloomDestructHasherOffset+8])
 }
 
-// accountBloomHasher is a wrapper around a common.Hash to satisfy the interface
+// accountBloomHasher is a wrapper around a util.Hash to satisfy the interface
 // API requirements of the bloom library used. It's used to convert an account
 // hash into a 64 bit mini hash.
 type accountBloomHasher util.Hash
@@ -151,7 +151,7 @@ func (h accountBloomHasher) Sum64() uint64 {
 	return binary.BigEndian.Uint64(h[bloomAccountHasherOffset : bloomAccountHasherOffset+8])
 }
 
-// storageBloomHasher is a wrapper around a [2]common.Hash to satisfy the interface
+// storageBloomHasher is a wrapper around a [2]util.Hash to satisfy the interface
 // API requirements of the bloom library used. It's used to convert an account
 // hash into a 64 bit mini hash.
 type storageBloomHasher [2]util.Hash

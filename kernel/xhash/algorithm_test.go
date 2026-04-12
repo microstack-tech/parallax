@@ -700,17 +700,17 @@ func TestHashimoto(t *testing.T) {
 // 	// Define a heavy enough block, one from mainnet should do
 // 	block := types.NewBlockWithHeader(&types.Header{
 // 		Number:         big.NewInt(0xa37),
-// 		ParentHash:     common.HexToHash("0x91d827585c3213370debd4da436c8e7c7faeff93973619e42d7dc3ca1f320cd3"),
-// 		Coinbase:       common.HexToAddress("0x43251ac4ef2551c5abb35fc18f49250d532334e3"),
-// 		Root:           common.HexToHash("0x813f2f1f4d3ef2453817b8fede21fb5d96847bc784cea754f7854632dcb364f6"),
-// 		TxHash:         common.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
-// 		ReceiptHash:    common.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+// 		ParentHash:     util.HexToHash("0x91d827585c3213370debd4da436c8e7c7faeff93973619e42d7dc3ca1f320cd3"),
+// 		Coinbase:       util.HexToAddress("0x43251ac4ef2551c5abb35fc18f49250d532334e3"),
+// 		Root:           util.HexToHash("0x813f2f1f4d3ef2453817b8fede21fb5d96847bc784cea754f7854632dcb364f6"),
+// 		TxHash:         util.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+// 		ReceiptHash:    util.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
 // 		Difficulty:     big.NewInt(0x8000000),
 // 		GasLimit:       0x23c34600,
 // 		GasUsed:        0,
 // 		Time:           0x68ceb3ff,
 // 		EpochStartTime: 0x68cb922f,
-// 		MixDigest:      common.HexToHash("0xe923f5f7b05f6ff80a114c156c4216bc4a71b1c77a2d5d51104c0f316a675734"),
+// 		MixDigest:      util.HexToHash("0xe923f5f7b05f6ff80a114c156c4216bc4a71b1c77a2d5d51104c0f316a675734"),
 // 		Nonce:          types.EncodeNonce(0x6b697ee3dbd3ae66),
 // 	})
 // 	// Simulate multiple processes sharing the same datadir

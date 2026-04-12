@@ -102,7 +102,7 @@ func genIntType(rule int64, size uint) []byte {
 	var topic [util.HashLength]byte
 	if rule < 0 {
 		// if a rule is negative, we need to put it into two's complement.
-		// extended to common.HashLength bytes.
+		// extended to util.HashLength bytes.
 		topic = [util.HashLength]byte{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
 	}
 	for i := uint(0); i < size; i++ {

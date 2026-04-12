@@ -82,7 +82,7 @@ func (vs *ValidationMessages) GetWarnings() error {
 
 // SendTxArgs represents the arguments to submit a transaction
 // This struct is identical to prlapi.TransactionArgs, except for the usage of
-// common.MixedcaseAddress in From and To
+// util.MixedcaseAddress in From and To
 type SendTxArgs struct {
 	From                 util.MixedcaseAddress  `json:"from"`
 	To                   *util.MixedcaseAddress `json:"to"`

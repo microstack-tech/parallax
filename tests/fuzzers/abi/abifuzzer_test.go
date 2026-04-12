@@ -33,7 +33,7 @@ func TestReplicate(t *testing.T) {
 func TestGenerateCorpus(t *testing.T) {
 	/*
 		corpusHex := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-		data := common.FromHex(corpusHex)
+		data := util.FromHex(corpusHex)
 		checksum := sha1.Sum(data)
 		outf := fmt.Sprintf("corpus/%x", checksum)
 		if err := os.WriteFile(outf, data, 0777); err != nil {

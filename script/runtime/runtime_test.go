@@ -247,7 +247,7 @@ func (d *dummyChain) GetHeader(h util.Hash, n uint64) *types.Header {
 	s := util.LeftPadBytes(big.NewInt(int64(n-1)).Bytes(), 32)
 	copy(parentHash[:], s)
 
-	// parentHash := common.Hash{byte(n - 1)}
+	// parentHash := util.Hash{byte(n - 1)}
 	// fmt.Printf("GetHeader(%x, %d) => header with parent %x\n", h, n, parentHash)
 	return fakeHeader(n, parentHash)
 }

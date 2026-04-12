@@ -130,7 +130,7 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		// Ensure protocol limits are honored
 		//{
 		//	&GetBlockHeadersData{Origin: hashOrNumber{Number: bc.CurrentBlock().NumberU64() - 1}, Amount: limit + 10, Reverse: true},
-		//	[]common.Hash{},
+		//	[]util.Hash{},
 		//},
 		// Check that requesting more than available is handled gracefully
 		{

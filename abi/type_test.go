@@ -95,14 +95,18 @@ func TestTypeRegexp(t *testing.T) {
 		// {"fixed[2]", nil, Type{}},
 		// {"fixed128x128[]", nil, Type{}},
 		// {"fixed128x128[2]", nil, Type{}},
-		{"tuple", []ArgumentMarshaling{{Name: "a", Type: "int64"}}, Type{T: TupleTy, TupleType: reflect.TypeOf(struct {
-			A int64 `json:"a"`
-		}{}), stringKind: "(int64)",
-			TupleElems: []*Type{{T: IntTy, Size: 64, stringKind: "int64"}}, TupleRawNames: []string{"a"}}},
-		{"tuple with long name", []ArgumentMarshaling{{Name: "aTypicalParamName", Type: "int64"}}, Type{T: TupleTy, TupleType: reflect.TypeOf(struct {
-			ATypicalParamName int64 `json:"aTypicalParamName"`
-		}{}), stringKind: "(int64)",
-			TupleElems: []*Type{{T: IntTy, Size: 64, stringKind: "int64"}}, TupleRawNames: []string{"aTypicalParamName"}}},
+		{"tuple", []ArgumentMarshaling{{Name: "a", Type: "int64"}}, Type{
+			T: TupleTy, TupleType: reflect.TypeOf(struct {
+				A int64 `json:"a"`
+			}{}), stringKind: "(int64)",
+			TupleElems: []*Type{{T: IntTy, Size: 64, stringKind: "int64"}}, TupleRawNames: []string{"a"},
+		}},
+		{"tuple with long name", []ArgumentMarshaling{{Name: "aTypicalParamName", Type: "int64"}}, Type{
+			T: TupleTy, TupleType: reflect.TypeOf(struct {
+				ATypicalParamName int64 `json:"aTypicalParamName"`
+			}{}), stringKind: "(int64)",
+			TupleElems: []*Type{{T: IntTy, Size: 64, stringKind: "int64"}}, TupleRawNames: []string{"aTypicalParamName"},
+		}},
 	}
 
 	for _, tt := range tests {
@@ -249,7 +253,7 @@ func TestTypeCheck(t *testing.T) {
 		{"bytes1", nil, [1]byte{}, ""},
 		{"bytes32", nil, [33]byte{}, "abi: cannot use [33]uint8 as type [32]uint8 as argument"},
 		{"bytes32", nil, util.Hash{1}, ""},
-		{"bytes31", nil, util.Hash{1}, "abi: cannot use common.Hash as type [31]uint8 as argument"},
+		{"bytes31", nil, util.Hash{1}, "abi: cannot use util.Hash as type [31]uint8 as argument"},
 		{"bytes31", nil, [32]byte{}, "abi: cannot use [32]uint8 as type [31]uint8 as argument"},
 		{"bytes", nil, []byte{0, 1}, ""},
 		{"bytes", nil, [2]byte{0, 1}, "abi: cannot use array as type slice as argument"},
@@ -332,7 +336,7 @@ func TestInternalType(t *testing.T) {
 }
 
 func TestGetTypeSize(t *testing.T) {
-	var testCases = []struct {
+	testCases := []struct {
 		typ        string
 		components []ArgumentMarshaling
 		typSize    int

@@ -205,8 +205,8 @@ func TestEmptyBug(t *testing.T) {
 	st := NewStackTrie(nil)
 	nt, _ := New(util.Hash{}, NewDatabase(memorydb.New()))
 
-	// leaf := common.FromHex("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
-	// value := common.FromHex("94cf40d0d2b44f2b66e07cace1372ca42b73cf21a3")
+	// leaf := util.FromHex("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
+	// value := util.FromHex("94cf40d0d2b44f2b66e07cace1372ca42b73cf21a3")
 	kvs := []struct {
 		K string
 		V string
@@ -231,8 +231,8 @@ func TestValLength56(t *testing.T) {
 	st := NewStackTrie(nil)
 	nt, _ := New(util.Hash{}, NewDatabase(memorydb.New()))
 
-	// leaf := common.FromHex("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
-	// value := common.FromHex("94cf40d0d2b44f2b66e07cace1372ca42b73cf21a3")
+	// leaf := util.FromHex("290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563")
+	// value := util.FromHex("94cf40d0d2b44f2b66e07cace1372ca42b73cf21a3")
 	kvs := []struct {
 		K string
 		V string
