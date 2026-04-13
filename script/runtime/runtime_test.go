@@ -23,8 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -236,7 +236,7 @@ type dummyChain struct {
 }
 
 // Engine retrieves the chain's consensus engine.
-func (d *dummyChain) Engine() consensus.Engine {
+func (d *dummyChain) Engine() kernel.Engine {
 	return nil
 }
 

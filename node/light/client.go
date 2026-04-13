@@ -23,9 +23,9 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/shutdowncheck"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
@@ -73,7 +73,7 @@ type LightParallax struct {
 
 	ApiBackend     *LesApiBackend
 	eventMux       *event.TypeMux
-	engine         consensus.Engine
+	engine         kernel.Engine
 	accountManager *wallet.Manager
 	netRPCService  *api.PublicNetAPI
 
@@ -328,7 +328,7 @@ func (s *LightParallax) ResetWithGenesisBlock(gb *types.Block) {
 
 func (s *LightParallax) BlockChain() *light.LightChain      { return s.blockchain }
 func (s *LightParallax) TxPool() *light.TxPool              { return s.txPool }
-func (s *LightParallax) Engine() consensus.Engine           { return s.engine }
+func (s *LightParallax) Engine() kernel.Engine              { return s.engine }
 func (s *LightParallax) LesVersion() int                    { return int(ClientProtocolVersions[0]) }
 func (s *LightParallax) Downloader() *downloader.Downloader { return s.handler.downloader }
 func (s *LightParallax) EventMux() *event.TypeMux           { return s.eventMux }

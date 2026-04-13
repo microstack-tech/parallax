@@ -24,8 +24,8 @@ import (
 
 	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -94,7 +94,7 @@ type Backend interface {
 	SubscribeRemovedLogsEvent(ch chan<- validation.RemovedLogsEvent) event.Subscription
 
 	ChainConfig() *chainparams.ChainConfig
-	Engine() consensus.Engine
+	Engine() kernel.Engine
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

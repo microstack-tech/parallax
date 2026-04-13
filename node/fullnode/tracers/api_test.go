@@ -32,8 +32,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/internal/api"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -54,7 +54,7 @@ var (
 
 type testBackend struct {
 	chainConfig *chainparams.ChainConfig
-	engine      consensus.Engine
+	engine      kernel.Engine
 	chaindb     dbstore.Database
 	chain       *validation.BlockChain
 }
@@ -131,7 +131,7 @@ func (b *testBackend) ChainConfig() *chainparams.ChainConfig {
 	return b.chainConfig
 }
 
-func (b *testBackend) Engine() consensus.Engine {
+func (b *testBackend) Engine() kernel.Engine {
 	return b.engine
 }
 

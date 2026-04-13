@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -101,7 +101,7 @@ func TestHeaderInsertion(t *testing.T) {
 	testInsert(t, hc, chainB[0:32], SideStatTy, nil, forker)
 
 	// Inserting more side blocks, but we don't have the parent
-	testInsert(t, hc, chainB[34:36], NonStatTy, consensus.ErrUnknownAncestor, forker)
+	testInsert(t, hc, chainB[34:36], NonStatTy, kernel.ErrUnknownAncestor, forker)
 
 	// Inserting more sideblocks, overtaking the canon chain
 	testInsert(t, hc, chainB[32:97], CanonStatTy, nil, forker)

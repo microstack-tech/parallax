@@ -19,8 +19,8 @@ package validation
 import (
 	"fmt"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/validation/state"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
@@ -33,11 +33,11 @@ import (
 type BlockValidator struct {
 	config *chainparams.ChainConfig // Chain configuration options
 	bc     *BlockChain              // Canonical block chain
-	engine consensus.Engine         // Consensus engine used for validating
+	engine kernel.Engine            // Consensus engine used for validating
 }
 
 // NewBlockValidator returns a new block validator which is safe for re-use
-func NewBlockValidator(config *chainparams.ChainConfig, blockchain *BlockChain, engine consensus.Engine) *BlockValidator {
+func NewBlockValidator(config *chainparams.ChainConfig, blockchain *BlockChain, engine kernel.Engine) *BlockValidator {
 	validator := &BlockValidator{
 		config: config,
 		engine: engine,
@@ -64,9 +64,9 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	}
 	if !v.bc.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
 		if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
-			return consensus.ErrUnknownAncestor
+			return kernel.ErrUnknownAncestor
 		}
-		return consensus.ErrPrunedAncestor
+		return kernel.ErrPrunedAncestor
 	}
 	return nil
 }

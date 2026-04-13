@@ -23,7 +23,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -809,7 +809,7 @@ func (f *BlockFetcher) importHeaders(peer string, header *types.Header) {
 			return
 		}
 		// Validate the header and if something went wrong, drop the peer
-		if err := f.verifyHeader(header); err != nil && err != consensus.ErrFutureBlock {
+		if err := f.verifyHeader(header); err != nil && err != kernel.ErrFutureBlock {
 			logging.Debug("Propagated header verification failed", "peer", peer, "number", header.Number, "hash", hash, "err", err)
 			f.dropPeer(peer)
 			return
@@ -850,7 +850,7 @@ func (f *BlockFetcher) importBlocks(peer string, block *types.Block) {
 			blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
 
-		case consensus.ErrFutureBlock:
+		case kernel.ErrFutureBlock:
 			// Weird future block, don't fail, but neither propagate
 
 		default:

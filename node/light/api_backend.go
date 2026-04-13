@@ -24,8 +24,8 @@ import (
 
 	parallax "github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
 	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
@@ -329,7 +329,7 @@ func (b *LesApiBackend) ServiceFilter(ctx context.Context, session *bloombits.Ma
 	}
 }
 
-func (b *LesApiBackend) Engine() consensus.Engine {
+func (b *LesApiBackend) Engine() kernel.Engine {
 	return b.prl.engine
 }
 

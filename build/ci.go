@@ -400,10 +400,10 @@ func doArchive(cmdline []string) {
 	}
 
 	var (
-		env      = build.Env()
+		env          = build.Env()
 		baseparallax = archiveBasename(*arch, parallax.ArchiveVersion(env.Commit))
 		parallax     = "parallax-" + baseparallax + ext
-		alltools = "parallax-alltools-" + baseparallax + ext
+		alltools     = "parallax-alltools-" + baseparallax + ext
 	)
 	maybeSkipArchive(env)
 	if err := build.WriteArchive(parallax, parallaxArchiveFiles); err != nil {
@@ -949,8 +949,8 @@ func doWindowsInstaller(cmdline []string) {
 
 	// Aggregate binaries that are included in the installer
 	var (
-		devTools []string
-		allTools []string
+		devTools     []string
+		allTools     []string
 		parallaxTool string
 	)
 	for _, file := range allToolsArchiveFiles {
@@ -969,7 +969,7 @@ func doWindowsInstaller(cmdline []string) {
 	// first section contains the parallax binary, second section holds the dev tools.
 	templateData := map[string]any{
 		"License":  "COPYING",
-		"Parallax":     parallaxTool,
+		"Parallax": parallaxTool,
 		"DevTools": devTools,
 	}
 	build.Render("build/nsis.parallax.nsi", filepath.Join(*workdir, "parallax.nsi"), 0644, nil)

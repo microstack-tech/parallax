@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -51,7 +51,7 @@ type snapshotTestBasic struct {
 	datadir string
 	db      dbstore.Database
 	gendb   dbstore.Database
-	engine  consensus.Engine
+	engine  kernel.Engine
 }
 
 func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Block) {

@@ -26,9 +26,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
@@ -211,9 +211,9 @@ type Config struct {
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain configuration.
-func CreateConsensusEngine(stack *node.Node, chainConfig *chainparams.ChainConfig, config *xhash.Config, notify []string, noverify bool, db dbstore.Database) consensus.Engine {
+func CreateConsensusEngine(stack *node.Node, chainConfig *chainparams.ChainConfig, config *xhash.Config, notify []string, noverify bool, db dbstore.Database) kernel.Engine {
 	// If proof-of-authority is requested, set it up
-	var engine consensus.Engine
+	var engine kernel.Engine
 	if chainConfig.Clique != nil {
 		engine = clique.New(chainConfig.Clique, db)
 	} else {

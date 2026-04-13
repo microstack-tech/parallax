@@ -29,8 +29,8 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/internal/api"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
@@ -72,7 +72,7 @@ type Backend interface {
 	GetTransaction(ctx context.Context, txHash util.Hash) (*types.Transaction, util.Hash, uint64, uint64, error)
 	RPCGasCap() uint64
 	ChainConfig() *chainparams.ChainConfig
-	Engine() consensus.Engine
+	Engine() kernel.Engine
 	ChainDb() dbstore.Database
 	// StateAtBlock returns the state corresponding to the stateroot of the block.
 	// N.B: For executing transactions on block N, the required stateRoot is block N-1,
@@ -96,7 +96,7 @@ type chainContext struct {
 	ctx context.Context
 }
 
-func (context *chainContext) Engine() consensus.Engine {
+func (context *chainContext) Engine() kernel.Engine {
 	return context.api.backend.Engine()
 }
 

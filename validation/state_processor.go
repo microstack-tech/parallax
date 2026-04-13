@@ -21,8 +21,8 @@ import (
 	"math/big"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -36,11 +36,11 @@ import (
 type StateProcessor struct {
 	config *chainparams.ChainConfig // Chain configuration options
 	bc     *BlockChain              // Canonical block chain
-	engine consensus.Engine         // Consensus engine used for block rewards
+	engine kernel.Engine            // Consensus engine used for block rewards
 }
 
 // NewStateProcessor initialises a new StateProcessor.
-func NewStateProcessor(config *chainparams.ChainConfig, bc *BlockChain, engine consensus.Engine) *StateProcessor {
+func NewStateProcessor(config *chainparams.ChainConfig, bc *BlockChain, engine kernel.Engine) *StateProcessor {
 	return &StateProcessor{
 		config: config,
 		bc:     bc,

@@ -19,7 +19,7 @@ package validation
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -29,7 +29,7 @@ import (
 // current blockchain to be used during transaction processing.
 type ChainContext interface {
 	// Engine retrieves the chain's consensus engine.
-	Engine() consensus.Engine
+	Engine() kernel.Engine
 
 	// GetHeader returns the hash corresponding to their hash.
 	GetHeader(util.Hash, uint64) *types.Header

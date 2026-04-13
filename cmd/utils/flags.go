@@ -37,8 +37,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore/remotedb"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/flags"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
@@ -1917,7 +1917,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *validation.BlockChain
 		Fatalf("%v", err)
 	}
 
-	var engine consensus.Engine
+	var engine kernel.Engine
 	xhashConf := prlconfig.Defaults.XHash
 	if ctx.GlobalBool(FakePoWFlag.Name) {
 		xhashConf.PowMode = xhash.ModeFake

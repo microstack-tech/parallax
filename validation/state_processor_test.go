@@ -22,9 +22,8 @@ import (
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/kernel/misc"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -302,7 +301,7 @@ func TestStateProcessorErrors(t *testing.T) {
 // valid, and no proper post-state can be made. But from the perspective of the blockchain, the block is sufficiently
 // valid to be considered for import:
 // - valid pow (fake), ancestry, difficulty, gaslimit etc
-func GenerateBadBlock(parent *types.Block, engine consensus.Engine, txs types.Transactions, config *chainparams.ChainConfig) *types.Block {
+func GenerateBadBlock(parent *types.Block, engine kernel.Engine, txs types.Transactions, config *chainparams.ChainConfig) *types.Block {
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
@@ -316,7 +315,7 @@ func GenerateBadBlock(parent *types.Block, engine consensus.Engine, txs types.Tr
 		Time:     parent.Time() + 10,
 	}
 	if config.IsLondon(header.Number) {
-		header.BaseFee = misc.CalcBaseFee(config, parent.Header())
+		header.BaseFee = kernel.CalcBaseFee(config, parent.Header())
 	}
 	var receipts []*types.Receipt
 	// The post-state result doesn't need to be correct (this is a bad block), but we do need something there

@@ -16,7 +16,7 @@
 
 // Package consensus defines the core consensus engine interface without
 // any RPC dependencies, suitable for use in the kernel layer.
-package consensus
+package kernel
 
 import (
 	"math/big"

@@ -20,7 +20,7 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
@@ -31,11 +31,11 @@ var errXHashStopped = errors.New("xhash stopped")
 // API exposes xhash related methods for the RPC interface.
 type API struct {
 	xhash *XHash
-	chain consensus.ChainHeaderReader
+	chain kernel.ChainHeaderReader
 }
 
 // NewAPI creates a new API for the given chain and engine.
-func NewAPI(chain consensus.ChainHeaderReader, xhash *XHash) *API {
+func NewAPI(chain kernel.ChainHeaderReader, xhash *XHash) *API {
 	return &API{chain: chain, xhash: xhash}
 }
 

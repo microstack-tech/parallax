@@ -30,9 +30,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/shutdowncheck"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
@@ -80,7 +80,7 @@ type Parallax struct {
 	chainDb dbstore.Database // Block chain database
 
 	eventMux       *event.TypeMux
-	engine         consensus.Engine
+	engine         kernel.Engine
 	accountManager *wallet.Manager
 
 	bloomRequests     chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
@@ -514,7 +514,7 @@ func (s *Parallax) AccountManager() *wallet.Manager        { return s.accountMan
 func (s *Parallax) BlockChain() *validation.BlockChain     { return s.blockchain }
 func (s *Parallax) TxPool() *validation.TxPool             { return s.txPool }
 func (s *Parallax) EventMux() *event.TypeMux               { return s.eventMux }
-func (s *Parallax) Engine() consensus.Engine               { return s.engine }
+func (s *Parallax) Engine() kernel.Engine                  { return s.engine }
 func (s *Parallax) ChainDb() dbstore.Database              { return s.chainDb }
 func (s *Parallax) IsListening() bool                      { return true } // Always listening
 func (s *Parallax) Downloader() *downloader.Downloader     { return s.handler.downloader }

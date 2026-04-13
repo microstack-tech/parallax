@@ -14,29 +14,30 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-package misc
+package kernel
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
-// VerifyGaslimit verifies the header gas limit according increase/decrease
-// in relation to the parent gas limit.
-func VerifyGaslimit(parentGasLimit, headerGasLimit uint64) error {
-	// Verify that the gas limit remains within allowed bounds
-	diff := int64(parentGasLimit) - int64(headerGasLimit)
-	if diff < 0 {
-		diff *= -1
+// VerifyForkHashes verifies that blocks conforming to network hard-forks do have
+// the correct hashes, to avoid clients going off on different chains. This is an
+// optional feature.
+func VerifyForkHashes(config *chainparams.ChainConfig, header *types.Header, uncle bool) error {
+	// We don't care about uncles
+	if uncle {
+		return nil
 	}
-	limit := parentGasLimit / chainparams.GasLimitBoundDivisor
-	if uint64(diff) >= limit {
-		return fmt.Errorf("invalid gas limit: have %d, want %d +-= %d", headerGasLimit, parentGasLimit, limit-1)
+	// If the homestead reprice hash is set, validate it
+	if config.EIP150Block != nil && config.EIP150Block.Cmp(header.Number) == 0 {
+		if config.EIP150Hash != (util.Hash{}) && config.EIP150Hash != header.Hash() {
+			return fmt.Errorf("homestead gas reprice fork: have 0x%x, want 0x%x", header.Hash(), config.EIP150Hash)
+		}
 	}
-	if headerGasLimit < chainparams.MinGasLimit {
-		return errors.New("invalid gas limit below 5000")
-	}
+	// All ok, return
 	return nil
 }

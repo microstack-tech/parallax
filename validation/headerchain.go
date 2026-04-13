@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -71,12 +71,12 @@ type HeaderChain struct {
 	procInterrupt func() bool
 
 	rand   *mrand.Rand
-	engine consensus.Engine
+	engine kernel.Engine
 }
 
 // NewHeaderChain creates a new HeaderChain structure. ProcInterrupt points
 // to the parent's interrupt semaphore.
-func NewHeaderChain(chainDb dbstore.Database, config *chainparams.ChainConfig, engine consensus.Engine, procInterrupt func() bool) (*HeaderChain, error) {
+func NewHeaderChain(chainDb dbstore.Database, config *chainparams.ChainConfig, engine kernel.Engine, procInterrupt func() bool) (*HeaderChain, error) {
 	headerCache, _ := lru.New(headerCacheLimit)
 	tdCache, _ := lru.New(tdCacheLimit)
 	numberCache, _ := lru.New(numberCacheLimit)
@@ -212,7 +212,7 @@ func (hc *HeaderChain) WriteHeaders(headers []*types.Header) (int, error) {
 	}
 	ptd := hc.GetTd(headers[0].ParentHash, headers[0].Number.Uint64()-1)
 	if ptd == nil {
-		return 0, consensus.ErrUnknownAncestor
+		return 0, kernel.ErrUnknownAncestor
 	}
 	var (
 		newTD       = new(big.Int).Set(ptd) // Total difficulty of inserted chain
@@ -659,7 +659,7 @@ func (hc *HeaderChain) SetGenesis(head *types.Header) {
 func (hc *HeaderChain) Config() *chainparams.ChainConfig { return hc.config }
 
 // Engine retrieves the header chain's consensus engine.
-func (hc *HeaderChain) Engine() consensus.Engine { return hc.engine }
+func (hc *HeaderChain) Engine() kernel.Engine { return hc.engine }
 
 // GetBlock implements consensus.ChainReader, and returns nil for every input as
 // a header chain does not have blocks available for retrieval.

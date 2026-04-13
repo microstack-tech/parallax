@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/misc"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
@@ -1273,7 +1273,7 @@ func newRPCPendingTransaction(tx *types.Transaction, current *types.Header, conf
 	var baseFee *big.Int
 	blockNumber := uint64(0)
 	if current != nil {
-		baseFee = misc.CalcBaseFee(config, current)
+		baseFee = kernel.CalcBaseFee(config, current)
 		blockNumber = current.Number.Uint64()
 	}
 	return newRPCTransaction(tx, util.Hash{}, blockNumber, 0, baseFee, config)

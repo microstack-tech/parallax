@@ -24,9 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/kernel/misc"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/support/event"
@@ -171,7 +170,7 @@ type intervalAdjust struct {
 type worker struct {
 	config      *Config
 	chainConfig *chainparams.ChainConfig
-	engine      consensus.Engine
+	engine      kernel.Engine
 	prl         Backend
 	chain       *validation.BlockChain
 
@@ -237,7 +236,7 @@ type worker struct {
 	resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
 }
 
-func newWorker(config *Config, chainConfig *chainparams.ChainConfig, engine consensus.Engine, prl Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
+func newWorker(config *Config, chainConfig *chainparams.ChainConfig, engine kernel.Engine, prl Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
@@ -962,7 +961,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 	}
 	// Set baseFee and GasLimit if we are on an EIP-1559 chain
 	if w.chainConfig.IsLondon(header.Number) {
-		header.BaseFee = misc.CalcBaseFee(w.chainConfig, parent.Header())
+		header.BaseFee = kernel.CalcBaseFee(w.chainConfig, parent.Header())
 		if !w.chainConfig.IsLondon(parent.Number()) {
 			parentGasLimit := parent.GasLimit() * chainparams.ElasticityMultiplier
 			header.GasLimit = validation.CalcGasLimit(parentGasLimit, w.config.GasCeil)

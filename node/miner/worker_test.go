@@ -26,9 +26,9 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -115,7 +115,7 @@ type testWorkerBackend struct {
 	genesis *validation.Genesis
 }
 
-func newTestWorkerBackend(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine, db dbstore.Database, n int) *testWorkerBackend {
+func newTestWorkerBackend(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine, db dbstore.Database, n int) *testWorkerBackend {
 	gspec := validation.Genesis{
 		Config: chainConfig,
 		Alloc:  validation.GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
@@ -195,7 +195,7 @@ func (b *testWorkerBackend) newRandomTx(creation bool) *types.Transaction {
 	return tx
 }
 
-func newTestWorker(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine, db dbstore.Database, blocks int) (*worker, *testWorkerBackend) {
+func newTestWorker(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine, db dbstore.Database, blocks int) (*worker, *testWorkerBackend) {
 	backend := newTestWorkerBackend(t, chainConfig, engine, db, blocks)
 	backend.txPool.AddLocals(pendingTxs)
 	w := newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false)
@@ -213,7 +213,7 @@ func TestGenerateBlockAndImportClique(t *testing.T) {
 
 func testGenerateBlockAndImport(t *testing.T, isClique bool) {
 	var (
-		engine      consensus.Engine
+		engine      kernel.Engine
 		chainConfig *chainparams.ChainConfig
 		db          = rawdb.NewMemoryDatabase()
 	)
@@ -274,7 +274,7 @@ func TestEmptyWorkClique(t *testing.T) {
 	testEmptyWork(t, cliqueChainConfig, clique.New(cliqueChainConfig.Clique, rawdb.NewMemoryDatabase()))
 }
 
-func testEmptyWork(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine) {
+func testEmptyWork(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine) {
 	defer engine.Close()
 
 	w, _ := newTestWorker(t, chainConfig, engine, rawdb.NewMemoryDatabase(), 0)
@@ -327,7 +327,7 @@ func TestRegenerateMiningBlockClique(t *testing.T) {
 	testRegenerateMiningBlock(t, cliqueChainConfig, clique.New(cliqueChainConfig.Clique, rawdb.NewMemoryDatabase()))
 }
 
-func testRegenerateMiningBlock(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine) {
+func testRegenerateMiningBlock(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine) {
 	defer engine.Close()
 
 	w, b := newTestWorker(t, chainConfig, engine, rawdb.NewMemoryDatabase(), 0)
@@ -387,7 +387,7 @@ func TestAdjustIntervalClique(t *testing.T) {
 	testAdjustInterval(t, cliqueChainConfig, clique.New(cliqueChainConfig.Clique, rawdb.NewMemoryDatabase()))
 }
 
-func testAdjustInterval(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine) {
+func testAdjustInterval(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine) {
 	defer engine.Close()
 
 	w, _ := newTestWorker(t, chainConfig, engine, rawdb.NewMemoryDatabase(), 0)
@@ -495,7 +495,7 @@ func TestGetSealingWorkPostMerge(t *testing.T) {
 	testGetSealingWork(t, local, xhash.NewFaker(), true)
 }
 
-func testGetSealingWork(t *testing.T, chainConfig *chainparams.ChainConfig, engine consensus.Engine, postMerge bool) {
+func testGetSealingWork(t *testing.T, chainConfig *chainparams.ChainConfig, engine kernel.Engine, postMerge bool) {
 	defer engine.Close()
 
 	w, b := newTestWorker(t, chainConfig, engine, rawdb.NewMemoryDatabase(), 0)

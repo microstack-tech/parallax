@@ -31,7 +31,7 @@ import (
 	"time"
 
 	parallax "github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	ethproto "github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
@@ -85,7 +85,7 @@ type fullNodeBackend interface {
 type Service struct {
 	server  *p2p.Server // Peer-to-peer server to retrieve networking infos
 	backend backend
-	engine  consensus.Engine // Consensus engine to retrieve variadic block fields
+	engine  kernel.Engine // Consensus engine to retrieve variadic block fields
 
 	node string // Name of the node to display on the monitoring page
 	pass string // Password to authorize access to the monitoring page
@@ -169,7 +169,7 @@ func parsePrlstatsURL(url string) (parts []string, err error) {
 }
 
 // New returns a monitoring service ready for stats reporting.
-func New(node *node.Node, backend backend, engine consensus.Engine, url string) error {
+func New(node *node.Node, backend backend, engine kernel.Engine, url string) error {
 	parts, err := parsePrlstatsURL(url)
 	if err != nil {
 		return err

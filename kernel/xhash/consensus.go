@@ -26,9 +26,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/kernel/misc"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -67,7 +66,7 @@ func (xhash *XHash) Author(header *types.Header) (util.Address, error) {
 
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Parallax xhash engine.
-func (xhash *XHash) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
+func (xhash *XHash) VerifyHeader(chain kernel.ChainHeaderReader, header *types.Header, seal bool) error {
 	// If we're running a full engine faking, accept any input as valid
 	if xhash.config.PowMode == ModeFullFake {
 		return nil
@@ -79,7 +78,7 @@ func (xhash *XHash) VerifyHeader(chain consensus.ChainHeaderReader, header *type
 	}
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
-		return consensus.ErrUnknownAncestor
+		return kernel.ErrUnknownAncestor
 	}
 	// Sanity checks passed, do a proper verification
 	return xhash.verifyHeader(chain, header, parent, false, seal, time.Now().Unix())
@@ -88,7 +87,7 @@ func (xhash *XHash) VerifyHeader(chain consensus.ChainHeaderReader, header *type
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 // concurrently. The method returns a quit channel to abort the operations and
 // a results channel to retrieve the async verifications.
-func (xhash *XHash) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+func (xhash *XHash) VerifyHeaders(chain kernel.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
 	// If we're running a full engine faking, accept any input as valid
 	if xhash.config.PowMode == ModeFullFake || len(headers) == 0 {
 		abort, results := make(chan struct{}), make(chan error, len(headers))
@@ -151,7 +150,7 @@ func (xhash *XHash) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*
 	return abort, errorsOut
 }
 
-func (xhash *XHash) verifyHeaderWorker(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool, index int, unixNow int64) error {
+func (xhash *XHash) verifyHeaderWorker(chain kernel.ChainHeaderReader, headers []*types.Header, seals []bool, index int, unixNow int64) error {
 	header := headers[index]
 
 	var parent *types.Header
@@ -162,27 +161,27 @@ func (xhash *XHash) verifyHeaderWorker(chain consensus.ChainHeaderReader, header
 	}
 
 	if parent == nil {
-		return consensus.ErrUnknownAncestor
+		return kernel.ErrUnknownAncestor
 	}
 	return xhash.verifyHeader(chain, header, parent, false, seals[index], unixNow)
 }
 
 // VerifyUncles verifies that the given block's uncles conform to the consensus
 // rules of the stock Parallax xhash engine.
-func (xhash *XHash) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
+func (xhash *XHash) VerifyUncles(chain kernel.ChainReader, block *types.Block) error {
 	return nil
 }
 
 // verifyHeader checks whether a header conforms to the consensus rules of the
 // stock Parallax xhash engine.
-func (xhash *XHash) verifyHeader(chain consensus.ChainHeaderReader, header, parent *types.Header, _ bool, seal bool, unixNow int64) error {
+func (xhash *XHash) verifyHeader(chain kernel.ChainHeaderReader, header, parent *types.Header, _ bool, seal bool, unixNow int64) error {
 	// Extra-data size
 	if uint64(len(header.Extra)) > chainparams.MaximumExtraDataSize {
 		return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra), chainparams.MaximumExtraDataSize)
 	}
 
 	if header.Time > uint64(unixNow)+uint64(allowedFutureBlockTimeSeconds) {
-		return consensus.ErrFutureBlock
+		return kernel.ErrFutureBlock
 	}
 
 	if header.Time <= medianTimePast(chain, parent) {
@@ -220,16 +219,16 @@ func (xhash *XHash) verifyHeader(chain consensus.ChainHeaderReader, header, pare
 		if header.BaseFee != nil {
 			return fmt.Errorf("invalid baseFee before fork: have %d, expected 'nil'", header.BaseFee)
 		}
-		if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
+		if err := kernel.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
 			return err
 		}
-	} else if err := misc.VerifyEip1559Header(chain.Config(), parent, header); err != nil {
+	} else if err := kernel.VerifyEip1559Header(chain.Config(), parent, header); err != nil {
 		return err
 	}
 
 	// Height = parent + 1
 	if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
-		return consensus.ErrInvalidNumber
+		return kernel.ErrInvalidNumber
 	}
 
 	// PoW seal
@@ -239,7 +238,7 @@ func (xhash *XHash) verifyHeader(chain consensus.ChainHeaderReader, header, pare
 		}
 	}
 
-	if err := misc.VerifyForkHashes(chain.Config(), header, false /* no uncles in this chain */); err != nil {
+	if err := kernel.VerifyForkHashes(chain.Config(), header, false /* no uncles in this chain */); err != nil {
 		return err
 	}
 
@@ -249,7 +248,7 @@ func (xhash *XHash) verifyHeader(chain consensus.ChainHeaderReader, header, pare
 // initASERTAnchor (re)computes the ASERT anchor parameters from the current
 // chain view at the given anchor height. Caller must hold xhash.asertMu.
 func (xhash *XHash) initASERTAnchor(
-	chain consensus.ChainHeaderReader,
+	chain kernel.ChainHeaderReader,
 	asertAnchorHeight uint64,
 	parent *types.Header,
 ) {
@@ -285,7 +284,7 @@ func (xhash *XHash) initASERTAnchor(
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
-func (xhash *XHash) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
+func (xhash *XHash) CalcDifficulty(chain kernel.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	if parent == nil {
 		panic("CalcDifficulty called with nil parent")
 	}
@@ -348,7 +347,7 @@ var (
 // verifySeal checks whether a block satisfies the PoW difficulty requirements,
 // either using the usual xhash cache for it, or alternatively using a full DAG
 // to make remote mining fast.
-func (xhash *XHash) verifySeal(chain consensus.ChainHeaderReader, header *types.Header, fulldag bool) error {
+func (xhash *XHash) verifySeal(chain kernel.ChainHeaderReader, header *types.Header, fulldag bool) error {
 	// If we're running a fake PoW, accept any seal as valid
 	if xhash.config.PowMode == ModeFake || xhash.config.PowMode == ModeFullFake {
 		time.Sleep(xhash.fakeDelay)
@@ -413,10 +412,10 @@ func (xhash *XHash) verifySeal(chain consensus.ChainHeaderReader, header *types.
 
 // Prepare implements consensus.Engine, initializing the difficulty field of a
 // header to conform to the xhash protocol. The changes are done inline.
-func (xhash *XHash) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
+func (xhash *XHash) Prepare(chain kernel.ChainHeaderReader, header *types.Header) error {
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
-		return consensus.ErrUnknownAncestor
+		return kernel.ErrUnknownAncestor
 	}
 
 	var r uint64
@@ -444,7 +443,7 @@ func (xhash *XHash) Prepare(chain consensus.ChainHeaderReader, header *types.Hea
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state on the header
-func (xhash *XHash) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
+func (xhash *XHash) Finalize(chain kernel.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
 	// 1) Schedule THIS block’s coinbase for future maturity
 	height := header.Number.Uint64()
 	reward := calcBlockReward(header.Number.Uint64())
@@ -464,7 +463,7 @@ func (xhash *XHash) Finalize(chain consensus.ChainHeaderReader, header *types.He
 
 // FinalizeAndAssemble implements consensus.Engine, accumulating the block and
 // uncle rewards, setting the final state and assembling the block.
-func (xhash *XHash) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+func (xhash *XHash) FinalizeAndAssemble(chain kernel.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
 	xhash.Finalize(chain, header, state, txs, nil)
 	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
 }
@@ -515,7 +514,7 @@ func calcBlockReward(blockNumber uint64) *big.Int {
 }
 
 // medianTimePast returns the median of the last 11 block timestamps ending at parent.
-func medianTimePast(chain consensus.ChainHeaderReader, parent *types.Header) uint64 {
+func medianTimePast(chain kernel.ChainHeaderReader, parent *types.Header) uint64 {
 	const window = 11
 	times := make([]uint64, 0, window)
 	h := parent
@@ -579,12 +578,12 @@ func popDuePayout(state *state.StateDB, height uint64) (addr util.Address, amt *
 }
 
 type headerBatchChain struct {
-	consensus.ChainHeaderReader // embeds the base reader
-	byNumber                    map[uint64]*types.Header
-	byHashAndNumber             map[util.Hash]uint64
+	kernel.ChainHeaderReader // embeds the base reader
+	byNumber                 map[uint64]*types.Header
+	byHashAndNumber          map[util.Hash]uint64
 }
 
-func newHeaderBatchChain(base consensus.ChainHeaderReader, headers []*types.Header) *headerBatchChain {
+func newHeaderBatchChain(base kernel.ChainHeaderReader, headers []*types.Header) *headerBatchChain {
 	hb := &headerBatchChain{
 		ChainHeaderReader: base,
 		byNumber:          make(map[uint64]*types.Header, len(headers)),

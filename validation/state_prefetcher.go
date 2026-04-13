@@ -19,8 +19,8 @@ package validation
 import (
 	"sync/atomic"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/validation/state"
@@ -32,11 +32,11 @@ import (
 type statePrefetcher struct {
 	config *chainparams.ChainConfig // Chain configuration options
 	bc     *BlockChain              // Canonical block chain
-	engine consensus.Engine         // Consensus engine used for block rewards
+	engine kernel.Engine            // Consensus engine used for block rewards
 }
 
 // newStatePrefetcher initialises a new statePrefetcher.
-func newStatePrefetcher(config *chainparams.ChainConfig, bc *BlockChain, engine consensus.Engine) *statePrefetcher {
+func newStatePrefetcher(config *chainparams.ChainConfig, bc *BlockChain, engine kernel.Engine) *statePrefetcher {
 	return &statePrefetcher{
 		config: config,
 		bc:     bc,

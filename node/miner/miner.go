@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -62,7 +62,7 @@ type Miner struct {
 	worker   *worker
 	coinbase util.Address
 	parallax Backend
-	engine   consensus.Engine
+	engine   kernel.Engine
 	exitCh   chan struct{}
 	startCh  chan util.Address
 	stopCh   chan struct{}
@@ -70,7 +70,7 @@ type Miner struct {
 	wg sync.WaitGroup
 }
 
-func New(parallax Backend, config *Config, chainConfig *chainparams.ChainConfig, mux *event.TypeMux, engine consensus.Engine, isLocalBlock func(header *types.Header) bool) *Miner {
+func New(parallax Backend, config *Config, chainConfig *chainparams.ChainConfig, mux *event.TypeMux, engine kernel.Engine, isLocalBlock func(header *types.Header) bool) *Miner {
 	miner := &Miner{
 		parallax: parallax,
 		mux:      mux,
@@ -169,7 +169,7 @@ func (miner *Miner) Mining() bool {
 }
 
 func (miner *Miner) Hashrate() uint64 {
-	if pow, ok := miner.engine.(consensus.PoW); ok {
+	if pow, ok := miner.engine.(kernel.PoW); ok {
 		return uint64(pow.Hashrate())
 	}
 	return 0

@@ -20,8 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -32,12 +32,12 @@ import (
 // CliqueAPI is a user facing RPC API to allow controlling the signer and voting
 // mechanisms of the proof-of-authority scheme.
 type CliqueAPI struct {
-	chain  consensus.ChainHeaderReader
+	chain  kernel.ChainHeaderReader
 	clique *clique.Clique
 }
 
 // NewCliqueAPI creates a new Clique API instance.
-func NewCliqueAPI(chain consensus.ChainHeaderReader, c *clique.Clique) *CliqueAPI {
+func NewCliqueAPI(chain kernel.ChainHeaderReader, c *clique.Clique) *CliqueAPI {
 	return &CliqueAPI{chain: chain, clique: c}
 }
 

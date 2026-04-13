@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -52,7 +52,7 @@ type LightChain struct {
 	hc            *validation.HeaderChain
 	indexerConfig *IndexerConfig
 	chainDb       dbstore.Database
-	engine        consensus.Engine
+	engine        kernel.Engine
 	odr           OdrBackend
 	chainFeed     event.Feed
 	chainSideFeed event.Feed
@@ -78,7 +78,7 @@ type LightChain struct {
 // NewLightChain returns a fully initialised light chain using information
 // available in the database. It initialises the default Parallax header
 // validator.
-func NewLightChain(odr OdrBackend, config *chainparams.ChainConfig, engine consensus.Engine, checkpoint *chainparams.TrustedCheckpoint) (*LightChain, error) {
+func NewLightChain(odr OdrBackend, config *chainparams.ChainConfig, engine kernel.Engine, checkpoint *chainparams.TrustedCheckpoint) (*LightChain, error) {
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
@@ -217,7 +217,7 @@ func (lc *LightChain) ResetWithGenesisBlock(genesis *types.Block) {
 // Accessors
 
 // Engine retrieves the light chain's consensus engine.
-func (lc *LightChain) Engine() consensus.Engine { return lc.engine }
+func (lc *LightChain) Engine() kernel.Engine { return lc.engine }
 
 // Genesis returns the genesis block
 func (lc *LightChain) Genesis() *types.Block {

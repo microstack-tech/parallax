@@ -21,9 +21,8 @@ import (
 	"math/big"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/kernel/misc"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -44,7 +43,7 @@ type BlockGen struct {
 	receipts []*types.Receipt
 
 	config *chainparams.ChainConfig
-	engine consensus.Engine
+	engine kernel.Engine
 }
 
 // SetCoinbase sets the coinbase of the generated block.
@@ -170,7 +169,7 @@ func (b *BlockGen) AddUncle(h *types.Header) {
 	// The gas limit and price should be derived from the parent
 	h.GasLimit = parent.GasLimit
 	if b.config.IsLondon(h.Number) {
-		h.BaseFee = misc.CalcBaseFee(b.config, parent)
+		h.BaseFee = kernel.CalcBaseFee(b.config, parent)
 		if !b.config.IsLondon(parent.Number) {
 			parentGasLimit := parent.GasLimit * chainparams.ElasticityMultiplier
 			h.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
@@ -215,7 +214,7 @@ func (b *BlockGen) OffsetTime(seconds int64) {
 // Blocks created by GenerateChain do not contain valid proof of work
 // values. Inserting them into BlockChain requires use of FakePow or
 // a similar non-validating proof of work implementation.
-func GenerateChain(config *chainparams.ChainConfig, parent *types.Block, engine consensus.Engine, db dbstore.Database, n int, gen func(int, *BlockGen)) ([]*types.Block, []types.Receipts) {
+func GenerateChain(config *chainparams.ChainConfig, parent *types.Block, engine kernel.Engine, db dbstore.Database, n int, gen func(int, *BlockGen)) ([]*types.Block, []types.Receipts) {
 	if config == nil {
 		config = chainparams.TestChainConfig
 	}
@@ -265,7 +264,7 @@ func GenerateChain(config *chainparams.ChainConfig, parent *types.Block, engine 
 	return blocks, receipts
 }
 
-func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.StateDB, engine consensus.Engine) *types.Header {
+func makeHeader(chain kernel.ChainReader, parent *types.Block, state *state.StateDB, engine kernel.Engine) *types.Header {
 	var time uint64
 	var epochStartTime uint64
 	if parent.Time() == 0 {
@@ -296,7 +295,7 @@ func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.S
 		EpochStartTime: epochStartTime,
 	}
 	if chain.Config().IsLondon(header.Number) {
-		header.BaseFee = misc.CalcBaseFee(chain.Config(), parent.Header())
+		header.BaseFee = kernel.CalcBaseFee(chain.Config(), parent.Header())
 		if !chain.Config().IsLondon(parent.Number()) {
 			parentGasLimit := parent.GasLimit() * chainparams.ElasticityMultiplier
 			header.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
@@ -306,7 +305,7 @@ func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.S
 }
 
 // makeHeaderChain creates a deterministic chain of headers rooted at parent.
-func makeHeaderChain(parent *types.Header, n int, engine consensus.Engine, db dbstore.Database, seed int) []*types.Header {
+func makeHeaderChain(parent *types.Header, n int, engine kernel.Engine, db dbstore.Database, seed int) []*types.Header {
 	blocks := makeBlockChain(types.NewBlockWithHeader(parent), n, engine, db, seed)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
@@ -316,7 +315,7 @@ func makeHeaderChain(parent *types.Header, n int, engine consensus.Engine, db db
 }
 
 // makeBlockChain creates a deterministic chain of blocks rooted at parent.
-func makeBlockChain(parent *types.Block, n int, engine consensus.Engine, db dbstore.Database, seed int) []*types.Block {
+func makeBlockChain(parent *types.Block, n int, engine kernel.Engine, db dbstore.Database, seed int) []*types.Block {
 	blocks, _ := GenerateChain(chainparams.TestChainConfig, parent, engine, db, n, func(i int, b *BlockGen) {
 		b.SetCoinbase(util.Address{0: byte(seed), 19: byte(i)})
 	})
