@@ -57,10 +57,10 @@ See the [getting started guide](https://docs.parallaxprotocol.org/parallax-clien
 
 | | Minimum | Recommended |
 |---|---------|-------------|
-| CPU | 2 cores | 4+ cores |
-| RAM | 4 GB | 8+ GB |
-| Storage | 250 GB SSD | 500 GB SSD |
-| Network | 8 Mbps | 25+ Mbps |
+| CPU | 1 core | 2+ cores |
+| RAM | 2 GB | 4+ GB |
+| Storage | 50 GB SSD | 100 GB SSD |
+| Network | 1 Mbps | 10+ Mbps |
 
 ## Architecture
 
