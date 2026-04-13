@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
@@ -35,6 +34,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/node/console/prompt"
 	"github.com/ParallaxProtocol/parallax/node/protocol"
 	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
+	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/wallet"

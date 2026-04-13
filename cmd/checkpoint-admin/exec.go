@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/logging"
@@ -33,6 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle/contract"
 	"github.com/ParallaxProtocol/parallax/net/netparams"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
 	"github.com/ParallaxProtocol/parallax/wallet"

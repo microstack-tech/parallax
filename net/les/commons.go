@@ -21,7 +21,6 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
@@ -32,6 +31,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"

@@ -14,8 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package prlxclient provides an RPC client for prlx-specific APIs.
-package prlxclient
+package client
 
 import (
 	"context"
@@ -30,33 +29,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
 )
-
-// Client is a wrapper around rpc.Client that implements prlx-specific functionality.
-//
-// If you want to use the standardized Parallax RPC functionality, use prlclient.Client instead.
-type Client struct {
-	c *rpc.Client
-}
-
-// New creates a client that uses the given RPC client.
-func New(c *rpc.Client) *Client {
-	return &Client{c}
-}
-
-// CreateAccessList tries to create an access list for a specific transaction based on the
-// current pending state of the blockchain.
-func (ec *Client) CreateAccessList(ctx context.Context, msg parallax.CallMsg) (*types.AccessList, uint64, string, error) {
-	type accessListResult struct {
-		Accesslist *types.AccessList `json:"accessList"`
-		Error      string            `json:"error,omitempty"`
-		GasUsed    hexutil.Uint64    `json:"gasUsed"`
-	}
-	var result accessListResult
-	if err := ec.c.CallContext(ctx, &result, "eth_createAccessList", toCallArg(msg)); err != nil {
-		return nil, 0, "", err
-	}
-	return result.Accesslist, uint64(result.GasUsed), result.Error, nil
-}
 
 // AccountResult is the result of a GetProof operation.
 type AccountResult struct {
@@ -74,6 +46,30 @@ type StorageResult struct {
 	Key   string   `json:"key"`
 	Value *big.Int `json:"value"`
 	Proof []string `json:"proof"`
+}
+
+// OverrideAccount specifies the state of an account to be overridden.
+type OverrideAccount struct {
+	Nonce     uint64                  `json:"nonce"`
+	Code      []byte                  `json:"code"`
+	Balance   *big.Int                `json:"balance"`
+	State     map[util.Hash]util.Hash `json:"state"`
+	StateDiff map[util.Hash]util.Hash `json:"stateDiff"`
+}
+
+// CreateAccessList tries to create an access list for a specific transaction based on the
+// current pending state of the blockchain.
+func (ec *Client) CreateAccessList(ctx context.Context, msg parallax.CallMsg) (*types.AccessList, uint64, string, error) {
+	type accessListResult struct {
+		Accesslist *types.AccessList `json:"accessList"`
+		Error      string            `json:"error,omitempty"`
+		GasUsed    hexutil.Uint64    `json:"gasUsed"`
+	}
+	var result accessListResult
+	if err := ec.c.CallContext(ctx, &result, "eth_createAccessList", toCallArg(msg)); err != nil {
+		return nil, 0, "", err
+	}
+	return result.Accesslist, uint64(result.GasUsed), result.Error, nil
 }
 
 // GetProof returns the account and storage values of the specified account including the Merkle-proof.
@@ -118,26 +114,14 @@ func (ec *Client) GetProof(ctx context.Context, account util.Address, keys []str
 	return &result, err
 }
 
-// OverrideAccount specifies the state of an account to be overridden.
-type OverrideAccount struct {
-	Nonce     uint64                  `json:"nonce"`
-	Code      []byte                  `json:"code"`
-	Balance   *big.Int                `json:"balance"`
-	State     map[util.Hash]util.Hash `json:"state"`
-	StateDiff map[util.Hash]util.Hash `json:"stateDiff"`
-}
-
-// CallContract executes a message call transaction, which is directly executed in the VM
-// of the node, but never mined into the blockchain.
+// CallContractWithOverrides executes a message call transaction with state overrides.
 //
 // blockNumber selects the block height at which the call runs. It can be nil, in which
-// case the code is taken from the latest known block. Note that state from very old
-// blocks might not be available.
+// case the code is taken from the latest known block.
 //
 // overrides specifies a map of contract states that should be overwritten before executing
 // the message call.
-// Please use prlclient.CallContract instead if you don't need the override functionality.
-func (ec *Client) CallContract(ctx context.Context, msg parallax.CallMsg, blockNumber *big.Int, overrides *map[util.Address]OverrideAccount) ([]byte, error) {
+func (ec *Client) CallContractWithOverrides(ctx context.Context, msg parallax.CallMsg, blockNumber *big.Int, overrides *map[util.Address]OverrideAccount) ([]byte, error) {
 	var hex hexutil.Bytes
 	err := ec.c.CallContext(
 		ctx, &hex, "eth_call", toCallArg(msg),
@@ -146,14 +130,14 @@ func (ec *Client) CallContract(ctx context.Context, msg parallax.CallMsg, blockN
 	return hex, err
 }
 
-// GCStats retrieves the current garbage collection stats from a prlx node.
+// GCStats retrieves the current garbage collection stats from a node.
 func (ec *Client) GCStats(ctx context.Context) (*debug.GCStats, error) {
 	var result debug.GCStats
 	err := ec.c.CallContext(ctx, &result, "debug_gcStats")
 	return &result, err
 }
 
-// MemStats retrieves the current memory stats from a prlx node.
+// MemStats retrieves the current memory stats from a node.
 func (ec *Client) MemStats(ctx context.Context) (*runtime.MemStats, error) {
 	var result runtime.MemStats
 	err := ec.c.CallContext(ctx, &result, "debug_memStats")
@@ -167,7 +151,7 @@ func (ec *Client) SetHead(ctx context.Context, number *big.Int) error {
 	return ec.c.CallContext(ctx, nil, "debug_setHead", toBlockNumArg(number))
 }
 
-// GetNodeInfo retrieves the node info of a prlx node.
+// GetNodeInfo retrieves the node info of a node.
 func (ec *Client) GetNodeInfo(ctx context.Context) (*p2p.NodeInfo, error) {
 	var result p2p.NodeInfo
 	err := ec.c.CallContext(ctx, &result, "admin_nodeInfo")
@@ -177,37 +161,6 @@ func (ec *Client) GetNodeInfo(ctx context.Context) (*p2p.NodeInfo, error) {
 // SubscribePendingTransactions subscribes to new pending transactions.
 func (ec *Client) SubscribePendingTransactions(ctx context.Context, ch chan<- util.Hash) (*rpc.ClientSubscription, error) {
 	return ec.c.ParallaxSubscribe(ctx, ch, "newPendingTransactions")
-}
-
-func toBlockNumArg(number *big.Int) string {
-	if number == nil {
-		return "latest"
-	}
-	pending := big.NewInt(-1)
-	if number.Cmp(pending) == 0 {
-		return "pending"
-	}
-	return hexutil.EncodeBig(number)
-}
-
-func toCallArg(msg parallax.CallMsg) any {
-	arg := map[string]any{
-		"from": msg.From,
-		"to":   msg.To,
-	}
-	if len(msg.Data) > 0 {
-		arg["data"] = hexutil.Bytes(msg.Data)
-	}
-	if msg.Value != nil {
-		arg["value"] = (*hexutil.Big)(msg.Value)
-	}
-	if msg.Gas != 0 {
-		arg["gas"] = hexutil.Uint64(msg.Gas)
-	}
-	if msg.GasPrice != nil {
-		arg["gasPrice"] = (*hexutil.Big)(msg.GasPrice)
-	}
-	return arg
 }
 
 func toOverrideMap(overrides *map[util.Address]OverrideAccount) any {

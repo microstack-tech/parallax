@@ -20,11 +20,11 @@ import (
 	"strconv"
 
 	"github.com/ParallaxProtocol/parallax/abi/bind"
-	"github.com/ParallaxProtocol/parallax/client"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/wallet"
 	"github.com/ParallaxProtocol/parallax/wallet/external"

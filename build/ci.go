@@ -1034,7 +1034,6 @@ func doAndroidArchive(cmdline []string) {
 	build.MustRun(tc.Go("mod", "download"))
 
 	// Build the Android archive and Maven resources
-	"github.com/ParallaxProtocol/parallax"
 	build.MustRun(gomobileTool("bind", "-ldflags", "-s -w", "--target", "android", "--javapkg", "org.ethereum", "-v", "github.com/ParallaxProtocol/parallax/mobile"))
 
 	if *local {
@@ -1160,7 +1159,6 @@ func doXCodeFramework(cmdline []string) {
 	build.MustRun(tc.Install(GOBIN, "golang.org/x/mobile/cmd/gomobile", "golang.org/x/mobile/cmd/gobind"))
 
 	// Build the iOS XCode framework
-	"github.com/ParallaxProtocol/parallax"
 	bind := gomobileTool("bind", "-ldflags", "-s -w", "--target", "ios", "-v", "github.com/ParallaxProtocol/parallax/mobile")
 
 	if *local {
