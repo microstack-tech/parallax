@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/abi/bind"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/net/les/light"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/validation"
 )
 

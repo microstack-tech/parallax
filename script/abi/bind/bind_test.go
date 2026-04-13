@@ -290,8 +290,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -345,8 +345,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -391,8 +391,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -448,8 +448,8 @@ var bindTests = []struct {
 			"math/big"
 			"reflect"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/util"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
@@ -497,8 +497,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -562,8 +562,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -607,8 +607,8 @@ var bindTests = []struct {
 		[]string{`6060604052609f8060106000396000f3606060405260e060020a6000350463f97a60058114601a575b005b600060605260c0604052600d60809081527f4920646f6e27742065786973740000000000000000000000000000000000000060a052602060c0908152600d60e081905281906101009060a09080838184600060046012f15050815172ffffffffffffffffffffffffffffffffffffff1916909152505060405161012081900392509050f3`},
 		[]string{`[{"constant":true,"inputs":[],"name":"String","outputs":[{"name":"","type":"string"}],"type":"function"}]`},
 		`
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/util"
 			"github.com/ParallaxProtocol/parallax/validation"
 		`,
@@ -646,8 +646,8 @@ var bindTests = []struct {
 		[]string{`6080604052348015600f57600080fd5b5060888061001e6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063d5f6622514602d575b600080fd5b6033604c565b6040805192835260208301919091528051918290030190f35b600a809156fea264697066735822beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef64736f6c6343decafe0033`},
 		[]string{`[{"inputs":[],"name":"Struct","outputs":[{"internalType":"uint256","name":"a","type":"uint256"},{"internalType":"uint256","name":"b","type":"uint256"}],"stateMutability":"pure","type":"function"}]`},
 		`
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/util"
 			"github.com/ParallaxProtocol/parallax/validation"
 		`,
@@ -694,8 +694,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -744,8 +744,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/util"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
@@ -821,8 +821,8 @@ var bindTests = []struct {
 			"fmt"
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -914,8 +914,8 @@ var bindTests = []struct {
 			"math/big"
 			"time"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/util"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
@@ -1105,8 +1105,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -1242,8 +1242,8 @@ var bindTests = []struct {
 			"math/big"
 			"reflect"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -1384,8 +1384,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -1451,8 +1451,8 @@ var bindTests = []struct {
 		"math/big"
 		"time"
 
-		"github.com/ParallaxProtocol/parallax/abi/bind"
-		"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 		"github.com/ParallaxProtocol/parallax/validation"
 		"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -1539,8 +1539,8 @@ var bindTests = []struct {
 		`
 		"math/big"
 
-		"github.com/ParallaxProtocol/parallax/abi/bind"
-		"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 		"github.com/ParallaxProtocol/parallax/crypto"
 		"github.com/ParallaxProtocol/parallax/validation"
 		`,
@@ -1602,8 +1602,8 @@ var bindTests = []struct {
 		`
 		"math/big"
 
-		"github.com/ParallaxProtocol/parallax/abi/bind"
-		"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind"
+		"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 		"github.com/ParallaxProtocol/parallax/crypto"
 		"github.com/ParallaxProtocol/parallax/validation"
         `,
@@ -1664,8 +1664,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 		`,
@@ -1725,8 +1725,8 @@ var bindTests = []struct {
 			"bytes"
 			"math/big"
 	
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 	   `,
@@ -1813,8 +1813,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
@@ -1883,8 +1883,8 @@ var bindTests = []struct {
 		`
 			"math/big"
 	
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
@@ -1935,8 +1935,8 @@ var bindTests = []struct {
 		imports: `
 			"math/big"
 
-			"github.com/ParallaxProtocol/parallax/abi/bind"
-			"github.com/ParallaxProtocol/parallax/abi/bind/backends"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind"
+			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
 			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"

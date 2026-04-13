@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/abi"
+	"github.com/ParallaxProtocol/parallax/script/abi"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 

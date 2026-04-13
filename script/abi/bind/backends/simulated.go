@@ -25,8 +25,6 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/abi"
-	"github.com/ParallaxProtocol/parallax/abi/bind"
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
@@ -35,6 +33,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/script/abi"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"

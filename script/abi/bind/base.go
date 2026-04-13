@@ -25,9 +25,9 @@ import (
 	"sync"
 
 	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/abi"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script/abi"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 )

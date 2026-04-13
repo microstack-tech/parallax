@@ -23,9 +23,9 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/abi/bind"
 	"github.com/ParallaxProtocol/parallax/net/les/contracts/checkpointoracle/contract"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 

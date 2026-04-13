@@ -25,11 +25,11 @@ import (
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/abi"
-	"github.com/ParallaxProtocol/parallax/abi/bind"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script/abi"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
 	"github.com/stretchr/testify/assert"

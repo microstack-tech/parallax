@@ -29,8 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/abi/bind"
-	"github.com/ParallaxProtocol/parallax/abi/bind/backends"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
@@ -44,6 +42,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
