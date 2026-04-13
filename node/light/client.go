@@ -29,17 +29,16 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/filters"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/filters"
 	"github.com/ParallaxProtocol/parallax/node/light/downloader"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/node/light/vflux"
 	vfc "github.com/ParallaxProtocol/parallax/node/light/vflux/client"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -49,6 +48,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/bloombits"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/wallet"
 )
@@ -85,7 +85,7 @@ type LightParallax struct {
 }
 
 // New creates an instance of the light client.
-func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
+func New(stack *node.Node, config *nodeconfig.Config) (*LightParallax, error) {
 	chainDb, err := stack.OpenDatabase("lightchaindata", config.DatabaseCache, config.DatabaseHandles, "eth/db/chaindata/", false)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 		eventMux:        stack.EventMux(),
 		reqDist:         newRequestDistributor(peers, &mclock.System{}),
 		accountManager:  stack.AccountManager(),
-		engine:          prlconfig.CreateConsensusEngine(stack, chainConfig, &config.XHash, nil, false, chainDb),
+		engine:          nodeconfig.CreateConsensusEngine(stack, chainConfig, &config.XHash, nil, false, chainDb),
 		bloomRequests:   make(chan chan *bloombits.Retrieval),
 		bloomIndexer:    validation.NewBloomIndexer(chainDb, netparams.BloomBitsBlocksClient, netparams.HelperTrieConfirmations),
 		p2pServer:       stack.Server(),
@@ -174,7 +174,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*LightParallax, error) {
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.Miner.GasPrice
 	}
-	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, leth.txPool, gpoParams)
+	leth.ApiBackend.gpo = fees.NewOracle(leth.ApiBackend, leth.txPool, gpoParams)
 
 	leth.handler = newClientHandler(config.UltraLightServers, config.UltraLightFraction, checkpoint, leth)
 	if leth.handler.ulc != nil {

@@ -33,8 +33,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/node"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -55,7 +55,7 @@ func main() {
 		faucets[i], _ = crypto.GenerateKey()
 	}
 	// Pre-generate the XHash mining DAG so we don't race
-	xhash.MakeDataset(1, prlconfig.Defaults.XHash.DatasetDir)
+	xhash.MakeDataset(1, nodeconfig.Defaults.XHash.DatasetDir)
 
 	// Create an XHash network based off of the testnet config
 	genesis := makeGenesis(faucets)
@@ -238,15 +238,15 @@ func makeMiner(genesis *validation.Genesis) (*node.Node, *protocol.Parallax, err
 	if err != nil {
 		return nil, nil, err
 	}
-	parallaxBackend, err := protocol.New(stack, &prlconfig.Config{
+	parallaxBackend, err := protocol.New(stack, &nodeconfig.Config{
 		Genesis:         genesis,
 		NetworkId:       genesis.Config.ChainID.Uint64(),
 		SyncMode:        downloader.FullSync,
 		DatabaseCache:   256,
 		DatabaseHandles: 256,
 		TxPool:          validation.DefaultTxPoolConfig,
-		GPO:             prlconfig.Defaults.GPO,
-		XHash:           prlconfig.Defaults.XHash,
+		GPO:             nodeconfig.Defaults.GPO,
+		XHash:           nodeconfig.Defaults.XHash,
 		Miner: miner.Config{
 			Coinbase: util.Address{1},
 			GasCeil:  genesis.GasLimit * 11 / 10,

@@ -19,8 +19,8 @@ package protocol
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
 )
 
 // parallaxPeerInfo represents a short summary of the `eth` sub-protocol metadata known

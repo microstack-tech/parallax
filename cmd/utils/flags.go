@@ -44,17 +44,17 @@ import (
 	"github.com/ParallaxProtocol/parallax/node"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
 	les "github.com/ParallaxProtocol/parallax/node/light"
 	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/node/stats"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/rpc/graphql"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -142,7 +142,7 @@ var (
 	NetworkIdFlag = cli.Uint64Flag{
 		Name:  "networkid",
 		Usage: "Explicitly set network id (integer)(For testnet: use --testnet instead)",
-		Value: prlconfig.Defaults.NetworkId,
+		Value: nodeconfig.Defaults.NetworkId,
 	}
 	MainnetFlag = cli.BoolFlag{
 		Name:  "mainnet",
@@ -204,7 +204,7 @@ var (
 		Usage: "Max number of elements (0 = no limit)",
 		Value: 0,
 	}
-	defaultSyncMode = prlconfig.Defaults.SyncMode
+	defaultSyncMode = nodeconfig.Defaults.SyncMode
 	SyncModeFlag    = TextMarshalerFlag{
 		Name:  "syncmode",
 		Usage: `Blockchain sync mode ("snap", "full" or "light")`,
@@ -222,7 +222,7 @@ var (
 	TxLookupLimitFlag = cli.Uint64Flag{
 		Name:  "txlookuplimit",
 		Usage: "Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain)",
-		Value: prlconfig.Defaults.TxLookupLimit,
+		Value: nodeconfig.Defaults.TxLookupLimit,
 	}
 	LightKDFFlag = cli.BoolFlag{
 		Name:  "lightkdf",
@@ -245,32 +245,32 @@ var (
 	LightServeFlag = cli.IntFlag{
 		Name:  "light.serve",
 		Usage: "Maximum percentage of time allowed for serving LPS requests (multi-threaded processing allows values over 100)",
-		Value: prlconfig.Defaults.LightServ,
+		Value: nodeconfig.Defaults.LightServ,
 	}
 	LightIngressFlag = cli.IntFlag{
 		Name:  "light.ingress",
 		Usage: "Incoming bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited)",
-		Value: prlconfig.Defaults.LightIngress,
+		Value: nodeconfig.Defaults.LightIngress,
 	}
 	LightEgressFlag = cli.IntFlag{
 		Name:  "light.egress",
 		Usage: "Outgoing bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited)",
-		Value: prlconfig.Defaults.LightEgress,
+		Value: nodeconfig.Defaults.LightEgress,
 	}
 	LightMaxPeersFlag = cli.IntFlag{
 		Name:  "light.maxpeers",
 		Usage: "Maximum number of light clients to serve, or light servers to attach to",
-		Value: prlconfig.Defaults.LightPeers,
+		Value: nodeconfig.Defaults.LightPeers,
 	}
 	UltraLightServersFlag = cli.StringFlag{
 		Name:  "ulc.servers",
 		Usage: "List of trusted ultra-light servers",
-		Value: strings.Join(prlconfig.Defaults.UltraLightServers, ","),
+		Value: strings.Join(nodeconfig.Defaults.UltraLightServers, ","),
 	}
 	UltraLightFractionFlag = cli.IntFlag{
 		Name:  "ulc.fraction",
 		Usage: "Minimum % of trusted ultra-light servers required to announce a new head",
-		Value: prlconfig.Defaults.UltraLightFraction,
+		Value: nodeconfig.Defaults.UltraLightFraction,
 	}
 	UltraLightOnlyAnnounceFlag = cli.BoolFlag{
 		Name:  "ulc.onlyannounce",
@@ -292,12 +292,12 @@ var (
 	XHashCachesInMemoryFlag = cli.IntFlag{
 		Name:  "xhash.cachesinmem",
 		Usage: "Number of recent XHash caches to keep in memory (16MB each)",
-		Value: prlconfig.Defaults.XHash.CachesInMem,
+		Value: nodeconfig.Defaults.XHash.CachesInMem,
 	}
 	XHashCachesOnDiskFlag = cli.IntFlag{
 		Name:  "xhash.cachesondisk",
 		Usage: "Number of recent xhash caches to keep on disk (16MB each)",
-		Value: prlconfig.Defaults.XHash.CachesOnDisk,
+		Value: nodeconfig.Defaults.XHash.CachesOnDisk,
 	}
 	XHashCachesLockMmapFlag = cli.BoolFlag{
 		Name:  "xhash.cacheslockmmap",
@@ -306,17 +306,17 @@ var (
 	XHashDatasetDirFlag = DirectoryFlag{
 		Name:  "xhash.dagdir",
 		Usage: "Directory to store the XHash mining DAGs",
-		Value: DirectoryString(prlconfig.Defaults.XHash.DatasetDir),
+		Value: DirectoryString(nodeconfig.Defaults.XHash.DatasetDir),
 	}
 	XHashDatasetsInMemoryFlag = cli.IntFlag{
 		Name:  "xhash.dagsinmem",
 		Usage: "Number of recent XHash mining DAGs to keep in memory (1+GB each)",
-		Value: prlconfig.Defaults.XHash.DatasetsInMem,
+		Value: nodeconfig.Defaults.XHash.DatasetsInMem,
 	}
 	XHashDatasetsOnDiskFlag = cli.IntFlag{
 		Name:  "xhash.dagsondisk",
 		Usage: "Number of recent XHash mining DAGs to keep on disk (1+GB each)",
-		Value: prlconfig.Defaults.XHash.DatasetsOnDisk,
+		Value: nodeconfig.Defaults.XHash.DatasetsOnDisk,
 	}
 	XHashDatasetsLockMmapFlag = cli.BoolFlag{
 		Name:  "xhash.dagslockmmap",
@@ -344,37 +344,37 @@ var (
 	TxPoolPriceLimitFlag = cli.Uint64Flag{
 		Name:  "txpool.pricelimit",
 		Usage: "Minimum gas price limit to enforce for acceptance into the pool",
-		Value: prlconfig.Defaults.TxPool.PriceLimit,
+		Value: nodeconfig.Defaults.TxPool.PriceLimit,
 	}
 	TxPoolPriceBumpFlag = cli.Uint64Flag{
 		Name:  "txpool.pricebump",
 		Usage: "Price bump percentage to replace an already existing transaction",
-		Value: prlconfig.Defaults.TxPool.PriceBump,
+		Value: nodeconfig.Defaults.TxPool.PriceBump,
 	}
 	TxPoolAccountSlotsFlag = cli.Uint64Flag{
 		Name:  "txpool.accountslots",
 		Usage: "Minimum number of executable transaction slots guaranteed per account",
-		Value: prlconfig.Defaults.TxPool.AccountSlots,
+		Value: nodeconfig.Defaults.TxPool.AccountSlots,
 	}
 	TxPoolGlobalSlotsFlag = cli.Uint64Flag{
 		Name:  "txpool.globalslots",
 		Usage: "Maximum number of executable transaction slots for all accounts",
-		Value: prlconfig.Defaults.TxPool.GlobalSlots,
+		Value: nodeconfig.Defaults.TxPool.GlobalSlots,
 	}
 	TxPoolAccountQueueFlag = cli.Uint64Flag{
 		Name:  "txpool.accountqueue",
 		Usage: "Maximum number of non-executable transaction slots permitted per account",
-		Value: prlconfig.Defaults.TxPool.AccountQueue,
+		Value: nodeconfig.Defaults.TxPool.AccountQueue,
 	}
 	TxPoolGlobalQueueFlag = cli.Uint64Flag{
 		Name:  "txpool.globalqueue",
 		Usage: "Maximum number of non-executable transaction slots for all accounts",
-		Value: prlconfig.Defaults.TxPool.GlobalQueue,
+		Value: nodeconfig.Defaults.TxPool.GlobalQueue,
 	}
 	TxPoolLifetimeFlag = cli.DurationFlag{
 		Name:  "txpool.lifetime",
 		Usage: "Maximum amount of time non-executable transaction are queued",
-		Value: prlconfig.Defaults.TxPool.Lifetime,
+		Value: nodeconfig.Defaults.TxPool.Lifetime,
 	}
 	// Performance tuning settings
 	CacheFlag = cli.IntFlag{
@@ -395,12 +395,12 @@ var (
 	CacheTrieJournalFlag = cli.StringFlag{
 		Name:  "cache.trie.journal",
 		Usage: "Disk journal directory for trie cache to survive node restarts",
-		Value: prlconfig.Defaults.TrieCleanCacheJournal,
+		Value: nodeconfig.Defaults.TrieCleanCacheJournal,
 	}
 	CacheTrieRejournalFlag = cli.DurationFlag{
 		Name:  "cache.trie.rejournal",
 		Usage: "Time interval to regenerate the trie cache journal",
-		Value: prlconfig.Defaults.TrieCleanCacheRejournal,
+		Value: nodeconfig.Defaults.TrieCleanCacheRejournal,
 	}
 	CacheGCFlag = cli.IntFlag{
 		Name:  "cache.gc",
@@ -445,12 +445,12 @@ var (
 	MinerGasLimitFlag = cli.Uint64Flag{
 		Name:  "miner.gaslimit",
 		Usage: "Target gas ceiling for mined blocks",
-		Value: prlconfig.Defaults.Miner.GasCeil,
+		Value: nodeconfig.Defaults.Miner.GasCeil,
 	}
 	MinerGasPriceFlag = BigFlag{
 		Name:  "miner.gasprice",
 		Usage: "Minimum gas price for mining a transaction",
-		Value: prlconfig.Defaults.Miner.GasPrice,
+		Value: nodeconfig.Defaults.Miner.GasPrice,
 	}
 	MinerCoinbaseFlag = cli.StringFlag{
 		Name:  "miner.coinbase",
@@ -464,7 +464,7 @@ var (
 	MinerRecommitIntervalFlag = cli.DurationFlag{
 		Name:  "miner.recommit",
 		Usage: "Time interval to recreate the block being mined",
-		Value: prlconfig.Defaults.Miner.Recommit,
+		Value: nodeconfig.Defaults.Miner.Recommit,
 	}
 	MinerNoVerifyFlag = cli.BoolFlag{
 		Name:  "miner.noverify",
@@ -497,17 +497,17 @@ var (
 	RPCGlobalGasCapFlag = cli.Uint64Flag{
 		Name:  "rpc.gascap",
 		Usage: "Sets a cap on gas that can be used in eth_call/estimateGas (0=infinite)",
-		Value: prlconfig.Defaults.RPCGasCap,
+		Value: nodeconfig.Defaults.RPCGasCap,
 	}
 	RPCGlobalPVMTimeoutFlag = cli.DurationFlag{
 		Name:  "rpc.pvmtimeout",
 		Usage: "Sets a timeout used for eth_call (0=infinite)",
-		Value: prlconfig.Defaults.RPCPVMTimeout,
+		Value: nodeconfig.Defaults.RPCPVMTimeout,
 	}
 	RPCGlobalTxFeeCapFlag = cli.Float64Flag{
 		Name:  "rpc.txfeecap",
 		Usage: "Sets a cap on transaction fee (in laxes) that can be sent via the RPC APIs (0 = no cap)",
-		Value: prlconfig.Defaults.RPCTxFeeCap,
+		Value: nodeconfig.Defaults.RPCTxFeeCap,
 	}
 	// Authenticated RPC HTTP settings
 	AuthListenFlag = cli.StringFlag{
@@ -703,22 +703,22 @@ var (
 	GpoBlocksFlag = cli.IntFlag{
 		Name:  "gpo.blocks",
 		Usage: "Number of recent blocks sampled by the legacy percentile gas price oracle (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.Blocks,
+		Value: nodeconfig.Defaults.GPO.Blocks,
 	}
 	GpoPercentileFlag = cli.IntFlag{
 		Name:  "gpo.percentile",
 		Usage: "Percentile of recent-block transaction gas prices used by the legacy oracle (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.Percentile,
+		Value: nodeconfig.Defaults.GPO.Percentile,
 	}
 	GpoMaxGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.maxprice",
 		Usage: "Maximum gas price (in wei) the oracle will ever recommend; caps both the legacy and smart-fee estimators",
-		Value: prlconfig.Defaults.GPO.MaxPrice.Int64(),
+		Value: nodeconfig.Defaults.GPO.MaxPrice.Int64(),
 	}
 	GpoIgnoreGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.ignoreprice",
 		Usage: "Gas price (in wei) below which the legacy oracle ignores sampled transactions (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.IgnorePrice.Int64(),
+		Value: nodeconfig.Defaults.GPO.IgnorePrice.Int64(),
 	}
 	GpoEnableSmartFeeFlag = cli.BoolTFlag{
 		Name:  "gpo.smartfee",
@@ -1058,7 +1058,7 @@ func setIPC(ctx *cli.Context, cfg *node.Config) {
 }
 
 // setLes configures the les server and ultra light client settings from the command line flags.
-func setLes(ctx *cli.Context, cfg *prlconfig.Config) {
+func setLes(ctx *cli.Context, cfg *nodeconfig.Config) {
 	if ctx.GlobalIsSet(LightServeFlag.Name) {
 		cfg.LightServ = ctx.GlobalInt(LightServeFlag.Name)
 	}
@@ -1078,8 +1078,8 @@ func setLes(ctx *cli.Context, cfg *prlconfig.Config) {
 		cfg.UltraLightFraction = ctx.GlobalInt(UltraLightFractionFlag.Name)
 	}
 	if cfg.UltraLightFraction <= 0 && cfg.UltraLightFraction > 100 {
-		logging.Error("Ultra light fraction is invalid", "had", cfg.UltraLightFraction, "updated", prlconfig.Defaults.UltraLightFraction)
-		cfg.UltraLightFraction = prlconfig.Defaults.UltraLightFraction
+		logging.Error("Ultra light fraction is invalid", "had", cfg.UltraLightFraction, "updated", nodeconfig.Defaults.UltraLightFraction)
+		cfg.UltraLightFraction = nodeconfig.Defaults.UltraLightFraction
 	}
 	if ctx.GlobalIsSet(UltraLightOnlyAnnounceFlag.Name) {
 		cfg.UltraLightOnlyAnnounce = ctx.GlobalBool(UltraLightOnlyAnnounceFlag.Name)
@@ -1146,7 +1146,7 @@ func MakeAddress(ks *keystore.KeyStore, account string) (wallet.Account, error) 
 
 // setCoinbase retrieves the address either from the directly specified
 // command line flags or from the keystore if CLI indexed.
-func setCoinbase(ctx *cli.Context, ks *keystore.KeyStore, cfg *prlconfig.Config) {
+func setCoinbase(ctx *cli.Context, ks *keystore.KeyStore, cfg *nodeconfig.Config) {
 	// Extract the current miner address
 	var coinbase string
 	if ctx.GlobalIsSet(MinerCoinbaseFlag.Name) {
@@ -1344,11 +1344,11 @@ func setDataDir(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-func setGPO(ctx *cli.Context, cfg *gasprice.Config, light bool) {
+func setGPO(ctx *cli.Context, cfg *fees.Config, light bool) {
 	// If we are running the light client, apply another group
 	// settings for gas oracle.
 	if light {
-		*cfg = prlconfig.LightClientGPO
+		*cfg = nodeconfig.LightClientGPO
 	}
 	if ctx.GlobalIsSet(GpoBlocksFlag.Name) {
 		cfg.Blocks = ctx.GlobalInt(GpoBlocksFlag.Name)
@@ -1410,7 +1410,7 @@ func setTxPool(ctx *cli.Context, cfg *validation.TxPoolConfig) {
 	}
 }
 
-func setXHash(ctx *cli.Context, cfg *prlconfig.Config) {
+func setXHash(ctx *cli.Context, cfg *nodeconfig.Config) {
 	if ctx.GlobalIsSet(XHashCacheDirFlag.Name) {
 		cfg.XHash.CacheDir = ctx.GlobalString(XHashCacheDirFlag.Name)
 	}
@@ -1462,7 +1462,7 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	}
 }
 
-func setRequiredBlocks(ctx *cli.Context, cfg *prlconfig.Config) {
+func setRequiredBlocks(ctx *cli.Context, cfg *nodeconfig.Config) {
 	requiredBlocks := ctx.GlobalString(PrlRequiredBlocksFlag.Name)
 	if requiredBlocks == "" {
 		if ctx.GlobalIsSet(LegacyWhitelistFlag.Name) {
@@ -1532,7 +1532,7 @@ func CheckExclusive(ctx *cli.Context, args ...any) {
 }
 
 // SetPrlConfig applies prl-related command line flags to the config.
-func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
+func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *nodeconfig.Config) {
 	// Avoid conflicting network flags
 	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, TestnetFlag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
@@ -1740,7 +1740,7 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 
 // SetDNSDiscoveryDefaults configures DNS discovery with the given URL if
 // no URLs are set.
-func SetDNSDiscoveryDefaults(cfg *prlconfig.Config, genesis util.Hash) {
+func SetDNSDiscoveryDefaults(cfg *nodeconfig.Config, genesis util.Hash) {
 	if cfg.ParallaxDiscoveryURLs != nil {
 		return // already set through flags/config
 	}
@@ -1757,7 +1757,7 @@ func SetDNSDiscoveryDefaults(cfg *prlconfig.Config, genesis util.Hash) {
 // RegisterParallaxService adds an Parallax client to the stack.
 // The second return value is the full node instance, which may be nil if the
 // node is running as a light client.
-func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (api.Backend, *protocol.Parallax) {
+func RegisterParallaxService(stack *node.Node, cfg *nodeconfig.Config) (api.Backend, *protocol.Parallax) {
 	if cfg.SyncMode == downloader.LightSync {
 		backend, err := les.New(stack, cfg)
 		if err != nil {
@@ -1918,21 +1918,21 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *validation.BlockChain
 	}
 
 	var engine kernel.Engine
-	xhashConf := prlconfig.Defaults.XHash
+	xhashConf := nodeconfig.Defaults.XHash
 	if ctx.GlobalBool(FakePoWFlag.Name) {
 		xhashConf.PowMode = xhash.ModeFake
 	}
-	engine = prlconfig.CreateConsensusEngine(stack, config, &xhashConf, nil, false, chainDb)
+	engine = nodeconfig.CreateConsensusEngine(stack, config, &xhashConf, nil, false, chainDb)
 	if gcmode := ctx.GlobalString(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cache := &validation.CacheConfig{
-		TrieCleanLimit:      prlconfig.Defaults.TrieCleanCache,
+		TrieCleanLimit:      nodeconfig.Defaults.TrieCleanCache,
 		TrieCleanNoPrefetch: ctx.GlobalBool(CacheNoPrefetchFlag.Name),
-		TrieDirtyLimit:      prlconfig.Defaults.TrieDirtyCache,
+		TrieDirtyLimit:      nodeconfig.Defaults.TrieDirtyCache,
 		TrieDirtyDisabled:   ctx.GlobalString(GCModeFlag.Name) == "archive",
-		TrieTimeLimit:       prlconfig.Defaults.TrieTimeout,
-		SnapshotLimit:       prlconfig.Defaults.SnapshotCache,
+		TrieTimeLimit:       nodeconfig.Defaults.TrieTimeout,
+		SnapshotLimit:       nodeconfig.Defaults.SnapshotCache,
 		Preimages:           ctx.GlobalBool(CachePreimagesFlag.Name),
 	}
 	if cache.TrieDirtyDisabled && !cache.Preimages {

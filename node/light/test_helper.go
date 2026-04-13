@@ -33,12 +33,11 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/light/checkpointoracle"
 	"github.com/ParallaxProtocol/parallax/node/light/contracts/checkpointoracle/contract"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	vfs "github.com/ParallaxProtocol/parallax/node/light/vflux/server"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -49,6 +48,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
 
@@ -224,7 +224,7 @@ func newTestClientHandler(backend *backends.SimulatedBackend, odr *LesOdr, index
 	client := &LightParallax{
 		lesCommons: lesCommons{
 			genesis:     genesis.Hash(),
-			config:      &prlconfig.Config{LightPeers: 100, NetworkId: NetworkId},
+			config:      &nodeconfig.Config{LightPeers: 100, NetworkId: NetworkId},
 			chainConfig: chainparams.AllXHashProtocolChanges,
 			iConfig:     light.TestClientIndexerConfig,
 			chainDb:     db,
@@ -291,7 +291,7 @@ func newTestServerHandler(blocks int, indexers []*validation.ChainIndexer, db db
 	server := &LesServer{
 		lesCommons: lesCommons{
 			genesis:     genesis.Hash(),
-			config:      &prlconfig.Config{LightPeers: 100, NetworkId: NetworkId},
+			config:      &nodeconfig.Config{LightPeers: 100, NetworkId: NetworkId},
 			chainConfig: chainparams.AllXHashProtocolChanges,
 			iConfig:     light.TestServerIndexerConfig,
 			chainDb:     db,

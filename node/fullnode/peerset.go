@@ -21,9 +21,9 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 

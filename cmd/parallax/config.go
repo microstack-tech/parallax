@@ -32,7 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/wallet/external"
@@ -86,7 +86,7 @@ type prlstatsConfig struct {
 }
 
 type prlxConfig struct {
-	Parallax      prlconfig.Config
+	Parallax      nodeconfig.Config
 	Node          node.Config
 	ParallaxStats prlstatsConfig
 	Metrics       metrics.Config
@@ -121,7 +121,7 @@ func defaultNodeConfig() node.Config {
 func makeConfigNode(ctx *cli.Context) (*node.Node, prlxConfig) {
 	// Load defaults.
 	cfg := prlxConfig{
-		Parallax: prlconfig.Defaults,
+		Parallax: nodeconfig.Defaults,
 		Node:     defaultNodeConfig(),
 		Metrics:  metrics.DefaultConfig,
 	}

@@ -32,7 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/node"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -220,7 +220,7 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block) {
 		t.Fatalf("can't create new node: %v", err)
 	}
 	// Create Parallax Service
-	config := &prlconfig.Config{Genesis: genesis}
+	config := &nodeconfig.Config{Genesis: genesis}
 	config.XHash.PowMode = xhash.ModeFake
 	prlservice, err := protocol.New(n, config)
 	if err != nil {

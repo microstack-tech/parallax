@@ -30,7 +30,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/node"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -234,7 +234,7 @@ func createNode(t *testing.T, gqlEnabled bool, txEnabled bool) *node.Node {
 
 func createGQLService(t *testing.T, stack *node.Node) {
 	// create backend
-	parallaxConf := &prlconfig.Config{
+	parallaxConf := &nodeconfig.Config{
 		Genesis: &validation.Genesis{
 			Config:     chainparams.AllXHashProtocolChanges,
 			GasLimit:   11500000,
@@ -276,7 +276,7 @@ func createGQLServiceWithTransactions(t *testing.T, stack *node.Node) {
 	funds := big.NewInt(1000000000000000)
 	dad := util.HexToAddress("0x0000000000000000000000000000000000000dad")
 
-	parallaxConf := &prlconfig.Config{
+	parallaxConf := &nodeconfig.Config{
 		Genesis: &validation.Genesis{
 			Config:     chainparams.AllXHashProtocolChanges,
 			GasLimit:   11500000,

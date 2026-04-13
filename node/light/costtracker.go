@@ -25,8 +25,8 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
@@ -137,7 +137,7 @@ type costTracker struct {
 
 // newCostTracker creates a cost tracker and loads the cost factor statistics from the database.
 // It also returns the minimum capacity that can be assigned to any peer.
-func newCostTracker(db dbstore.Database, config *prlconfig.Config) (*costTracker, uint64) {
+func newCostTracker(db dbstore.Database, config *nodeconfig.Config) (*costTracker, uint64) {
 	utilTarget := float64(config.LightServ) * flowcontrol.FixedPointMultiplier / 100
 	ct := &costTracker{
 		db:         db,

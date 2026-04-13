@@ -32,9 +32,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/node"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
 	ethdownloader "github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/light/downloader"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/adapters"
@@ -491,14 +491,14 @@ func testSim(t *testing.T, serverCount, clientCount int, serverDir, clientDir []
 }
 
 func newLesClientService(ctx *adapters.ServiceContext, stack *node.Node) (node.Lifecycle, error) {
-	config := prlconfig.Defaults
+	config := nodeconfig.Defaults
 	config.SyncMode = (ethdownloader.SyncMode)(downloader.LightSync)
 	config.XHash.PowMode = xhash.ModeFake
 	return New(stack, &config)
 }
 
 func newLesServerService(ctx *adapters.ServiceContext, stack *node.Node) (node.Lifecycle, error) {
-	config := prlconfig.Defaults
+	config := nodeconfig.Defaults
 	config.SyncMode = (ethdownloader.SyncMode)(downloader.FullSync)
 	config.LightServ = testServerCapacity
 	config.LightPeers = testMaxClients

@@ -25,7 +25,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
@@ -34,6 +33,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
 )

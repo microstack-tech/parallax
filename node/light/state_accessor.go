@@ -21,10 +21,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/state"
 )
 

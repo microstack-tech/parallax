@@ -15,7 +15,7 @@
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package prlconfig contains the configuration of the Parallax and LPS protocols.
-package prlconfig
+package nodeconfig
 
 import (
 	"math/big"
@@ -33,31 +33,31 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
 	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
 )
 
 // FullNodeGPO contains default gasprice oracle settings for full node.
-var FullNodeGPO = gasprice.Config{
+var FullNodeGPO = fees.Config{
 	Blocks:                  20,
 	Percentile:              60,
 	MaxHeaderHistory:        1024,
 	MaxBlockHistory:         1024,
-	MaxPrice:                gasprice.DefaultMaxPrice,
-	IgnorePrice:             gasprice.DefaultIgnorePrice,
+	MaxPrice:                fees.DefaultMaxPrice,
+	IgnorePrice:             fees.DefaultIgnorePrice,
 	EnableSmartFeeEstimator: true,
 }
 
 // LightClientGPO contains default gasprice oracle settings for light client.
-var LightClientGPO = gasprice.Config{
+var LightClientGPO = fees.Config{
 	Blocks:           2,
 	Percentile:       60,
 	MaxHeaderHistory: 300,
 	MaxBlockHistory:  5,
-	MaxPrice:         gasprice.DefaultMaxPrice,
-	IgnorePrice:      gasprice.DefaultIgnorePrice,
+	MaxPrice:         fees.DefaultMaxPrice,
+	IgnorePrice:      fees.DefaultIgnorePrice,
 }
 
 // Note: The new Bitcoin Core-style fee estimation fields (NumBuckets, BucketMultiplier,
@@ -185,7 +185,7 @@ type Config struct {
 	TxPool validation.TxPoolConfig
 
 	// Gas Price Oracle options
-	GPO gasprice.Config
+	GPO fees.Config
 
 	// Enables tracking of SHA3 preimages in the VM
 	EnablePreimageRecording bool

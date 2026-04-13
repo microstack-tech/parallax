@@ -24,9 +24,9 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
 )

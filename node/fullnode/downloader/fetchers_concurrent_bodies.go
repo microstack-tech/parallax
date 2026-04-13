@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 

@@ -25,15 +25,15 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/light/checkpointoracle"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
 
@@ -48,7 +48,7 @@ type chainReader interface {
 // lesCommons contains fields needed by both server and client.
 type lesCommons struct {
 	genesis                      util.Hash
-	config                       *prlconfig.Config
+	config                       *nodeconfig.Config
 	chainConfig                  *chainparams.ChainConfig
 	iConfig                      *light.IndexerConfig
 	chainDb, lesDb               dbstore.Database
@@ -137,7 +137,7 @@ func (c *lesCommons) localCheckpoint(index uint64) chainparams.TrustedCheckpoint
 }
 
 // setupOracle sets up the checkpoint oracle contract client.
-func (c *lesCommons) setupOracle(node *node.Node, genesis util.Hash, prlconfig *prlconfig.Config) *checkpointoracle.CheckpointOracle {
+func (c *lesCommons) setupOracle(node *node.Node, genesis util.Hash, prlconfig *nodeconfig.Config) *checkpointoracle.CheckpointOracle {
 	config := prlconfig.CheckpointOracle
 	if config == nil {
 		// Try loading default config.

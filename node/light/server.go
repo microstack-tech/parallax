@@ -23,10 +23,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	vfs "github.com/ParallaxProtocol/parallax/node/light/vflux/server"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -34,6 +33,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 var (
@@ -76,7 +76,7 @@ type LesServer struct {
 	p2pSrv *p2p.Server
 }
 
-func NewLesServer(node *node.Node, e prlBackend, config *prlconfig.Config) (*LesServer, error) {
+func NewLesServer(node *node.Node, e prlBackend, config *nodeconfig.Config) (*LesServer, error) {
 	lesDb, err := node.OpenDatabase("les.server", 0, 0, "eth/db/lesserver/", false)
 	if err != nil {
 		return nil, err

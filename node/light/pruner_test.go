@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 func TestLightPruner(t *testing.T) {

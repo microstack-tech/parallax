@@ -36,17 +36,17 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
+	"github.com/ParallaxProtocol/parallax/node/filters"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/filters"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -63,11 +63,11 @@ import (
 
 // Config contains the configuration options of the Parallax protocol.
 // Deprecated: use prlconfig.Config instead.
-type Config = prlconfig.Config
+type Config = nodeconfig.Config
 
 // Parallax implements the Parallax full node service.
 type Parallax struct {
-	config *prlconfig.Config
+	config *nodeconfig.Config
 
 	// Handlers
 	txPool             *validation.TxPool
@@ -105,7 +105,7 @@ type Parallax struct {
 
 // New creates a new Parallax object (including the
 // initialisation of the common Parallax object)
-func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
+func New(stack *node.Node, config *nodeconfig.Config) (*Parallax, error) {
 	// Ensure configuration values are compatible and sane
 	if config.SyncMode == downloader.LightSync {
 		return nil, errors.New("can't run Parallax in light sync mode, use LightParallax")
@@ -114,8 +114,8 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
 	}
 	if config.Miner.GasPrice == nil || config.Miner.GasPrice.Cmp(util.Big0) <= 0 {
-		logging.Warn("Sanitizing invalid miner gas price", "provided", config.Miner.GasPrice, "updated", prlconfig.Defaults.Miner.GasPrice)
-		config.Miner.GasPrice = new(big.Int).Set(prlconfig.Defaults.Miner.GasPrice)
+		logging.Warn("Sanitizing invalid miner gas price", "provided", config.Miner.GasPrice, "updated", nodeconfig.Defaults.Miner.GasPrice)
+		config.Miner.GasPrice = new(big.Int).Set(nodeconfig.Defaults.Miner.GasPrice)
 	}
 	if config.NoPruning && config.TrieDirtyCache > 0 {
 		if config.SnapshotCache > 0 {
@@ -151,7 +151,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 		chainDb:           chainDb,
 		eventMux:          stack.EventMux(),
 		accountManager:    stack.AccountManager(),
-		engine:            prlconfig.CreateConsensusEngine(stack, chainConfig, &xhashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb),
+		engine:            nodeconfig.CreateConsensusEngine(stack, chainConfig, &xhashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb),
 		closeBloomHandler: make(chan struct{}),
 		networkID:         config.NetworkId,
 		gasPrice:          config.Miner.GasPrice,
@@ -243,7 +243,7 @@ func New(stack *node.Node, config *prlconfig.Config) (*Parallax, error) {
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.Miner.GasPrice
 	}
-	prl.APIBackend.gpo = gasprice.NewOracle(prl.APIBackend, prl.txPool, gpoParams)
+	prl.APIBackend.gpo = fees.NewOracle(prl.APIBackend, prl.txPool, gpoParams)
 
 	// Setup DNS discovery iterators.
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})

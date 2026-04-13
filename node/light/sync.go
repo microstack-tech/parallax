@@ -24,8 +24,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node/light/downloader"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
 

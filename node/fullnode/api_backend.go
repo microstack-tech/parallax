@@ -27,9 +27,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
 	"github.com/ParallaxProtocol/parallax/node/miner"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -47,7 +47,7 @@ type PrlAPIBackend struct {
 	extRPCEnabled       bool
 	allowUnprotectedTxs bool
 	eth                 *Parallax
-	gpo                 *gasprice.Oracle
+	gpo                 *fees.Oracle
 }
 
 // ChainConfig returns the active chain configuration.
@@ -305,7 +305,7 @@ func (b *PrlAPIBackend) FeeHistory(ctx context.Context, blockCount int, lastBloc
 	return b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
-func (b *PrlAPIBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *gasprice.EstimateMeta, error) {
+func (b *PrlAPIBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *fees.EstimateMeta, error) {
 	return b.gpo.EstimateSmartFee(ctx, confTarget)
 }
 

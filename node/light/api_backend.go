@@ -26,9 +26,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -36,6 +35,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/bloombits"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/validation/state"
 	"github.com/ParallaxProtocol/parallax/wallet"
@@ -45,7 +45,7 @@ type LesApiBackend struct {
 	extRPCEnabled       bool
 	allowUnprotectedTxs bool
 	prl                 *LightParallax
-	gpo                 *gasprice.Oracle
+	gpo                 *fees.Oracle
 }
 
 func (b *LesApiBackend) ChainConfig() *chainparams.ChainConfig {
@@ -283,7 +283,7 @@ func (b *LesApiBackend) FeeHistory(ctx context.Context, blockCount int, lastBloc
 	return b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
-func (b *LesApiBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *gasprice.EstimateMeta, error) {
+func (b *LesApiBackend) EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *fees.EstimateMeta, error) {
 	return b.gpo.EstimateSmartFee(ctx, confTarget)
 }
 

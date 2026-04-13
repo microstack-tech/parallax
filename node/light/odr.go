@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 // LesOdr implements light.OdrBackend

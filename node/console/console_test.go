@@ -30,8 +30,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/node/console/prompt"
 	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
 )
@@ -86,7 +86,7 @@ type tester struct {
 
 // newTester creates a test environment based on which the console can operate.
 // Please ensure you call Close() on the returned tester to avoid leaks.
-func newTester(t *testing.T, confOverride func(*prlconfig.Config)) *tester {
+func newTester(t *testing.T, confOverride func(*nodeconfig.Config)) *tester {
 	// Create a temporary storage for the node keys and initialize it
 	workspace := t.TempDir()
 
@@ -95,7 +95,7 @@ func newTester(t *testing.T, confOverride func(*prlconfig.Config)) *tester {
 	if err != nil {
 		t.Fatalf("failed to create node: %v", err)
 	}
-	parallaxConf := &prlconfig.Config{
+	parallaxConf := &nodeconfig.Config{
 		Genesis: validation.DeveloperGenesisBlock(15, 11_500_000, util.Address{}),
 		Miner: miner.Config{
 			Coinbase: util.HexToAddress(testAddress),

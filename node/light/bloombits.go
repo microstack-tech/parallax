@@ -19,8 +19,8 @@ package les
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/util/bitutil"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 const (

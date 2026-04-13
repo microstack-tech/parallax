@@ -19,7 +19,7 @@ package utils
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -47,7 +47,7 @@ var (
 	LegacyMinerGasTargetFlag = cli.Uint64Flag{
 		Name:  "miner.gastarget",
 		Usage: "Target gas floor for mined blocks (deprecated)",
-		Value: prlconfig.Defaults.Miner.GasFloor,
+		Value: nodeconfig.Defaults.Miner.GasFloor,
 	}
 )
 

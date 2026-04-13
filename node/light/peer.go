@@ -29,7 +29,6 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/node/light/utils"
 	vfc "github.com/ParallaxProtocol/parallax/node/light/vflux/client"
 	vfs "github.com/ParallaxProtocol/parallax/node/light/vflux/server"
@@ -41,6 +40,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 var (

@@ -26,7 +26,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/script"
@@ -46,7 +46,7 @@ type Backend interface {
 
 	SuggestGasTipCap(ctx context.Context) (*big.Int, error)
 	FeeHistory(ctx context.Context, blockCount int, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error)
-	EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *gasprice.EstimateMeta, error)
+	EstimateSmartFee(ctx context.Context, confTarget int) (*big.Int, *fees.EstimateMeta, error)
 	ChainDb() dbstore.Database
 	AccountManager() *wallet.Manager
 	ExtRPCEnabled() bool

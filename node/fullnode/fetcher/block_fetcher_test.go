@@ -27,7 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"

@@ -24,10 +24,10 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/node/light/light"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/light"
 )
 
 // Test light syncing which will download all headers from genesis.
