@@ -31,8 +31,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/state"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+
 	"golang.org/x/crypto/sha3"
 )
 
@@ -443,7 +442,7 @@ func (xhash *XHash) Prepare(chain kernel.ChainHeaderReader, header *types.Header
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state on the header
-func (xhash *XHash) Finalize(chain kernel.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
+func (xhash *XHash) Finalize(chain kernel.ChainHeaderReader, header *types.Header, state kernel.StateAccessor, txs []*types.Transaction, uncles []*types.Header) {
 	// 1) Schedule THIS block’s coinbase for future maturity
 	height := header.Number.Uint64()
 	reward := calcBlockReward(header.Number.Uint64())
@@ -463,9 +462,9 @@ func (xhash *XHash) Finalize(chain kernel.ChainHeaderReader, header *types.Heade
 
 // FinalizeAndAssemble implements consensus.Engine, accumulating the block and
 // uncle rewards, setting the final state and assembling the block.
-func (xhash *XHash) FinalizeAndAssemble(chain kernel.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+func (xhash *XHash) FinalizeAndAssemble(chain kernel.ChainHeaderReader, header *types.Header, state kernel.StateAccessor, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, hasher types.TrieHasher) (*types.Block, error) {
 	xhash.Finalize(chain, header, state, txs, nil)
-	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
+	return types.NewBlock(header, txs, nil, receipts, hasher), nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
@@ -550,12 +549,12 @@ func schedKeyAmt(height uint64) util.Hash {
 	return out
 }
 
-func putScheduledPayout(state *state.StateDB, unlockHeight uint64, addr util.Address, amt *big.Int) {
+func putScheduledPayout(state kernel.StateAccessor, unlockHeight uint64, addr util.Address, amt *big.Int) {
 	state.SetState(lockboxAddress, schedKeyAddr(unlockHeight), util.BytesToHash(addr.Bytes()))
 	state.SetState(lockboxAddress, schedKeyAmt(unlockHeight), util.BigToHash(amt))
 }
 
-func popDuePayout(state *state.StateDB, height uint64) (addr util.Address, amt *big.Int, ok bool) {
+func popDuePayout(state kernel.StateAccessor, height uint64) (addr util.Address, amt *big.Int, ok bool) {
 	if height == 0 {
 		return util.Address{}, nil, false
 	}

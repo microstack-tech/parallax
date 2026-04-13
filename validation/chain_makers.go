@@ -27,6 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 )
 
 // BlockGen creates blocks for testing.
@@ -237,7 +238,7 @@ func GenerateChain(config *chainparams.ChainConfig, parent *types.Block, engine 
 		}
 		if b.engine != nil {
 			// Finalize and seal the block
-			block, _ := b.engine.FinalizeAndAssemble(chainreader, b.header, statedb, b.txs, nil, b.receipts)
+			block, _ := b.engine.FinalizeAndAssemble(chainreader, b.header, statedb, b.txs, nil, b.receipts, trie.NewStackTrie(nil))
 
 			// Write state changes to db
 			root, err := statedb.Commit(config.IsEIP158(b.header.Number))
