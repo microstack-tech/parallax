@@ -59,7 +59,7 @@ PARALLAX OPTIONS:
   --usb                               Enable monitoring and management of USB hardware wallets
   --pcscdpath value                   Path to the smartcard daemon (pcscd) socket file (default: "/run/pcscd/pcscd.comm")
   --networkid value                   Explicitly set network id (integer)(For testnet: use --testnet instead) (default: 2110)
-  --syncmode value                    Blockchain sync mode ("snap", "full" or "light") (default: snap)
+  --syncmode value                    Blockchain sync mode ("snap" or "full") (default: snap)
   --exitwhensynced                    Exits after block synchronisation completes
   --gcmode value                      Blockchain garbage collection mode ("full", "archive") (default: "full")
   --txlookuplimit value               Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain) (default: 52560)
@@ -73,16 +73,10 @@ PARALLAX OPTIONS:
   --datadir.ancient value             Data directory for ancient chain segments (default = inside chaindata)
   --remotedb value                    URL for remote database
 
-LIGHT CLIENT OPTIONS:
-  --light.serve value                 Maximum percentage of time allowed for serving LPS requests (multi-threaded processing allows values over 100) (default: 0)
-  --light.ingress value               Incoming bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited) (default: 0)
-  --light.egress value                Outgoing bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited) (default: 0)
-  --light.maxpeers value              Maximum number of light clients to serve, or light servers to attach to (default: 100)
   --ulc.servers value                 List of trusted ultra-light servers
   --ulc.fraction value                Minimum % of trusted ultra-light servers required to announce a new head (default: 75)
   --ulc.onlyannounce                  Ultra light server sends announcements only
   --light.nopruning                   Disable ancient light chain data pruning
-  --light.nosyncserve                 Enables serving light clients before syncing
 
 DEVELOPER CHAIN OPTIONS:
   --dev                               Ephemeral proof-of-authority network with a pre-funded developer account, mining enabled

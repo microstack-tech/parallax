@@ -36,12 +36,6 @@ An archive node is a node that retains all historical data right back to genesis
 
 It is also possible to create a partial/recent archive node where the node was synced using snap but the state is never pruned. This creates an archive node that saves all state data from the point that the node first syncs. This is configured by starting the Parallax client with `--syncmode snap --gcmode archive`.
 
-## Light nodes
-
-A light node syncs very quickly and stores the bare minimum of blockchain data. Light nodes only process block headers, not entire blocks. This greatly reduces the computation time, storage and bandwidth required relative to a full node. This means light nodes are suitable for resource-constrained devices and can catch up to the head of the chain much faster when they are new or have been offline for a while. The trade-off is that light nodes rely heavily on data served by altruistic full nodes. A light client can be used to query data from Parallax and submit transactions, acting as a locally-hosted Parallax wallet. However, because they don't keep local copies of the Parallax state, light nodes can't validate blocks in the same way as full nodes - they receive a proof from the full node and verify it against their local header chain. To start a node in light mode, pass `--syncmode light`. Be aware that full nodes serving light data are relatively scarce so light nodes can struggle to find peers.
-
-Read more about light nodes on our [LPS page](./light-client).
-
 ## Summary
 
 There are several ways to sync a Parallax node. The default is to use snap sync to create a full node. Full nodes can be created by syncing block-by-block from genesis (full-sync) or by starting at an intermediate checkpoint block (snap-sync). By default, these modes prune state data older than 128 blocks, keeping only checkpoints that enable on-request regeneration of historical states. For rapid queries of historical data an archive node is required. Archive nodes keep local copies of all historical data right back to genesis. Partial archive nodes can be created by snap-syncing a node and turning off state-pruning to create a node that keeps all states since the initial sync block.

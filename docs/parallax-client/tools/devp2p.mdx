@@ -14,7 +14,6 @@ DevP2P also includes the RLPx-based application level protocols including:
 
 * [Ethereum Wire Protocol](https://github.com/ethereum/devp2p/blob/master/caps/eth.md): facilitates exchange of blockchain data between peers
 * [Ethereum Snapshot Protocol](https://github.com/ethereum/devp2p/blob/master/caps/snap.md): enables exchange of snapshots between peers
-* [Light Ethereum Subprotocol](https://github.com/ethereum/devp2p/blob/master/caps/les.md): protocol used by light clients
 
 To debug and develop these networking components, the Parallax client includes a command line tool called `devp2p`.
 
@@ -78,7 +77,6 @@ Run `devp2p nodeset filter <nodes.json> <filter flags...>` to write a new, filte
 * `-ip <CIDR>` filters nodes by IP subnet
 * `-min-age <duration>` filters nodes by 'first seen' time
 * `-eth-network <mainnet/testnet>` filters nodes by "prl" ENR entry
-* `-les-server` filters nodes by LES server support
 * `-snap` filters nodes by snap protocol support
 
 For example, given a node set in `nodes.json`, you could create a filtered set containing up to 20 Parallax mainnet nodes which also support snap sync using this command:

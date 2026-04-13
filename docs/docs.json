@@ -132,7 +132,6 @@
                   "parallax-client/fundamentals/pruning",
                   "parallax-client/fundamentals/private-networks",
                   "parallax-client/fundamentals/config-files",
-                  "parallax-client/fundamentals/light-client"
                 ]
               },
               {
@@ -154,7 +153,6 @@
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/clique",
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/debug",
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/eth",
-                      "parallax-client/interacting-with-parallax/json-rpc-namespaces/les",
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/miner",
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/net",
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/personal",
