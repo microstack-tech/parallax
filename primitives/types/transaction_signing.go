@@ -23,7 +23,6 @@ import (
 	"math/big"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 
@@ -36,16 +35,35 @@ type sigCache struct {
 	from   util.Address
 }
 
+// ChainConfigurator provides the minimal chain configuration needed to
+// select the appropriate transaction signer. This interface decouples
+// the types package from the concrete ChainConfig implementation.
+type ChainConfigurator interface {
+	// GetChainID returns the chain ID for replay protection.
+	GetChainID() *big.Int
+
+	// Fork activation checks
+	IsHomestead(num *big.Int) bool
+	IsEIP155(num *big.Int) bool
+	IsBerlin(num *big.Int) bool
+	IsLondon(num *big.Int) bool
+
+	// Fork block accessors (used by LatestSigner for nil-checking)
+	GetEIP155Block() *big.Int
+	GetBerlinBlock() *big.Int
+	GetLondonBlock() *big.Int
+}
+
 // MakeSigner returns a Signer based on the given chain config and block number.
-func MakeSigner(config *chainparams.ChainConfig, blockNumber *big.Int) Signer {
+func MakeSigner(config ChainConfigurator, blockNumber *big.Int) Signer {
 	var signer Signer
 	switch {
 	case config.IsLondon(blockNumber):
-		signer = NewLondonSigner(config.ChainID)
+		signer = NewLondonSigner(config.GetChainID())
 	case config.IsBerlin(blockNumber):
-		signer = NewEIP2930Signer(config.ChainID)
+		signer = NewEIP2930Signer(config.GetChainID())
 	case config.IsEIP155(blockNumber):
-		signer = NewEIP155Signer(config.ChainID)
+		signer = NewEIP155Signer(config.GetChainID())
 	case config.IsHomestead(blockNumber):
 		signer = HomesteadSigner{}
 	default:
@@ -61,16 +79,16 @@ func MakeSigner(config *chainparams.ChainConfig, blockNumber *big.Int) Signer {
 //
 // Use this in transaction-handling code where the current block number is unknown. If you
 // have the current block number available, use MakeSigner instead.
-func LatestSigner(config *chainparams.ChainConfig) Signer {
-	if config.ChainID != nil {
-		if config.LondonBlock != nil {
-			return NewLondonSigner(config.ChainID)
+func LatestSigner(config ChainConfigurator) Signer {
+	if config.GetChainID() != nil {
+		if config.GetLondonBlock() != nil {
+			return NewLondonSigner(config.GetChainID())
 		}
-		if config.BerlinBlock != nil {
-			return NewEIP2930Signer(config.ChainID)
+		if config.GetBerlinBlock() != nil {
+			return NewEIP2930Signer(config.GetChainID())
 		}
-		if config.EIP155Block != nil {
-			return NewEIP155Signer(config.ChainID)
+		if config.GetEIP155Block() != nil {
+			return NewEIP155Signer(config.GetChainID())
 		}
 	}
 	return HomesteadSigner{}

@@ -311,6 +311,18 @@ func (c *ChainConfig) IsLondon(num *big.Int) bool {
 	return isForked(c.LondonBlock, num)
 }
 
+// GetChainID returns the chain ID.
+func (c *ChainConfig) GetChainID() *big.Int { return c.ChainID }
+
+// GetEIP155Block returns the EIP-155 fork block number.
+func (c *ChainConfig) GetEIP155Block() *big.Int { return c.EIP155Block }
+
+// GetBerlinBlock returns the Berlin fork block number.
+func (c *ChainConfig) GetBerlinBlock() *big.Int { return c.BerlinBlock }
+
+// GetLondonBlock returns the London fork block number.
+func (c *ChainConfig) GetLondonBlock() *big.Int { return c.LondonBlock }
+
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
 func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64) *ConfigCompatError {
