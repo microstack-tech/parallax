@@ -83,15 +83,15 @@ func TestIPCPathResolution(t *testing.T) {
 	}{
 		{"", "", false, ""},
 		{"data", "", false, ""},
-		{"", "prlx.ipc", false, filepath.Join(os.TempDir(), "prlx.ipc")},
-		{"data", "prlx.ipc", false, "data/prlx.ipc"},
-		{"data", "./prlx.ipc", false, "./prlx.ipc"},
-		{"data", "/prlx.ipc", false, "/prlx.ipc"},
+		{"", "parallax.ipc", false, filepath.Join(os.TempDir(), "parallax.ipc")},
+		{"data", "parallax.ipc", false, "data/parallax.ipc"},
+		{"data", "./parallax.ipc", false, "./parallax.ipc"},
+		{"data", "/parallax.ipc", false, "/parallax.ipc"},
 		{"", "", true, ``},
 		{"data", "", true, ``},
-		{"", "prlx.ipc", true, `\\.\pipe\prlx.ipc`},
-		{"data", "prlx.ipc", true, `\\.\pipe\prlx.ipc`},
-		{"data", `\\.\pipe\prlx.ipc`, true, `\\.\pipe\prlx.ipc`},
+		{"", "parallax.ipc", true, `\\.\pipe\parallax.ipc`},
+		{"data", "parallax.ipc", true, `\\.\pipe\parallax.ipc`},
+		{"data", `\\.\pipe\parallax.ipc`, true, `\\.\pipe\parallax.ipc`},
 	}
 	for i, test := range tests {
 		// Only run when platform/test match

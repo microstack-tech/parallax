@@ -493,7 +493,7 @@ The clean trie cache is not found. Please delete it by yourself after the
 pruning. Remember don't start the Prlx without deleting the clean trie cache
 otherwise the entire database may be damaged!
 
-Check the command description "prlx snapshot prune-state --help" for more details.
+Check the command description "parallax snapshot prune-state --help" for more details.
 `
 
 func deleteCleanTrieCache(path string) {

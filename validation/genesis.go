@@ -444,7 +444,7 @@ func DefaultTestnetGenesisBlock() *Genesis {
 	}
 }
 
-// DeveloperGenesisBlock returns the 'prlx --dev' genesis block.
+// DeveloperGenesisBlock returns the 'parallax --dev' genesis block.
 func DeveloperGenesisBlock(period uint64, gasLimit uint64, faucet util.Address) *Genesis {
 	// Override the default period to the user requested one
 	config := *chainparams.AllCliqueProtocolChanges

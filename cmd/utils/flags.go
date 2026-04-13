@@ -1134,7 +1134,7 @@ func MakeAddress(ks *keystore.KeyStore, account string) (wallet.Account, error) 
 	logging.Warn("-------------------------------------------------------------------")
 	logging.Warn("Referring to accounts by order in the keystore folder is dangerous!")
 	logging.Warn("This functionality is deprecated and will be removed in the future!")
-	logging.Warn("Please use explicit addresses! (can search via `prlx account list`)")
+	logging.Warn("Please use explicit addresses! (can search via `parallax account list`)")
 	logging.Warn("-------------------------------------------------------------------")
 
 	accs := ks.Accounts()
@@ -1837,13 +1837,13 @@ func SetupMetrics(ctx *cli.Context) {
 
 			logging.Info("Enabling metrics export to InfluxDB")
 
-			go influxdb.InfluxDBWithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, database, username, password, "prlx.", tagsMap)
+			go influxdb.InfluxDBWithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, database, username, password, "parallax.", tagsMap)
 		} else if enableExportV2 {
 			tagsMap := SplitTagsFlag(ctx.GlobalString(MetricsInfluxDBTagsFlag.Name))
 
 			logging.Info("Enabling metrics export to InfluxDB (v2)")
 
-			go influxdb.InfluxDBV2WithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, token, bucket, organization, "prlx.", tagsMap)
+			go influxdb.InfluxDBV2WithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, token, bucket, organization, "parallax.", tagsMap)
 		}
 
 		if ctx.GlobalIsSet(MetricsHTTPFlag.Name) {
@@ -1979,11 +1979,11 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 // This is a temporary function used for migrating old command/flags to the
 // new format.
 //
-// e.g. prlx account new --keystore /tmp/mykeystore --lightkdf
+// e.g. parallax account new --keystore /tmp/mykeystore --lightkdf
 //
 // is equivalent after calling this method with:
 //
-// prlx --keystore /tmp/mykeystore --lightkdf account new
+// parallax --keystore /tmp/mykeystore --lightkdf account new
 //
 // This allows the use of the existing configuration functionality.
 // When all flags are migrated this function can be removed and the existing

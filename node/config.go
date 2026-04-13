@@ -47,7 +47,7 @@ const (
 // all registered services.
 type Config struct {
 	// Name sets the instance name of the node. It must not contain the / character and is
-	// used in the devp2p node identifier. The instance name of prlx is "prlx". If no
+	// used in the devp2p node identifier. The instance name of parallax is "parallax". If no
 	// value is specified, the basename of the current executable is used.
 	Name string `toml:"-"`
 
@@ -311,7 +311,7 @@ func (c *Config) name() string {
 	return c.Name
 }
 
-// These resources are resolved differently for "prlx" instances.
+// These resources are resolved differently for "parallax" instances.
 var isOldPrlxResource = map[string]bool{
 	"chaindata":          true,
 	"nodes":              true,
@@ -329,15 +329,15 @@ func (c *Config) ResolvePath(path string) string {
 		return ""
 	}
 	// Backwards-compatibility: ensure that data directory files created
-	// by prlx 1.4 are used if they exist.
+	// by parallax 1.4 are used if they exist.
 	if warn, isOld := isOldPrlxResource[path]; isOld {
 		oldpath := ""
-		if c.name() == "prlx" {
+		if c.name() == "parallax" {
 			oldpath = filepath.Join(c.DataDir, path)
 		}
 		if oldpath != "" && util.FileExist(oldpath) {
 			if warn {
-				c.warnOnce(&c.oldPrlxResourceWarning, "Using deprecated resource file %s, please move this file to the 'prlx' subdirectory of datadir.", oldpath)
+				c.warnOnce(&c.oldPrlxResourceWarning, "Using deprecated resource file %s, please move this file to the 'parallax' subdirectory of datadir.", oldpath)
 			}
 			return oldpath
 		}

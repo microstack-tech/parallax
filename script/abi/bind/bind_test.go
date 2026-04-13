@@ -2096,7 +2096,7 @@ func TestJavaBindings(t *testing.T) {
 
 package bindtest;
 
-import org.parallax.prlx.*;
+import org.parallax.parallax.*;
 import java.util.*;
 
 public class Test {

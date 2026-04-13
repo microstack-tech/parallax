@@ -2,21 +2,21 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: prlx android ios pvm all test clean devtools lint cross package darwin-universal release
+.PHONY: parallax android ios pvm all test clean devtools lint cross package darwin-universal release
 
 GOBIN      = ./build/bin
 GO        ?= latest
 GORUN      = env GO111MODULE=on go run
-PKG        = ./cmd/prlx
+PKG        = ./cmd/parallax
 LDFLAGS   ?= -s -w
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 
 # -------- existing targets --------
 
-prlx:
-	$(GORUN) build/ci.go install ./cmd/prlx
+parallax:
+	$(GORUN) build/ci.go install ./cmd/parallax
 	@echo "Done building."
-	@echo "Run \"$(GOBIN)/prlx\" to launch parallax."
+	@echo "Run \"$(GOBIN)/parallax\" to launch parallax."
 
 all:
 	$(GORUN) build/ci.go install
@@ -66,7 +66,7 @@ USE_DLGO ?= 1
 DLGO_FLAG := $(if $(filter 1 true yes,$(USE_DLGO)),-dlgo,)
 BUNDLE_PREFIX ?= parallax
 LICENSE_FILES ?= COPYING LICENSE
-CMDS_RELEASE := clef parallaxkey prlx
+CMDS_RELEASE := clef parallaxkey parallax
 
 # Build the helper once for the host
 $(CICMD): build/ci.go

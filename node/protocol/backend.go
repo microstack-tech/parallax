@@ -275,7 +275,7 @@ func makeExtraData(extra []byte) []byte {
 		// create default extradata
 		extra, _ = rlp.EncodeToBytes([]any{
 			uint(parallax.VersionMajor<<16 | parallax.VersionMinor<<8 | parallax.VersionPatch),
-			"prlx",
+			"parallax",
 			runtime.Version(),
 			runtime.GOOS,
 		})

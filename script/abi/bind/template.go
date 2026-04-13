@@ -578,7 +578,7 @@ const tmplSourceJava = `
 
 package {{.Package}};
 
-import org.parallax.prlx.*;
+import org.parallax.parallax.*;
 import java.util.*;
 
 {{$structs := .Structs}}

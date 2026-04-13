@@ -109,7 +109,7 @@ func (am *Manager) Config() *Config {
 }
 
 // AddBackend starts the tracking of an additional backend for wallet updates.
-// cmd/prlx assumes once this func returns the backends have been already integrated.
+// cmd/parallax assumes once this func returns the backends have been already integrated.
 func (am *Manager) AddBackend(backend Backend) {
 	done := make(chan struct{})
 	am.newBackends <- newBackendEvent{backend, done}

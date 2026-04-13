@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package remotedb implements the key-value database layer based on a remote prlx
+// Package remotedb implements the key-value database layer based on a remote parallax
 // node. Under the hood, it utilises the `debug_dbGet` method to implement a
 // read-only database.
-// There really are no guarantees in this database, since the local prlx does not
+// There really are no guarantees in this database, since the local parallax does not
 // exclusive access, but it can be used for basic diagnostics of a remote node.
 package remotedb
 

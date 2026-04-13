@@ -64,19 +64,19 @@ import (
 )
 
 var (
-	// Files that end up in the prlx*.zip archive.
-	prlxArchiveFiles = []string{
+	// Files that end up in the parallax*.zip archive.
+	parallaxArchiveFiles = []string{
 		"COPYING",
-		executablePath("prlx"),
+		executablePath("parallax"),
 	}
 
-	// Files that end up in the prlx-alltools*.zip archive.
+	// Files that end up in the parallax-alltools*.zip archive.
 	allToolsArchiveFiles = []string{
 		"COPYING",
 		executablePath("abigen"),
 		executablePath("bootnode"),
 		executablePath("pvm"),
-		executablePath("prlx"),
+		executablePath("parallax"),
 		executablePath("rlpdump"),
 		executablePath("clef"),
 	}
@@ -96,7 +96,7 @@ var (
 			Description: "Developer utility version of the PVM (Parallax Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode.",
 		},
 		{
-			BinaryName:  "prlx",
+			BinaryName:  "parallax",
 			Description: "Parallax CLI client.",
 		},
 		{
@@ -111,7 +111,7 @@ var (
 
 	// A debian package is created for all executables listed here.
 	debParallax = debPackage{
-		Name:        "prlx",
+		Name:        "parallax",
 		Version:     parallax.Version,
 		Executables: debExecutables,
 	}
@@ -386,7 +386,7 @@ func doArchive(cmdline []string) {
 		atype   = flag.String("type", "zip", "Type of archive to write (zip|tar)")
 		signer  = flag.String("signer", "", `Environment variable holding the signing key (e.g. LINUX_SIGNING_KEY)`)
 		signify = flag.String("signify", "", `Environment variable holding the signify key (e.g. LINUX_SIGNIFY_KEY)`)
-		upload  = flag.String("upload", "", `Destination to upload the archives (usually "prlxstore/builds")`)
+		upload  = flag.String("upload", "", `Destination to upload the archives (usually "parallaxstore/builds")`)
 		ext     string
 	)
 	flag.CommandLine.Parse(cmdline)
@@ -401,18 +401,18 @@ func doArchive(cmdline []string) {
 
 	var (
 		env      = build.Env()
-		baseprlx = archiveBasename(*arch, parallax.ArchiveVersion(env.Commit))
-		prlx     = "prlx-" + baseprlx + ext
-		alltools = "prlx-alltools-" + baseprlx + ext
+		baseparallax = archiveBasename(*arch, parallax.ArchiveVersion(env.Commit))
+		parallax     = "parallax-" + baseparallax + ext
+		alltools = "parallax-alltools-" + baseparallax + ext
 	)
 	maybeSkipArchive(env)
-	if err := build.WriteArchive(prlx, prlxArchiveFiles); err != nil {
+	if err := build.WriteArchive(parallax, parallaxArchiveFiles); err != nil {
 		log.Fatal(err)
 	}
 	if err := build.WriteArchive(alltools, allToolsArchiveFiles); err != nil {
 		log.Fatal(err)
 	}
-	for _, archive := range []string{prlx, alltools} {
+	for _, archive := range []string{parallax, alltools} {
 		if err := archiveUpload(archive, *upload, *signer, *signify); err != nil {
 			log.Fatal(err)
 		}
@@ -443,7 +443,7 @@ func archiveUpload(archive string, blobstore string, signer string, signifyVar s
 	}
 	if signifyVar != "" {
 		key := os.Getenv(signifyVar)
-		untrustedComment := "verify with prlx-release.pub"
+		untrustedComment := "verify with parallax-release.pub"
 		trustedComment := fmt.Sprintf("%s (%s)", archive, time.Now().UTC().Format(time.RFC1123))
 		if err := signify.SignFile(archive, archive+".sig", key, untrustedComment, trustedComment); err != nil {
 			return err
@@ -512,14 +512,14 @@ func doDocker(cmdline []string) {
 		build.MustRun(auther)
 	}
 	// Retrieve the version infos to build and push to the following paths:
-	//  - parallax/client-go:latest                            - Pushes to the master branch, Prlx only
-	//  - parallax/client-go:stable                            - Version tag publish on GitHub, Prlx only
-	//  - parallax/client-go:alltools-latest                   - Pushes to the master branch, Prlx & tools
-	//  - parallax/client-go:alltools-stable                   - Version tag publish on GitHub, Prlx & tools
-	//  - parallax/client-go:release-<major>.<minor>           - Version tag publish on GitHub, Prlx only
-	//  - parallax/client-go:alltools-release-<major>.<minor>  - Version tag publish on GitHub, Prlx & tools
-	//  - parallax/client-go:v<major>.<minor>.<patch>          - Version tag publish on GitHub, Prlx only
-	//  - parallax/client-go:alltools-v<major>.<minor>.<patch> - Version tag publish on GitHub, Prlx & tools
+	//  - parallax/client-go:latest                            - Pushes to the master branch, Parallax only
+	//  - parallax/client-go:stable                            - Version tag publish on GitHub, Parallax only
+	//  - parallax/client-go:alltools-latest                   - Pushes to the master branch, Parallax & tools
+	//  - parallax/client-go:alltools-stable                   - Version tag publish on GitHub, Parallax & tools
+	//  - parallax/client-go:release-<major>.<minor>           - Version tag publish on GitHub, Parallax only
+	//  - parallax/client-go:alltools-release-<major>.<minor>  - Version tag publish on GitHub, Parallax & tools
+	//  - parallax/client-go:v<major>.<minor>.<patch>          - Version tag publish on GitHub, Parallax only
+	//  - parallax/client-go:alltools-v<major>.<minor>.<patch> - Version tag publish on GitHub, Parallax & tools
 	var tags []string
 
 	switch {
@@ -535,7 +535,7 @@ func doDocker(cmdline []string) {
 
 		// Tag and upload the images to Docker Hub
 		for _, tag := range tags {
-			prlxImage := fmt.Sprintf("%s:%s-%s", *upload, tag, runtime.GOARCH)
+			parallaxImage := fmt.Sprintf("%s:%s-%s", *upload, tag, runtime.GOARCH)
 			toolImage := fmt.Sprintf("%s:alltools-%s-%s", *upload, tag, runtime.GOARCH)
 
 			// If the image already exists (non version tag), check the build
@@ -543,7 +543,7 @@ func doDocker(cmdline []string) {
 			// are running. This is still a tiny bit racey if two published are
 			// done at the same time, but that's extremely unlikely even on the
 			// master branch.
-			for _, img := range []string{prlxImage, toolImage} {
+			for _, img := range []string{parallaxImage, toolImage} {
 				if exec.Command("docker", "pull", img).Run() != nil {
 					continue // Generally the only failure is a missing image, which is good
 				}
@@ -569,9 +569,9 @@ func doDocker(cmdline []string) {
 					}
 				}
 			}
-			build.MustRunCommand("docker", "image", "tag", fmt.Sprintf("%s:TAG", *upload), prlxImage)
+			build.MustRunCommand("docker", "image", "tag", fmt.Sprintf("%s:TAG", *upload), parallaxImage)
 			build.MustRunCommand("docker", "image", "tag", fmt.Sprintf("%s:alltools-TAG", *upload), toolImage)
-			build.MustRunCommand("docker", "push", prlxImage)
+			build.MustRunCommand("docker", "push", parallaxImage)
 			build.MustRunCommand("docker", "push", toolImage)
 		}
 	}
@@ -585,10 +585,10 @@ func doDocker(cmdline []string) {
 
 			for _, tag := range tags {
 				for _, arch := range strings.Split(*manifest, ",") {
-					prlxImage := fmt.Sprintf("%s:%s-%s", *upload, tag, arch)
+					parallaxImage := fmt.Sprintf("%s:%s-%s", *upload, tag, arch)
 					toolImage := fmt.Sprintf("%s:alltools-%s-%s", *upload, tag, arch)
 
-					for _, img := range []string{prlxImage, toolImage} {
+					for _, img := range []string{parallaxImage, toolImage} {
 						if out, err := exec.Command("docker", "pull", img).CombinedOutput(); err != nil {
 							log.Printf("Required image %s unavailable: %v\nOutput: %s", img, err, out)
 							mismatch = true
@@ -630,16 +630,16 @@ func doDocker(cmdline []string) {
 			log.Println("Relinquishing publish to other builder")
 			return
 		}
-		// Assemble and push the Prlx manifest image
+		// Assemble and push the Parallax manifest image
 		for _, tag := range tags {
-			prlxImage := fmt.Sprintf("%s:%s", *upload, tag)
+			parallaxImage := fmt.Sprintf("%s:%s", *upload, tag)
 
-			var prlxSubImages []string
+			var parallaxSubImages []string
 			for _, arch := range strings.Split(*manifest, ",") {
-				prlxSubImages = append(prlxSubImages, prlxImage+"-"+arch)
+				parallaxSubImages = append(parallaxSubImages, parallaxImage+"-"+arch)
 			}
-			build.MustRunCommand("docker", append([]string{"manifest", "create", prlxImage}, prlxSubImages...)...)
-			build.MustRunCommand("docker", "manifest", "push", prlxImage)
+			build.MustRunCommand("docker", append([]string{"manifest", "create", parallaxImage}, parallaxSubImages...)...)
+			build.MustRunCommand("docker", "manifest", "push", parallaxImage)
 		}
 		// Assemble and push the alltools manifest image
 		for _, tag := range tags {
@@ -661,7 +661,7 @@ func doDebianSource(cmdline []string) {
 		cachedir = flag.String("cachedir", "./build/cache", `Filesystem path to cache the downloaded Go bundles at`)
 		signer   = flag.String("signer", "", `Signing key name, also used as package author`)
 		upload   = flag.String("upload", "", `Where to upload the source package (usually "ethereum/ethereum")`)
-		sshUser  = flag.String("sftp-user", "", `Username for SFTP upload (usually "prlx-ci")`)
+		sshUser  = flag.String("sftp-user", "", `Username for SFTP upload (usually "parallax-ci")`)
 		workdir  = flag.String("workdir", "", `Output directory for packages (uses temp dir if unset)`)
 		now      = time.Now()
 	)
@@ -780,7 +780,7 @@ func makeWorkdir(wdflag string) string {
 	if wdflag != "" {
 		err = os.MkdirAll(wdflag, 0744)
 	} else {
-		wdflag, err = os.MkdirTemp("", "prlx-build-")
+		wdflag, err = os.MkdirTemp("", "parallax-build-")
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -939,7 +939,7 @@ func doWindowsInstaller(cmdline []string) {
 		arch    = flag.String("arch", runtime.GOARCH, "Architecture for cross build packaging")
 		signer  = flag.String("signer", "", `Environment variable holding the signing key (e.g. WINDOWS_SIGNING_KEY)`)
 		signify = flag.String("signify key", "", `Environment variable holding the signify signing key (e.g. WINDOWS_SIGNIFY_KEY)`)
-		upload  = flag.String("upload", "", `Destination to upload the archives (usually "prlxstore/builds")`)
+		upload  = flag.String("upload", "", `Destination to upload the archives (usually "parallaxstore/builds")`)
 		workdir = flag.String("workdir", "", `Output directory for packages (uses temp dir if unset)`)
 	)
 	flag.CommandLine.Parse(cmdline)
@@ -951,28 +951,28 @@ func doWindowsInstaller(cmdline []string) {
 	var (
 		devTools []string
 		allTools []string
-		prlxTool string
+		parallaxTool string
 	)
 	for _, file := range allToolsArchiveFiles {
 		if file == "COPYING" { // license, copied later
 			continue
 		}
 		allTools = append(allTools, filepath.Base(file))
-		if filepath.Base(file) == "prlx.exe" {
-			prlxTool = file
+		if filepath.Base(file) == "parallax.exe" {
+			parallaxTool = file
 		} else {
 			devTools = append(devTools, file)
 		}
 	}
 
 	// Render NSIS scripts: Installer NSIS contains two installer sections,
-	// first section contains the prlx binary, second section holds the dev tools.
+	// first section contains the parallax binary, second section holds the dev tools.
 	templateData := map[string]any{
 		"License":  "COPYING",
-		"Prlx":     prlxTool,
+		"Parallax":     parallaxTool,
 		"DevTools": devTools,
 	}
-	build.Render("build/nsis.prlx.nsi", filepath.Join(*workdir, "prlx.nsi"), 0644, nil)
+	build.Render("build/nsis.parallax.nsi", filepath.Join(*workdir, "parallax.nsi"), 0644, nil)
 	build.Render("build/nsis.install.nsh", filepath.Join(*workdir, "install.nsh"), 0644, templateData)
 	build.Render("build/nsis.uninstall.nsh", filepath.Join(*workdir, "uninstall.nsh"), 0644, allTools)
 	build.Render("build/nsis.pathupdate.nsh", filepath.Join(*workdir, "PathUpdate.nsh"), 0644, nil)
@@ -990,14 +990,14 @@ func doWindowsInstaller(cmdline []string) {
 	if env.Commit != "" {
 		version[2] += "-" + env.Commit[:8]
 	}
-	installer, _ := filepath.Abs("prlx-" + archiveBasename(*arch, parallax.ArchiveVersion(env.Commit)) + ".exe")
+	installer, _ := filepath.Abs("parallax-" + archiveBasename(*arch, parallax.ArchiveVersion(env.Commit)) + ".exe")
 	build.MustRunCommand("makensis.exe",
 		"/DOUTPUTFILE="+installer,
 		"/DMAJORVERSION="+version[0],
 		"/DMINORVERSION="+version[1],
 		"/DBUILDVERSION="+version[2],
 		"/DARCH="+*arch,
-		filepath.Join(*workdir, "prlx.nsi"),
+		filepath.Join(*workdir, "parallax.nsi"),
 	)
 	// Sign and publish installer.
 	if err := archiveUpload(installer, *upload, *signer, *signify); err != nil {
@@ -1013,7 +1013,7 @@ func doAndroidArchive(cmdline []string) {
 		signer  = flag.String("signer", "", `Environment variable holding the signing key (e.g. ANDROID_SIGNING_KEY)`)
 		signify = flag.String("signify", "", `Environment variable holding the signify signing key (e.g. ANDROID_SIGNIFY_KEY)`)
 		deploy  = flag.String("deploy", "", `Destination to deploy the archive (usually "https://oss.sonatype.org")`)
-		upload  = flag.String("upload", "", `Destination to upload the archive (usually "prlxstore/builds")`)
+		upload  = flag.String("upload", "", `Destination to upload the archive (usually "parallaxstore/builds")`)
 	)
 	flag.CommandLine.Parse(cmdline)
 	env := build.Env()
@@ -1038,8 +1038,8 @@ func doAndroidArchive(cmdline []string) {
 
 	if *local {
 		// If we're building locally, copy bundle to build dir and skip Maven
-		os.Rename("prlx.aar", filepath.Join(GOBIN, "prlx.aar"))
-		os.Rename("prlx-sources.jar", filepath.Join(GOBIN, "prlx-sources.jar"))
+		os.Rename("parallax.aar", filepath.Join(GOBIN, "parallax.aar"))
+		os.Rename("parallax-sources.jar", filepath.Join(GOBIN, "parallax-sources.jar"))
 		return
 	}
 	meta := newMavenMetadata(env)
@@ -1049,8 +1049,8 @@ func doAndroidArchive(cmdline []string) {
 	maybeSkipArchive(env)
 
 	// Sign and upload the archive to Azure
-	archive := "prlx-" + archiveBasename("android", parallax.ArchiveVersion(env.Commit)) + ".aar"
-	os.Rename("prlx.aar", archive)
+	archive := "parallax-" + archiveBasename("android", parallax.ArchiveVersion(env.Commit)) + ".aar"
+	os.Rename("parallax.aar", archive)
 
 	if err := archiveUpload(archive, *upload, *signer, *signify); err != nil {
 		log.Fatal(err)
@@ -1135,7 +1135,7 @@ func newMavenMetadata(env build.Environment) mavenMetadata {
 	}
 	return mavenMetadata{
 		Version:      version,
-		Package:      "prlx-" + version,
+		Package:      "parallax-" + version,
 		Develop:      isUnstableBuild(env),
 		Contributors: contribs,
 	}
@@ -1149,7 +1149,7 @@ func doXCodeFramework(cmdline []string) {
 		signer  = flag.String("signer", "", `Environment variable holding the signing key (e.g. IOS_SIGNING_KEY)`)
 		signify = flag.String("signify", "", `Environment variable holding the signify signing key (e.g. IOS_SIGNIFY_KEY)`)
 		deploy  = flag.String("deploy", "", `Destination to deploy the archive (usually "trunk")`)
-		upload  = flag.String("upload", "", `Destination to upload the archives (usually "prlxstore/builds")`)
+		upload  = flag.String("upload", "", `Destination to upload the archives (usually "parallaxstore/builds")`)
 	)
 	flag.CommandLine.Parse(cmdline)
 	env := build.Env()
@@ -1170,7 +1170,7 @@ func doXCodeFramework(cmdline []string) {
 
 	// Create the archive.
 	maybeSkipArchive(env)
-	archive := "prlx-" + archiveBasename("ios", parallax.ArchiveVersion(env.Commit))
+	archive := "parallax-" + archiveBasename("ios", parallax.ArchiveVersion(env.Commit))
 	if err := os.MkdirAll(archive, 0755); err != nil {
 		log.Fatal(err)
 	}
@@ -1185,8 +1185,8 @@ func doXCodeFramework(cmdline []string) {
 	// Prepare and upload a PodSpec to CocoaPods
 	if *deploy != "" {
 		meta := newPodMetadata(env, archive)
-		build.Render("build/pod.podspec", "Prlx.podspec", 0755, meta)
-		build.MustRunCommand("pod", *deploy, "push", "Prlx.podspec", "--allow-warnings")
+		build.Render("build/pod.podspec", "Parallax.podspec", 0755, meta)
+		build.MustRunCommand("pod", *deploy, "push", "Parallax.podspec", "--allow-warnings")
 	}
 }
 
@@ -1239,7 +1239,7 @@ func newPodMetadata(env build.Environment, archive string) podMetadata {
 
 func doPurge(cmdline []string) {
 	var (
-		store = flag.String("store", "", `Destination from where to purge archives (usually "prlxstore/builds")`)
+		store = flag.String("store", "", `Destination from where to purge archives (usually "parallaxstore/builds")`)
 		limit = flag.Int("days", 30, `Age threshold above which to delete unstable archives`)
 	)
 	flag.CommandLine.Parse(cmdline)

@@ -78,7 +78,7 @@ func runPrlx(t *testing.T, args ...string) *testprlx {
 		args = append([]string{"--datadir", tt.Datadir}, args...)
 	}
 
-	// Boot "prlx". This actually runs the test binary but the TestMain
+	// Boot "parallax". This actually runs the test binary but the TestMain
 	// function will prevent any tests from running.
 	tt.Run("prlx-test", args...)
 
