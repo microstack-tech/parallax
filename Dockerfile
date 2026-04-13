@@ -14,16 +14,16 @@ COPY go.sum /parallax/
 RUN cd /parallax && go mod download
 
 ADD . /parallax
-RUN cd /parallax && go run build/ci.go install ./cmd/prlx
+RUN cd /parallax && go run build/ci.go install ./cmd/parallax
 
 # Pull Prlx into a second stage deploy alpine container
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /parallax/build/bin/prlx /usr/local/bin/
+COPY --from=builder /parallax/build/bin/parallax /usr/local/bin/
 
 EXPOSE 8545 8546 32110 32110/udp
-ENTRYPOINT ["prlx"]
+ENTRYPOINT ["parallax"]
 
 # Add some metadata labels to help programatic image consumption
 ARG COMMIT=""
