@@ -30,7 +30,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
-	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
 )
 
@@ -320,7 +319,7 @@ func ServiceGetAccountRangeQuery(chain *validation.BlockChain, req *GetAccountRa
 	it.Release()
 
 	// Generate the Merkle proofs for the first and last account
-	proof := light.NewNodeSet()
+	proof := trie.NewNodeSet()
 	if err := tr.Prove(req.Origin[:], 0, proof); err != nil {
 		logging.Warn("Failed to prove account range", "origin", req.Origin, "err", err)
 		return nil, nil
@@ -425,7 +424,7 @@ func ServiceGetStorageRangesQuery(chain *validation.BlockChain, req *GetStorageR
 			if err != nil {
 				return nil, nil
 			}
-			proof := light.NewNodeSet()
+			proof := trie.NewNodeSet()
 			if err := stTrie.Prove(origin[:], 0, proof); err != nil {
 				logging.Warn("Failed to prove storage range", "origin", req.Origin, "err", err)
 				return nil, nil

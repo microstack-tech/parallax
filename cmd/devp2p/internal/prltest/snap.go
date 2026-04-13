@@ -26,7 +26,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
 )
@@ -505,7 +504,7 @@ func (s *Suite) snapGetAccountRange(t *utesting.T, tc *accRangeTest) error {
 	for i, key := range hashes {
 		keys[i] = util.CopyBytes(key[:])
 	}
-	nodes := make(light.NodeList, len(proof))
+	nodes := make(trie.NodeList, len(proof))
 	for i, node := range proof {
 		nodes[i] = node
 	}

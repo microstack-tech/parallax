@@ -93,16 +93,7 @@ var (
 		utils.GCModeFlag,
 		utils.SnapshotFlag,
 		utils.TxLookupLimitFlag,
-		utils.LightServeFlag,
-		utils.LightIngressFlag,
-		utils.LightEgressFlag,
-		utils.LightMaxPeersFlag,
-		utils.LightNoPruneFlag,
 		utils.LightKDFFlag,
-		utils.UltraLightServersFlag,
-		utils.UltraLightFractionFlag,
-		utils.UltraLightOnlyAnnounceFlag,
-		utils.LightNoSyncServeFlag,
 		utils.PrlRequiredBlocksFlag,
 		utils.LegacyWhitelistFlag,
 		utils.BloomFilterSizeFlag,
@@ -303,11 +294,6 @@ func prepare(ctx *cli.Context) {
 			ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(4096))
 		}
 	}
-	// If we're running a light client on any network, drop the cache to some meaningfully low amount
-	if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" && !ctx.GlobalIsSet(utils.CacheFlag.Name) {
-		logging.Info("Dropping default light client cache", "provided", ctx.GlobalInt(utils.CacheFlag.Name), "updated", 128)
-		ctx.GlobalSet(utils.CacheFlag.Name, strconv.Itoa(128))
-	}
 
 	// Start metrics export if enabled
 	utils.SetupMetrics(ctx)
@@ -413,10 +399,6 @@ func startNode(ctx *cli.Context, stack *node.Node, backend api.Backend, isConsol
 
 	// Start auxiliary services if enabled
 	if ctx.GlobalBool(utils.MiningEnabledFlag.Name) || ctx.GlobalBool(utils.DeveloperFlag.Name) {
-		// Mining only makes sense if a full Parallax node is running
-		if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
-			utils.Fatalf("Light clients do not support mining")
-		}
 		parallaxBackend, ok := backend.(*protocol.PrlAPIBackend)
 		if !ok {
 			utils.Fatalf("Parallax service not running")

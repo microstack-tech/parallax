@@ -36,7 +36,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/validation/state"
 	"github.com/ParallaxProtocol/parallax/validation/state/snapshot"
@@ -2294,7 +2293,7 @@ func (s *Syncer) OnAccounts(peer SyncPeer, id uint64, hashes []util.Hash, accoun
 	for i, key := range hashes {
 		keys[i] = util.CopyBytes(key[:])
 	}
-	nodes := make(light.NodeList, len(proof))
+	nodes := make(trie.NodeList, len(proof))
 	for i, node := range proof {
 		nodes[i] = node
 	}
@@ -2531,7 +2530,7 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]util.Hash, slots
 		for j, key := range hashes[i] {
 			keys[j] = util.CopyBytes(key[:])
 		}
-		nodes := make(light.NodeList, 0, len(proof))
+		nodes := make(trie.NodeList, 0, len(proof))
 		if i == len(hashes)-1 {
 			for _, node := range proof {
 				nodes = append(nodes, node)

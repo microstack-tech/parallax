@@ -40,7 +40,7 @@ var (
 
 const (
 	// maxBlockFetchers is the max number of goroutines to spin up to pull blocks
-	// for the fee history calculation (mostly relevant for LPS).
+	// for the fee history calculation
 	maxBlockFetchers = 4
 )
 

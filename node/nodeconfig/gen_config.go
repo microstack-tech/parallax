@@ -27,16 +27,7 @@ func (c Config) MarshalTOML() (any, error) {
 		NoPrefetch                      bool
 		TxLookupLimit                   uint64               `toml:",omitempty"`
 		RequiredBlocks                  map[uint64]util.Hash `toml:"-"`
-		LightServ                       int                  `toml:",omitempty"`
-		LightIngress                    int                  `toml:",omitempty"`
-		LightEgress                     int                  `toml:",omitempty"`
-		LightPeers                      int                  `toml:",omitempty"`
-		LightNoPrune                    bool                 `toml:",omitempty"`
-		LightNoSyncServe                bool                 `toml:",omitempty"`
 		SyncFromCheckpoint              bool                 `toml:",omitempty"`
-		UltraLightServers               []string             `toml:",omitempty"`
-		UltraLightFraction              int                  `toml:",omitempty"`
-		UltraLightOnlyAnnounce          bool                 `toml:",omitempty"`
 		SkipBcVersionCheck              bool                 `toml:"-"`
 		DatabaseHandles                 int                  `toml:"-"`
 		DatabaseCache                   int
@@ -72,16 +63,7 @@ func (c Config) MarshalTOML() (any, error) {
 	enc.NoPrefetch = c.NoPrefetch
 	enc.TxLookupLimit = c.TxLookupLimit
 	enc.RequiredBlocks = c.RequiredBlocks
-	enc.LightServ = c.LightServ
-	enc.LightIngress = c.LightIngress
-	enc.LightEgress = c.LightEgress
-	enc.LightPeers = c.LightPeers
-	enc.LightNoPrune = c.LightNoPrune
-	enc.LightNoSyncServe = c.LightNoSyncServe
 	enc.SyncFromCheckpoint = c.SyncFromCheckpoint
-	enc.UltraLightServers = c.UltraLightServers
-	enc.UltraLightFraction = c.UltraLightFraction
-	enc.UltraLightOnlyAnnounce = c.UltraLightOnlyAnnounce
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
 	enc.DatabaseHandles = c.DatabaseHandles
 	enc.DatabaseCache = c.DatabaseCache
@@ -119,16 +101,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(any) error) error {
 		NoPrefetch              *bool
 		TxLookupLimit           *uint64              `toml:",omitempty"`
 		RequiredBlocks          map[uint64]util.Hash `toml:"-"`
-		LightServ               *int                 `toml:",omitempty"`
-		LightIngress            *int                 `toml:",omitempty"`
-		LightEgress             *int                 `toml:",omitempty"`
-		LightPeers              *int                 `toml:",omitempty"`
-		LightNoPrune            *bool                `toml:",omitempty"`
-		LightNoSyncServe        *bool                `toml:",omitempty"`
 		SyncFromCheckpoint      *bool                `toml:",omitempty"`
-		UltraLightServers       []string             `toml:",omitempty"`
-		UltraLightFraction      *int                 `toml:",omitempty"`
-		UltraLightOnlyAnnounce  *bool                `toml:",omitempty"`
 		SkipBcVersionCheck      *bool                `toml:"-"`
 		DatabaseHandles         *int                 `toml:"-"`
 		DatabaseCache           *int
@@ -183,35 +156,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(any) error) error {
 	if dec.RequiredBlocks != nil {
 		c.RequiredBlocks = dec.RequiredBlocks
 	}
-	if dec.LightServ != nil {
-		c.LightServ = *dec.LightServ
-	}
-	if dec.LightIngress != nil {
-		c.LightIngress = *dec.LightIngress
-	}
-	if dec.LightEgress != nil {
-		c.LightEgress = *dec.LightEgress
-	}
-	if dec.LightPeers != nil {
-		c.LightPeers = *dec.LightPeers
-	}
-	if dec.LightNoPrune != nil {
-		c.LightNoPrune = *dec.LightNoPrune
-	}
-	if dec.LightNoSyncServe != nil {
-		c.LightNoSyncServe = *dec.LightNoSyncServe
-	}
 	if dec.SyncFromCheckpoint != nil {
 		c.SyncFromCheckpoint = *dec.SyncFromCheckpoint
-	}
-	if dec.UltraLightServers != nil {
-		c.UltraLightServers = dec.UltraLightServers
-	}
-	if dec.UltraLightFraction != nil {
-		c.UltraLightFraction = *dec.UltraLightFraction
-	}
-	if dec.UltraLightOnlyAnnounce != nil {
-		c.UltraLightOnlyAnnounce = *dec.UltraLightOnlyAnnounce
 	}
 	if dec.SkipBcVersionCheck != nil {
 		c.SkipBcVersionCheck = *dec.SkipBcVersionCheck

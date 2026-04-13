@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package prlconfig contains the configuration of the Parallax and LPS protocols.
+// Package prlconfig contains the configuration of the Parallax protocol.
 package nodeconfig
 
 import (
@@ -50,16 +50,6 @@ var FullNodeGPO = fees.Config{
 	EnableSmartFeeEstimator: true,
 }
 
-// LightClientGPO contains default gasprice oracle settings for light client.
-var LightClientGPO = fees.Config{
-	Blocks:           2,
-	Percentile:       60,
-	MaxHeaderHistory: 300,
-	MaxBlockHistory:  5,
-	MaxPrice:         fees.DefaultMaxPrice,
-	IgnorePrice:      fees.DefaultIgnorePrice,
-}
-
 // Note: The new Bitcoin Core-style fee estimation fields (NumBuckets, BucketMultiplier,
 // MinBucketFee, MaxConfTarget, SuccessThreshold, ShortDecay, MediumDecay, LongDecay)
 // use sensible defaults defined in the gasprice package when left at zero values.
@@ -78,8 +68,6 @@ var Defaults = Config{
 	},
 	NetworkId:               2110,
 	TxLookupLimit:           52560,
-	LightPeers:              100,
-	UltraLightFraction:      75,
 	DatabaseCache:           512,
 	TrieCleanCache:          154,
 	TrieCleanCacheJournal:   "triecache",
@@ -122,7 +110,7 @@ func init() {
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
 
-// Config contains configuration options for of the Parallax and LPS protocols.
+// Config contains configuration options for the Parallax protocol.
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
 	// If nil, the Parallax main net block is used.
@@ -148,18 +136,9 @@ type Config struct {
 	RequiredBlocks map[uint64]util.Hash `toml:"-"`
 
 	// Light client options
-	LightServ          int  `toml:",omitempty"` // Maximum percentage of time allowed for serving LPS requests
-	LightIngress       int  `toml:",omitempty"` // Incoming bandwidth limit for light servers
-	LightEgress        int  `toml:",omitempty"` // Outgoing bandwidth limit for light servers
-	LightPeers         int  `toml:",omitempty"` // Maximum number of LES client peers
-	LightNoPrune       bool `toml:",omitempty"` // Whether to disable light chain pruning
-	LightNoSyncServe   bool `toml:",omitempty"` // Whether to serve light clients before syncing
 	SyncFromCheckpoint bool `toml:",omitempty"` // Whether to sync the header chain from the configured checkpoint
 
 	// Ultra Light client options
-	UltraLightServers      []string `toml:",omitempty"` // List of trusted ultra light servers
-	UltraLightFraction     int      `toml:",omitempty"` // Percentage of trusted servers to accept an announcement
-	UltraLightOnlyAnnounce bool     `toml:",omitempty"` // Whether to only announce headers, or also serve them
 
 	// Database options
 	SkipBcVersionCheck bool `toml:"-"`

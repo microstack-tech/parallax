@@ -439,7 +439,7 @@ func (f *BlockFetcher) loop() {
 			request := make(map[string][]util.Hash)
 
 			for hash, announces := range f.announced {
-				// In current LPS protocol(les2/les3), only header announce is
+				// In the current protocol, only header announce is
 				// available, no need to wait too much time for header broadcast.
 				timeout := arriveTimeout - gatherSlack
 				if f.light {

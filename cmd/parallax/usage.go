@@ -50,20 +50,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		}, utils.NetworkFlags, utils.DatabasePathFlags),
 	},
 	{
-		Name: "LIGHT CLIENT",
-		Flags: []cli.Flag{
-			utils.LightServeFlag,
-			utils.LightIngressFlag,
-			utils.LightEgressFlag,
-			utils.LightMaxPeersFlag,
-			utils.UltraLightServersFlag,
-			utils.UltraLightFractionFlag,
-			utils.UltraLightOnlyAnnounceFlag,
-			utils.LightNoPruneFlag,
-			utils.LightNoSyncServeFlag,
-		},
-	},
-	{
 		Name: "DEVELOPER CHAIN",
 		Flags: []cli.Flag{
 			utils.DeveloperFlag,

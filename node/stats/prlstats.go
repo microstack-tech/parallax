@@ -34,7 +34,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	les "github.com/ParallaxProtocol/parallax/node/light"
 	"github.com/ParallaxProtocol/parallax/node/miner"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	ethproto "github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
@@ -470,12 +469,7 @@ func (s *Service) login(conn *connWrapper) error {
 	for _, proto := range s.server.Protocols {
 		protocols = append(protocols, fmt.Sprintf("%s/%d", proto.Name, proto.Version))
 	}
-	var network string
-	if info := infos.Protocols["parallax"]; info != nil {
-		network = fmt.Sprintf("%d", info.(*ethproto.NodeInfo).Network)
-	} else {
-		network = fmt.Sprintf("%d", infos.Protocols["les"].(*les.NodeInfo).Network)
-	}
+	network := fmt.Sprintf("%d", infos.Protocols["parallax"].(*ethproto.NodeInfo).Network)
 	auth := &authMsg{
 		ID: s.node,
 		Info: nodeInfo{

@@ -33,7 +33,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/light"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
@@ -264,7 +263,7 @@ func createAccountRequestResponse(t *testPeer, _ util.Hash, origin util.Hash, li
 	// Unless we send the entire trie, we need to supply proofs
 	// Actually, we need to supply proofs either way! This seems to be an implementation
 	// quirk in parallax
-	proof := light.NewNodeSet()
+	proof := trie.NewNodeSet()
 	if err := t.accountTrie.Prove(origin[:], 0, proof); err != nil {
 		t.logger.Error("Could not prove inexistence of origin", "origin", origin, "error", err)
 	}
@@ -344,7 +343,7 @@ func createStorageRequestResponse(t *testPeer, _ util.Hash, accounts []util.Hash
 		if originHash != (util.Hash{}) || (abort && len(keys) > 0) {
 			// If we're aborting, we need to prove the first and last item
 			// This terminates the response (and thus the loop)
-			proof := light.NewNodeSet()
+			proof := trie.NewNodeSet()
 			stTrie := t.storageTries[account]
 
 			// Here's a potential gotcha: when constructing the proof, we cannot
@@ -403,7 +402,7 @@ func createStorageRequestResponseAlwaysProve(t *testPeer, _ util.Hash, accounts 
 		if exit {
 			// If we're aborting, we need to prove the first and last item
 			// This terminates the response (and thus the loop)
-			proof := light.NewNodeSet()
+			proof := trie.NewNodeSet()
 			stTrie := t.storageTries[account]
 
 			// Here's a potential gotcha: when constructing the proof, we cannot
@@ -586,7 +585,7 @@ func TestSyncBloatedProof(t *testing.T) {
 			vals = append(vals, entry.v)
 		}
 		// The proofs
-		proof := light.NewNodeSet()
+		proof := trie.NewNodeSet()
 		if err := t.accountTrie.Prove(origin[:], 0, proof); err != nil {
 			t.logger.Error("Could not prove origin", "origin", origin, "error", err)
 		}
