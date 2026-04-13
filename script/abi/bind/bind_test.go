@@ -1823,7 +1823,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, nodeconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 
@@ -1893,7 +1893,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, nodeconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 	
@@ -1945,7 +1945,7 @@ var bindTests = []struct {
 			var (
 				key, _  = crypto.GenerateKey()
 				user, _ = bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, prlconfig.Defaults.Miner.GasCeil)
+				sim     = backends.NewSimulatedBackend(validation.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, nodeconfig.Defaults.Miner.GasCeil)
 			)
 			defer sim.Close()
 
@@ -2020,7 +2020,7 @@ func TestGolangBindings(t *testing.T) {
 		t.Fatalf("failed to convert binding test to modules: %v\n%s", err, out)
 	}
 	pwd, _ := os.Getwd()
-	replacer := exec.Command(gocmd, "mod", "edit", "-x", "-require", "github.com/ParallaxProtocol/parallax@v0.0.0", "-replace", "github.com/ParallaxProtocol/parallax="+filepath.Join(pwd, "..", "..")) // Repo root
+	replacer := exec.Command(gocmd, "mod", "edit", "-x", "-require", "github.com/ParallaxProtocol/parallax@v0.0.0", "-replace", "github.com/ParallaxProtocol/parallax="+filepath.Join(pwd, "..", "..", "..")) // Repo root
 	replacer.Dir = pkg
 	if out, err := replacer.CombinedOutput(); err != nil {
 		t.Fatalf("failed to replace binding test dependency to current source tree: %v\n%s", err, out)
