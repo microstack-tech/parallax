@@ -26,7 +26,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/consensus"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"

@@ -29,9 +29,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/node/console/prompt"
+	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	"github.com/ParallaxProtocol/parallax/node/miner"
-	"github.com/ParallaxProtocol/parallax/node/protocol"
-	"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation"
 )

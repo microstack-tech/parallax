@@ -26,7 +26,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/node/protocol/gasprice"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/gasprice"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/script"

@@ -32,8 +32,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/node/console/prompt"
-	"github.com/ParallaxProtocol/parallax/node/protocol"
-	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
+	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
 	client "github.com/ParallaxProtocol/parallax/rpc/client"
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -41,8 +41,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/wallet/keystore"
 
 	// Force-load the tracer engines to trigger registration
-	_ "github.com/ParallaxProtocol/parallax/node/protocol/tracers/js"
-	_ "github.com/ParallaxProtocol/parallax/node/protocol/tracers/native"
+	_ "github.com/ParallaxProtocol/parallax/node/fullnode/tracers/js"
+	_ "github.com/ParallaxProtocol/parallax/node/fullnode/tracers/native"
 
 	"gopkg.in/urfave/cli.v1"
 )

@@ -26,10 +26,10 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/les/vflux"
-	vfs "github.com/ParallaxProtocol/parallax/net/les/vflux/server"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/node/light/vflux"
+	vfs "github.com/ParallaxProtocol/parallax/node/light/vflux/server"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )

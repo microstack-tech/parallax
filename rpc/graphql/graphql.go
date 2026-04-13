@@ -27,7 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/kernel/misc"
-	"github.com/ParallaxProtocol/parallax/node/protocol/filters"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/filters"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"

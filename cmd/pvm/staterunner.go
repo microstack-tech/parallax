@@ -23,7 +23,7 @@ import (
 	"os"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/tests"
 	"github.com/ParallaxProtocol/parallax/validation/state"

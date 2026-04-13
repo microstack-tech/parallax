@@ -32,7 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/script/runtime"
 	"github.com/ParallaxProtocol/parallax/util"

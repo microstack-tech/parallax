@@ -16,7 +16,7 @@
 
 package prltest
 
-import "github.com/ParallaxProtocol/parallax/node/protocol/protocols/snap"
+import "github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
 
 // GetAccountRange represents an account range query.
 type GetAccountRange snap.GetAccountRangePacket

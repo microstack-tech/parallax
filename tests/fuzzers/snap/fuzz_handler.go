@@ -27,7 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/node/protocol/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/snap"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/util"

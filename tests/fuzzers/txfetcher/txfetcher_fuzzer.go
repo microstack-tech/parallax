@@ -23,7 +23,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/node/protocol/fetcher"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/fetcher"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"

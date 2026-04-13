@@ -1817,7 +1817,7 @@ var bindTests = []struct {
 			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
-			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
+			"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	   `,
 		`
 			var (
@@ -1887,7 +1887,7 @@ var bindTests = []struct {
 			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
-			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
+			"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 	   `,
 		`
 			var (
@@ -1939,7 +1939,7 @@ var bindTests = []struct {
 			"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
 			"github.com/ParallaxProtocol/parallax/validation"
 			"github.com/ParallaxProtocol/parallax/crypto"
-			"github.com/ParallaxProtocol/parallax/node/protocol/prlconfig"
+			"github.com/ParallaxProtocol/parallax/node/fullnode/prlconfig"
 		`,
 		tester: `
 			var (

@@ -30,7 +30,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/net/p2p"
-	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"

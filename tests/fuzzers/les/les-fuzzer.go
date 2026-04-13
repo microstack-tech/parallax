@@ -25,7 +25,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/xhash"
-	l "github.com/ParallaxProtocol/parallax/net/les"
+	l "github.com/ParallaxProtocol/parallax/node/light"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"

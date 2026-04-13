@@ -24,7 +24,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
 	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/node/protocol/downloader"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/support/event"

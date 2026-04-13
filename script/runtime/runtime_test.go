@@ -25,8 +25,8 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/kernel/consensus"
-	"github.com/ParallaxProtocol/parallax/node/protocol/tracers"
-	"github.com/ParallaxProtocol/parallax/node/protocol/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/script/abi"
@@ -37,7 +37,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/validation/state"
 
 	// force-load js tracers to trigger registration
-	_ "github.com/ParallaxProtocol/parallax/node/protocol/tracers/js"
+	_ "github.com/ParallaxProtocol/parallax/node/fullnode/tracers/js"
 )
 
 func TestDefaults(t *testing.T) {
