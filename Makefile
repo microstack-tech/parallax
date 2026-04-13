@@ -66,7 +66,7 @@ USE_DLGO ?= 1
 DLGO_FLAG := $(if $(filter 1 true yes,$(USE_DLGO)),-dlgo,)
 BUNDLE_PREFIX ?= parallax
 LICENSE_FILES ?= COPYING LICENSE
-CMDS_RELEASE := clef parallaxkey parallax
+CMDS_RELEASE := parallax
 
 # Build the helper once for the host
 $(CICMD): build/ci.go
