@@ -21,7 +21,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"

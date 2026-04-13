@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/net/p2p/nodestate"
 	"github.com/ParallaxProtocol/parallax/node/light/utils"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/nodestate"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 

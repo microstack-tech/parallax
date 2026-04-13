@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/net/p2p/nodestate"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/nodestate"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )

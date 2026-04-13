@@ -25,7 +25,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover/v4wire"
+	"github.com/ParallaxProtocol/parallax/p2p/discover/v4wire"
 )
 
 const (

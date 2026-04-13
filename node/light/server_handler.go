@@ -24,9 +24,9 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/node/light/flowcontrol"
 	"github.com/ParallaxProtocol/parallax/node/light/light"
+	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/support/metrics"

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"

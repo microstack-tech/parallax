@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover/v5wire"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/p2p/discover/v5wire"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 )
 
 // Suite is the discv5 test suite.

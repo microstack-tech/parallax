@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	vfs "github.com/ParallaxProtocol/parallax/node/light/vflux/server"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )

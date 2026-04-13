@@ -17,7 +17,7 @@
 package prl
 
 import (
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/validation"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"

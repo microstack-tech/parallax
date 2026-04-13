@@ -17,7 +17,7 @@
 package les
 
 import (
-	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/support/metrics"
 )
 

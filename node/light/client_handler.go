@@ -26,11 +26,11 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/netparams"
-	"github.com/ParallaxProtocol/parallax/net/p2p"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/node/light/downloader"
 	"github.com/ParallaxProtocol/parallax/node/light/light"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/netparams"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"

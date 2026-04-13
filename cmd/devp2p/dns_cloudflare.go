@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
 	"github.com/cloudflare/cloudflare-go"
 	"gopkg.in/urfave/cli.v1"
 )

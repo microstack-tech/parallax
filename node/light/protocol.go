@@ -24,8 +24,8 @@ import (
 	"math/big"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	vfc "github.com/ParallaxProtocol/parallax/node/light/vflux/client"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"

@@ -23,8 +23,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/cmd/devp2p/internal/prltest"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/net/p2p"
-	"github.com/ParallaxProtocol/parallax/net/p2p/rlpx"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"gopkg.in/urfave/cli.v1"
 )

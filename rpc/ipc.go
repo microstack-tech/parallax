@@ -21,7 +21,7 @@ import (
 	"net"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 )
 
 // ServeListener accepts connections on l, serving JSON-RPC on them.

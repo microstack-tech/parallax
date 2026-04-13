@@ -20,8 +20,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
 )

@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/util"
 )
 

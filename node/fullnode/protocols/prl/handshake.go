@@ -21,7 +21,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
 )

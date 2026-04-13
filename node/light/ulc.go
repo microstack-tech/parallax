@@ -20,7 +20,7 @@ import (
 	"errors"
 
 	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 type ulc struct {

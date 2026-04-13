@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
 	"gopkg.in/urfave/cli.v1"

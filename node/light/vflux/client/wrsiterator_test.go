@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/nodestate"
+	"github.com/ParallaxProtocol/parallax/p2p/nodestate"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 

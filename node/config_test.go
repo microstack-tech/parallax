@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p"
 )
 
 // Tests that datadirs can be successfully created, be them manually configured

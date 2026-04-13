@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
-	"github.com/ParallaxProtocol/parallax/net/p2p/nat"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/rpc"
 )
 

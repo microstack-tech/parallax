@@ -17,8 +17,8 @@
 package les
 
 import (
-	"github.com/ParallaxProtocol/parallax/net/p2p/dnsdisc"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/validation/forkid"
 )

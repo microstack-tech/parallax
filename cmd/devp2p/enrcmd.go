@@ -27,8 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"gopkg.in/urfave/cli.v1"
 )

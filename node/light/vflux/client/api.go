@@ -19,8 +19,8 @@ package client
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/node/light/utils"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 

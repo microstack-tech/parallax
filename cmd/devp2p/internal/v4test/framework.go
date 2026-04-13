@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover/v4wire"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/discover/v4wire"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 const waitTime = 300 * time.Millisecond

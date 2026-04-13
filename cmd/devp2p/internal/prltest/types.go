@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
-	"github.com/ParallaxProtocol/parallax/net/p2p/rlpx"
 	"github.com/ParallaxProtocol/parallax/node/fullnode/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 )
 

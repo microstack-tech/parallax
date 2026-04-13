@@ -24,7 +24,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"gopkg.in/urfave/cli.v1"
 )
 

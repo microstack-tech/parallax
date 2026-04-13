@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p"
 )
 
 var (

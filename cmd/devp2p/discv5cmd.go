@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/devp2p/internal/v5test"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover"
+	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/util"
 	"gopkg.in/urfave/cli.v1"
 )

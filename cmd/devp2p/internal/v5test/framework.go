@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover/v5wire"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/discover/v5wire"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 

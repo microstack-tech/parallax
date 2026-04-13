@@ -19,9 +19,9 @@ package client
 import (
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/net/p2p/nodestate"
 	"github.com/ParallaxProtocol/parallax/node/light/utils"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/nodestate"
 )
 
 // WrsIterator returns nodes from the specified selectable set with a weighted random

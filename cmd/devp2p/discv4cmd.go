@@ -24,9 +24,9 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/cmd/devp2p/internal/v4test"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/net/netparams"
-	"github.com/ParallaxProtocol/parallax/net/p2p/discover"
-	"github.com/ParallaxProtocol/parallax/net/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/discover"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/netparams"
 	"github.com/ParallaxProtocol/parallax/util"
 	"gopkg.in/urfave/cli.v1"
 )
