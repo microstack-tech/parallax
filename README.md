@@ -6,12 +6,6 @@ Parallax CLI connects to the Parallax peer-to-peer network to download and fully
 
 A peer-to-peer programmable cash system. See the [Whitepaper](https://parallaxprotocol.org/introduction/whitepaper) and [The Parallax Doctrine](https://github.com/ParallaxProtocol/parallax-doctrine).
 
-## License
-
-Parallax CLI is free software: you can redistribute and/or modify it under the terms of the GNU Lesser General Public License (library code) and GNU General Public License (executables). See [COPYING](COPYING) for details.
-
-Parallax CLI is a derivative work of [go-ethereum](https://github.com/ethereum/go-ethereum), originally developed by the go-ethereum authors and licensed under LGPL-3.0.
-
 ## Building from Source
 
 Parallax CLI requires **Go 1.26+** and a C compiler.
@@ -114,3 +108,7 @@ Parallax CLI is a security-critical project. Any mistake can cost users money. A
 - [JSON-RPC API Reference](https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/json-rpc-server/overview)
 - [Whitepaper](https://parallaxprotocol.org/introduction/whitepaper)
 - [The Parallax Doctrine](https://github.com/ParallaxProtocol/parallax-doctrine)
+
+## License
+
+LGPL-3.0 (library) / GPL-3.0 (executables). See [COPYING](COPYING).
