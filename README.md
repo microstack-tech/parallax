@@ -47,6 +47,30 @@ Start with an interactive JavaScript console:
 
 See the [getting started guide](https://docs.parallaxprotocol.org/parallax-client/getting-started/introduction) for connecting to the network, creating accounts, and sending transactions.
 
+### Daemon mode
+
+Run the node in the background, detached from the terminal:
+
+```bash
+./build/bin/parallax --datadir ~/.parallax start
+```
+
+Logs redirect to `<datadir>/parallax.log`, a PID file is written, and the process survives terminal exit. See [Daemon mode](https://docs.parallaxprotocol.org/parallax-client/fundamentals/daemon-mode) for systemd integration and flag details.
+
+### Managing a running node
+
+The `parallax` binary doubles as a JSON-RPC client, in the spirit of `bitcoin-cli`. Common operations have short subcommands that auto-discover the IPC socket in `<datadir>`:
+
+```bash
+parallax info           # chain, network, mempool, mining overview
+parallax tip            # latest block summary
+parallax blockcount     # bare integer, pipeable in shell scripts
+parallax balance <addr> # decimal LAX (or --wei for integer)
+parallax stop           # graceful shutdown
+```
+
+Object responses are pretty-printed JSON; scalar responses are bare values (safe for `$(parallax blockcount)`). Full reference: [Command-line RPC](https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/command-line-rpc).
+
 ### Hardware Requirements
 
 | | Minimum | Recommended |
