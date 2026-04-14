@@ -403,6 +403,58 @@ parallax removetrusted enode://a979...@1.2.3.4:32110
 parallax removetrusted 1.2.3.4:32110
 ```
 
+### `mining`
+
+Shows the miner's current state as JSON: whether mining is enabled, current hashrate, configured coinbase, and a snippet of chain-tip context. Equivalent to `bitcoin-cli getmininginfo`.
+
+```sh
+$ parallax mining
+{
+  "bestblockhash": "0xc73d...5f8f",
+  "bestblocktime": 1700000000,
+  "blocks": 1234567,
+  "coinbase": "0x9af3f6517b7a2152ccaf0126d39b6464f73e8918",
+  "hashrate": "0",
+  "mining": true
+}
+```
+
+`coinbase` is `null` when no coinbase is configured (e.g. fresh dev node without `--miner.coinbase`). Hashrate is printed as a bare decimal string so it composes cleanly with other scalar-output commands.
+
+### `startmining [threads]`
+
+Starts the built-in miner, optionally pinned to the given number of CPU threads. Silent on success. Uses `miner_start`.
+
+```sh
+parallax startmining          # one worker per logical CPU
+parallax startmining 2        # two workers
+```
+
+### `stopmining`
+
+Stops the miner. Silent on success. Uses `miner_stop`.
+
+```sh
+parallax stopmining
+```
+
+### `setcoinbase <address>`
+
+Updates the coinbase — the address credited with block rewards — without restarting the node. Silent on success. Uses `miner_setCoinbase`.
+
+```sh
+parallax setcoinbase 0xabc...123
+```
+
+### `setextra <data>`
+
+Updates the extra-data bytes embedded in blocks this node mines. Accepts a plain string or a 0x-prefixed hex blob (auto-detected). Must fit the 32-byte extradata limit; longer values are rejected by the miner with a clear error. Uses `miner_setExtra`.
+
+```sh
+parallax setextra "my-pool-v1"
+parallax setextra 0xdeadbeef
+```
+
 ## When to use the JS console instead
 
 For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.
