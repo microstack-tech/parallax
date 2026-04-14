@@ -237,6 +237,7 @@
             "group": "Parallax Client",
             "pages": [
               "guides/client/introduction",
+              "guides/client/desktop",
               "guides/client/setup"
             ]
           },
