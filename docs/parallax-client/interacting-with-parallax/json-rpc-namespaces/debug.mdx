@@ -59,6 +59,32 @@ Returns leveldb properties of the key-value database.
 | Console | debug.chaindbProperty(property string)                      |
 | RPC     | \{method": "debug\_chaindbProperty", "params": \[property]\}|
 
+### debug\_dbStats
+
+Returns a summary of on-disk database sizes. The `ancients` object lists per-category frozen-chain sizes in bytes; `leveldb` carries the same human-readable compaction-stats table that `debug_chaindbProperty("leveldb.stats")` returns. Intended for quick storage-use checks and backs the `parallax dbstats` command-line helper.
+
+| CLIENT  | METHOD INVOCATION                                           |
+| ------- | ----------------------------------------------------------- |
+| Go      | debug.DbStats() (map[string]interface{}, error)             |
+| Console | debug.dbStats()                                             |
+| RPC     | \{method": "debug\_dbStats"\}                                 |
+
+#### Example
+
+```javascript
+> debug.dbStats()
+{
+  ancients: {
+    bodies: 123456789,
+    diffs: 12345,
+    hashes: 23456,
+    headers: 3456789,
+    receipts: 234567890
+  },
+  leveldb: "Compactions\n Level | Tables | Size(MB) ..."
+}
+```
+
 ### debug\_cpuProfile
 
 Turns on CPU profiling for the given duration and writes profile data to disk.

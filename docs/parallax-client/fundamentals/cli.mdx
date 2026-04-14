@@ -50,6 +50,7 @@ CLIENT COMMANDS:
    blockcount                         Print the latest block number known to the running node
    chaininfo                          Chain state summary (height, tip, difficulty, total difficulty)
    code                               Print the deployed bytecode at an address
+   dbstats                            Show chaindata and ancient database sizes
    estimategas                        Estimate the gas required to execute a transaction
    gasprice                           Print the current suggested gas price (wei)
    getblock                           Fetch a block by number or hash
@@ -58,6 +59,7 @@ CLIENT COMMANDS:
    getreceipt                         Fetch a transaction receipt by hash
    gettx                              Fetch a transaction by hash
    info                               Combined overview of chain, network and mempool state
+   loglevel                           Set log verbosity at runtime (integer level or vmodule pattern)
    mempool                            Summary of the node's transaction pool
    mempool-content                    Dump the transaction pool contents (optionally filtered by sender)
    mining                             Show mining status (enabled, hashrate, coinbase)
@@ -75,6 +77,7 @@ CLIENT COMMANDS:
    storage                            Read a 32-byte storage slot from a contract
    syncing                            Show sync progress of the running node
    tip                                Summary of the latest canonical block
+   trace                              Trace the execution of a mined transaction
    uptime                             Seconds since the running node started
 
 CONSOLE COMMANDS:

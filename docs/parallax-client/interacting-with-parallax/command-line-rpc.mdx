@@ -455,6 +455,56 @@ parallax setextra "my-pool-v1"
 parallax setextra 0xdeadbeef
 ```
 
+### `loglevel <level|pattern>`
+
+Adjusts log verbosity at runtime, without restarting the node. Equivalent to `bitcoin-cli logging`.
+
+- Integer `0..5` (silent, error, warn, info, debug, detail) → `debug_verbosity`.
+- Anything else is treated as a vmodule pattern like `eth/*=5,p2p=4` → `debug_vmodule`.
+
+```sh
+parallax loglevel 4                   # bump everything to debug
+parallax loglevel 3                   # back to info
+parallax loglevel "eth/*=5,p2p=4"     # per-package overrides
+```
+
+Silent on success; bad patterns exit non-zero with the server's validation message.
+
+### `trace <txhash>`
+
+Traces the execution of a mined transaction. Equivalent to geth's `debug.traceTransaction` from the JS console. Two modes:
+
+- Without `--tracer`: returns the full opcode-by-opcode execution log. Output can be very large; consider redirecting to a file.
+- With `--tracer <name>`: runs a named tracer and returns its condensed output. Common values: `callTracer` (call tree), `prestateTracer` (pre-execution state), `4byteTracer` (function-selector histogram).
+
+```sh
+parallax trace 0xabc...
+parallax trace 0xabc... --tracer callTracer
+parallax trace 0xabc... --tracer callTracer --timeout 2m
+```
+
+`--timeout` accepts any Go duration (`30s`, `2m`, `10m`). Default is 5 minutes because non-tracer runs can take a while on large transactions. Uses `debug_traceTransaction`.
+
+### `dbstats`
+
+Summary of on-disk database state: per-category ancient-freezer sizes in bytes plus the raw LevelDB compaction stats. Uses a new `debug_dbStats` RPC.
+
+```sh
+$ parallax dbstats
+{
+  "ancients": {
+    "bodies": 123456789,
+    "diffs": 12345,
+    "hashes": 23456,
+    "headers": 3456789,
+    "receipts": 234567890
+  },
+  "leveldb": "Compactions\n Level |   Tables   |    Size(MB)   ..."
+}
+```
+
+Intended for quick "am I running out of disk?" checks. For a full per-prefix chaindata walk, use `parallax db inspect` (offline, reads the database directly).
+
 ## When to use the JS console instead
 
 For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.
