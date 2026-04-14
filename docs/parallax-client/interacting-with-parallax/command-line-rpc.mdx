@@ -209,7 +209,7 @@ $ parallax peers
 
 ### `balance <address>`
 
-Prints the balance of an account. Equivalent to `bitcoin-cli getbalance` (applied to a specific address, since the daemon has no wallet of its own). By default prints a decimal LAX value; pass `--wei` for the exact integer.
+Prints the balance of an account. Equivalent to `bitcoin-cli getbalance` (applied to a specific address, since the daemon has no wallet of its own). By default prints a decimal LAX value; pass `--wei` for the exact integer. Supports `--block` for historical queries.
 
 ```sh
 $ parallax balance 0xabc...123
@@ -217,9 +217,52 @@ $ parallax balance 0xabc...123
 
 $ parallax balance 0xabc...123 --wei
 1234567890123456789
+
+$ parallax balance 0xabc...123 --block 1000000
+0.5
 ```
 
 Uses `eth_getBalance`.
+
+### `nonce <address>`
+
+Prints the transaction count (nonce) of an account as a bare integer. Essential when crafting raw transactions. Supports `--block` for historical queries. Uses `eth_getTransactionCount`.
+
+```sh
+$ parallax nonce 0xabc...123
+42
+
+$ parallax nonce 0xabc...123 --block 1000000
+37
+```
+
+### `code <address>`
+
+Prints the deployed bytecode at an address as a 0x-prefixed hex string, or `0x` if the address is an externally owned account. Uses `eth_getCode`.
+
+```sh
+$ parallax code 0xcontract...
+0x608060405234801561001057600080fd5b50...
+
+$ parallax code 0xeoa...
+0x
+```
+
+Combine with `[ "$(parallax code $addr)" = "0x" ]` to branch on contract vs EOA in shell scripts.
+
+### `storage <address> <slot>`
+
+Reads a 32-byte storage slot from a contract and prints it as a 0x-prefixed hex string. `<slot>` accepts a decimal index or a 0x-prefixed hex key. Uses `eth_getStorageAt`.
+
+```sh
+$ parallax storage 0xcontract... 0
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+$ parallax storage 0xcontract... 0x1
+0x0000000000000000000000000000000000000000000000000000000000000000
+```
+
+Supports `--block` for historical reads.
 
 ### `gettx <txhash>`
 
