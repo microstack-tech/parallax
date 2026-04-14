@@ -36,6 +36,24 @@ The command output mirrors `bitcoin-cli`:
 
 All commands below accept `--datadir`, `--testnet`, and `--rpc`.
 
+### `start [config]`
+
+Convenience wrapper for `parallax --daemon`. Starts the node in the background, detached from the controlling terminal, with logs redirected to `<datadir>/parallax.log`. An optional positional argument points at a TOML configuration file to pass through as `--config`.
+
+Every global flag placed before `start` on the command line is preserved, so:
+
+```sh
+parallax --datadir /var/lib/parallax start /etc/parallax.toml
+```
+
+is exactly equivalent to:
+
+```sh
+parallax --datadir /var/lib/parallax --daemon --config /etc/parallax.toml
+```
+
+See [Daemon mode](../fundamentals/daemon-mode) for the detachment mechanics, log rotation, and PID-file conventions.
+
 ### `stop`
 
 Gracefully shuts down the running daemon. Equivalent to `bitcoin-cli stop`. Prints `Parallax server stopping` on success. Uses the [`admin_stop`](./json-rpc-namespaces/admin#admin_stop) RPC.

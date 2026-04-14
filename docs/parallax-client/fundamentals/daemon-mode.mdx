@@ -20,6 +20,13 @@ Passing `--daemon` detaches the process from the controlling terminal, redirects
 parallax --datadir ~/.parallax --daemon
 ```
 
+Or use the `start` subcommand as syntactic sugar:
+
+```sh
+parallax --datadir ~/.parallax start                    # same as --daemon
+parallax --datadir ~/.parallax start /etc/parallax.toml # + --config <path>
+```
+
 On success the parent prints a single line before exiting:
 
 ```
