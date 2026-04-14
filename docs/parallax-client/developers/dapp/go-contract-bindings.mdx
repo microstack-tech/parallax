@@ -118,9 +118,9 @@ var (
  _ = errors.New
  _ = big.NewInt
  _ = strings.NewReader
- _ = ethereum.NotFound
+ _ = parallax.ErrNotFound
  _ = bind.Bind
- _ = common.Big1
+ _ = util.Big1
  _ = types.BloomLookup
  _ = event.NewSubscription
 )
@@ -134,7 +134,7 @@ var StorageMetaData = &bind.MetaData{
 // Deprecated: Use StorageMetaData.ABI instead.
 var StorageABI = StorageMetaData.ABI
 
-// Storage is an auto generated Go binding around an Ethereum contract.
+// Storage is an auto generated Go binding around a Parallax contract.
 type Storage struct {
  StorageCaller     // Read-only binding to the contract
  StorageTransactor // Write-only binding to the contract
@@ -146,7 +146,7 @@ type Storage struct {
 
 `Storage.go` contains all the bindings required to interact with `Storage.sol` from a Go application. However, this isn't very useful unless the contract is actually deployed on Parallax mainnet or one of Parallax's testnets. The following sections will demonstrate how to deploy the contract to the Parallax testnet and interact with it using the Go bindings.
 
-### Deploying contracts to Ethereum
+### Deploying contracts to Parallax
 
 In the previous section, the contract ABI was sufficient for generating the contract bindings from its ABI. However, deploying the contract requires some additional information in the form of the compiled bytecode.
 
@@ -165,7 +165,7 @@ abigen --abi Storage.abi --pkg main --type Storage --out Storage.go --bin Storag
 This will generate something similar to the bindings generated in the previous section. However, an additional `DeployStorage` function has been injected:
 
 ```go
-// DeployStorage deploys a new Ethereum contract, binding an instance of Storage to it.
+// DeployStorage deploys a new Parallax contract, binding an instance of Storage to it.
 func DeployStorage(auth *bind.TransactOpts, backend bind.ContractBackend) (util.Address, *types.Transaction, *Storage, error) {
  parsed, err := StorageMetaData.GetAbi()
  if err != nil {
@@ -175,7 +175,7 @@ func DeployStorage(auth *bind.TransactOpts, backend bind.ContractBackend) (util.
   return util.Address{}, nil, nil, errors.New("GetABI returned nil")
  }
 
- address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(StorageBin), backend)
+ address, tx, contract, err := bind.DeployContract(auth, *parsed, util.FromHex(StorageBin), backend)
  if err != nil {
   return util.Address{}, nil, nil, err
  }
@@ -491,7 +491,7 @@ func main() {
  key, _ := crypto.GenerateKey()
  auth := bind.NewKeyedTransactor(key)
 
- sim := backends.NewSimulatedBackend(core.GenesisAccount{Address: auth.From, Balance: big.NewInt(10000000000)})
+ sim := backends.NewSimulatedBackend(validation.GenesisAccount{Address: auth.From, Balance: big.NewInt(10000000000)})
 
  // instantiate contract
  store, err := NewStorage(util.HexToAddress("0x21e6fc92f93c8a1bb41e2be64b4e1f88a54d3576"), sim)

@@ -61,14 +61,14 @@ The Parallax client also supports dumping metrics directly into an influx databa
 
 ```sh
 --metrics.influxdb.endpoint value      InfluxDB API endpoint to report metrics to (default: "http://localhost:8086")
---metrics.influxdb.database value      InfluxDB database name to push reported metrics to (default: "geth")
+--metrics.influxdb.database value      InfluxDB database name to push reported metrics to (default: "parallax")
 --metrics.influxdb.username value      Username to authorize access to the database (default: "test")
 --metrics.influxdb.password value      Password to authorize access to the database (default: "test")
 --metrics.influxdb.tags value          Comma-separated InfluxDB tags (key/values) attached to all measurements (default: "host=localhost")
 --metrics.influxdbv2                   Enable metrics export/push to an external InfluxDB v2 database
 --metrics.influxdb.token value         Token to authorize access to the database (v2 only) (default: "test")
---metrics.influxdb.bucket value        InfluxDB bucket name to push reported metrics to (v2 only) (default: "geth")
---metrics.influxdb.organization value  InfluxDB organization name (v2 only) (default: "geth")
+--metrics.influxdb.bucket value        InfluxDB bucket name to push reported metrics to (v2 only) (default: "parallax")
+--metrics.influxdb.organization value  InfluxDB organization name (v2 only) (default: "parallax")
 ```
 
 We also provide Prometheus-formatted metrics data, which can be obtained through the `http://127.0.0.1:6060/debug/metrics/prometheus` URL, eg:

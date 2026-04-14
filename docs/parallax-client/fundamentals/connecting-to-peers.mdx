@@ -30,7 +30,6 @@ There are occasions when the Parallax client simply fails to connect to peers. T
 
 * Local time might be incorrect. An accurate clock is required to participate in the Parallax network. The local clock can be resynchronized using commands such as `sudo ntpdate -s time.nist.gov` (this will vary depending on operating system).
 * Some firewall configurations can prohibit UDP traffic. The static nodes feature or `admin.addPeer()` on the console can be used to configure connections manually.
-* Running the Parallax client in [light mode](./light-client) often leads to connectivity issues because there are few nodes running light servers. There is no easy fix for this except to switch the Parallax client out of light mode.
 * The public test network the Parallax client is connecting to might be deprecated or have a low number of active nodes that are hard to find. In this case, the best action is to switch to an alternative test network.
 
 ## Checking Connectivity
@@ -53,7 +52,7 @@ Functions in the `admin` module provide more information about the connected pee
     caps: ["parallax/66", "snap/1"],
     enode: "enode://c8d58742fef51a70267a916949cefd0d7ba5bdb75393bbfcbcbc959b3eebf16353ac15d1f7493d749f7f452ff2bec894b8a8c469306e247d265f4f305c5740f7@69.62.94.166:32110",
     id: "2048d5ae22f7206bc8ad6476a2918bd7558776b0438e0cde4eb579d5d85d8886",
-    name: "Prlx/v0.1.1-stable-78d2f22b/linux-amd64/go1.25.1",
+    name: "Parallax/v0.1.1-stable-78d2f22b/linux-amd64/go1.25.1",
     network: {
       inbound: false,
       localAddress: "192.168.3.2:37772",
@@ -75,7 +74,7 @@ Functions in the `admin` module provide more information about the connected pee
     caps: ["parallax/66", "snap/1"],
     enode: "enode://d3440cdb8f942e1f01dac2292b7a8f886831800e301c41cf943a4ba4c68e37513920cd94c421fa5e073ed7329d9c3194e3911c857b9ded1677a5234441d9950d@54.94.191.104:32110",
     id: "4dd1f03a46b51083b7fa10bda14a92ddd0c1e80ec1ef3320c229a098e5f81865",
-    name: "Prlx/v0.1.1-stable-78d2f22b/linux-arm64/go1.25.1",
+    name: "Parallax/v0.1.1-stable-78d2f22b/linux-arm64/go1.25.1",
     network: {
       inbound: false,
       localAddress: "192.168.3.2:55992",
@@ -106,7 +105,7 @@ The `admin` module also includes functions for gathering information about the l
   id: "6c0a4611b88067d29f43e764475ec3ce70de6139c7316b960deadd29203fa358",
   ip: "127.0.0.1",
   listenAddr: "[::]:32110",
-  name: "Prlx/v0.1.1-stable-d9425677/linux-amd64/go1.25.1 X:nodwarf5",
+  name: "Parallax/v0.1.1-stable-d9425677/linux-amd64/go1.25.1 X:nodwarf5",
   ports: {
     discovery: 32110,
     listener: 32110

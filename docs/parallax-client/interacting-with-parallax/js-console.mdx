@@ -14,9 +14,9 @@ This returns a result which is also a JSON object, with values expressed as hexa
 {"id":2,"jsonrpc":"2.0","result":"0x1639e49bba16280000"}
 ```
 
-This is a low level and rather error-prone way to interact with the Parallax client. Most developers prefer to use convenience libraries that abstract away some of the more tedious and awkward tasks such as converting values from hexadecimal strings into numbers, or converting between denominations of LAX (Wei, Gwei, etc). One such library is [Web3.js](https://web3js.readthedocs.io/en/v1.7.3/). The purpose of the Parallax client's Javascript console is to provide a built-in environment to use a subset of the Web3.js libraries to interact with a Geth node.
+This is a low level and rather error-prone way to interact with the Parallax client. Most developers prefer to use convenience libraries that abstract away some of the more tedious and awkward tasks such as converting values from hexadecimal strings into numbers, or converting between denominations of LAX (Wei, Gwei, etc). One such library is [Web3.js](https://web3js.readthedocs.io/en/v1.7.3/). The purpose of the Parallax client's Javascript console is to provide a built-in environment to use a subset of the Web3.js libraries to interact with a Parallax node.
 
-The web3.js version that comes bundled with the Parallax client is not up to date with the official Web3.js documentation. There are several Web3.js libraries that are not available in the Prlx Javascript Console. There are also administrative APIs included in the Prlx console that are not documented in the Web3.js documentation. The full list of libraries available in the Geth console is available on the [JSON-RPC API page](./json-rpc-server/overview).
+The web3.js version that comes bundled with the Parallax client is not up to date with the official Web3.js documentation. There are several Web3.js libraries that are not available in the Parallax Javascript Console. There are also administrative APIs included in the Parallax console that are not documented in the Web3.js documentation. The full list of libraries available in the Parallax console is available on the [JSON-RPC API page](./json-rpc-server/overview).
 
 ## Starting the console
 
@@ -61,9 +61,9 @@ parallax attach datadir/parallax.ipc
 Once started, the console looks like this:
 
 ```
-Welcome to the Prlx JavaScript console!
+Welcome to the Parallax JavaScript console!
 
-instance: Prlx/v1.0.0-stable-95cf8a9f/darwin-arm64/go1.20.6
+instance: Parallax/v1.0.0-stable-95cf8a9f/darwin-arm64/go1.20.6
 coinbase: 0xa71299ee4c91bf07d84a51620f54379de83a5ba5
 at block: 2754218 (Wed Jul 26 2023 15:07:49 GMT-0300 (-03))
  datadir: /home/parallax/data

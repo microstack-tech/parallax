@@ -107,7 +107,7 @@ Retrieves the state that corresponds to the block number and returns a list of a
 
 | CLIENT  | METHOD INVOCATION                                   |
 | ------- | --------------------------------------------------- |
-| Go      | debug.DumpBlock(number uint64) (state.World, error) |
+| Go      | debug.DumpBlock(number uint64) (state.Dump, error)  |
 | Console | debug.traceBlockByHash(number, \[options])          |
 | RPC     | \{method": "debug\_dumpBlock", "params": \[number]\}|
 
@@ -421,7 +421,7 @@ The options is as follows:
 type StdTraceConfig struct {
   *vm.LogConfig
   Reexec *uint64
-  TxHash *common.Hash
+  TxHash *util.Hash
 }
 ```
 
@@ -549,7 +549,7 @@ Similar to [debug\_traceBlock](#debug-traceblock), traceBlockByHash accepts a bl
 
 | CLIENT  | METHOD INVOCATION                                                               |
 | ------- | ------------------------------------------------------------------------------- |
-| Go      | debug.TraceBlockByHash(hash common.Hash, config \*TraceConfig) BlockTraceResult |
+| Go      | debug.TraceBlockByHash(hash util.Hash, config \*TraceConfig) BlockTraceResult |
 | Console | debug.traceBlockByHash(hash, \[options])                                        |
 | RPC     | \{method": "debug\_traceBlockByHash", "params": \[hash {}]\}                    |
 
@@ -666,7 +666,7 @@ The traceTransaction debugging method will attempt to run the transaction in the
 
 | CLIENT  | METHOD INVOCATION                                                                           |
 | ------- | ------------------------------------------------------------------------------------------- |
-| Go      | debug.TraceTransaction(txHash common.Hash, config \*TraceConfig) (\*ExecutionResult, error) |
+| Go      | debug.TraceTransaction(txHash util.Hash, config \*TraceConfig) (\*ExecutionResult, error) |
 | Console | debug.traceTransaction(txHash, \[options])                                                  |
 | RPC     | \{method": "debug\_traceTransaction", "params": \[txHash, {}]\}                             |
 
@@ -748,7 +748,7 @@ Sets the logging verbosity pattern.
 If you want to see messages from a particular Go package (directory) and all subdirectories, use:
 
 ```javascript
-> debug.vmodule("eth/*=6")
+> debug.vmodule("node/*=6")
 ```
 
 If you want to restrict messages to a particular package (e.g. p2p) but exclude subdirectories, use:
@@ -763,10 +763,10 @@ If you want to see log messages from a particular source file, use
 > debug.vmodule("server.go=6")
 ```
 
-You can compose these basic patterns. If you want to see all output from peer.go in a package below eth (eth/peer.go, eth/downloader/peer.go) as well as output from package p2p at level \<\= 5, use:
+You can compose these basic patterns. If you want to see all output from peer.go in a package below node (node/peer.go, node/fullnode/peer.go) as well as output from package p2p at level \<\= 5, use:
 
 ```javascript
-debug.vmodule('eth/*/peer.go=6,p2p=5');
+debug.vmodule('node/*/peer.go=6,p2p=5');
 ```
 
 ### debug\_writeBlockProfile

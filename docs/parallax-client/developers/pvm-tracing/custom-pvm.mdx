@@ -8,7 +8,7 @@ In addition to the default opcode tracer and the built-in tracers, the Parallax 
 
 Custom tracers can also be made more performant by writing them in Go. The gain in performance mostly comes from the fact that the Parallax client doesn't need to interpret JS code and can execute native functions. The Parallax client comes with several built-in [native tracers](https://github.com/ParallaxProtocol/parallax/tree/main/node/fullnode/tracers/native) which can serve as examples. Please note that unlike JS tracers, Go tracing scripts cannot be simply passed as an argument to the API. They will need to be added to and compiled with the rest of the Parallax client source code.
 
-In this section a simple native tracer that counts the number of opcodes will be covered. First follow the instructions to [clone and build](../../getting-started/installing-client) Parallax client from source code. Next save the following snippet as a `.go` file and add it to `eth/tracers/native`:
+In this section a simple native tracer that counts the number of opcodes will be covered. First follow the instructions to [clone and build](../../getting-started/installing-client) Parallax client from source code. Next save the following snippet as a `.go` file and add it to `node/fullnode/tracers/native`:
 
 ```go
 package native

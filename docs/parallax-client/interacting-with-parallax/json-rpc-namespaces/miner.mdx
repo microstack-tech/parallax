@@ -62,15 +62,15 @@ Stop the CPU mining operation.
 | Console | miner.stop()                             |
 | RPC     | \{"method": "miner\_stop", "params": \[]} |
 
-### miner\_setEtherbase
+### miner\_setCoinbase
 
-Sets the etherbase, where mining rewards will go.
+Sets the coinbase, where mining rewards will go.
 
 | CLIENT  | METHOD INVOCATION                                       |
 | ------- | ------------------------------------------------------- |
-| Go      | miner.SetEtherbase(common.Address) bool                 |
-| Console | miner.setEtherbase(address)                             |
-| RPC     | \{"method": "miner\_setEtherbase", "params": \[address]} |
+| Go      | miner.SetCoinbase(util.Address) bool                    |
+| Console | miner.setCoinbase(address)                              |
+| RPC     | \{"method": "miner\_setCoinbase", "params": \[address]} |
 
 ### miner\_setGasLimit
 

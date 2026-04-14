@@ -23,7 +23,7 @@ Afterwards a new encrypted account manager can be created via:
 
 ```go
 ks := keystore.NewKeyStore("/path/to/keystore", keystore.StandardScryptN, keystore.StandardScryptP)
-am := accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: false}, ks)
+am := wallet.NewManager(&wallet.Config{InsecureUnlockAllowed: false}, ks)
 ```
 
 The path to the keystore folder needs to be a location that is writable by the local user but non-readable for other system users, such as inside the user's home directory.
@@ -86,7 +86,7 @@ For information on creating transactions in Go native applications see the [Go A
 ```go
 // Create a new account to sign transactions with
 signer, _ := ks.NewAccount("Signer password")
-txHash := common.HexToHash("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+txHash := util.HexToHash("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 ```
 
 With the boilerplate out of the way, the transaction can be signed using the authorization mechanisms described above:

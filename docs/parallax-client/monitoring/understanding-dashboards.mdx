@@ -18,7 +18,7 @@ Panels in the System category track the impact of the Parallax client on the loc
 
 <img src="https://geth.ethereum.org/images/docs/grafana/cpu.png" alt=""/>
 
-The CPU panel shows how much CPU is being used as a percentage of one processing core (i.e. 100% means complete usage of one processing core, 200% means complete usage of two processing cores). There are three processes plotted on the figure. The total CPU usage by the entire system is plotted as system; the percentage of time that the CPUs are idle waiting for disk i/o operations is plotted as iowait; the CPU usage by the Parallax client process is plotted as Prlx.
+The CPU panel shows how much CPU is being used as a percentage of one processing core (i.e. 100% means complete usage of one processing core, 200% means complete usage of two processing cores). There are three processes plotted on the figure. The total CPU usage by the entire system is plotted as system; the percentage of time that the CPUs are idle waiting for disk i/o operations is plotted as iowait; the CPU usage by the Parallax client process is plotted as parallax.
 
 #### **Memory**
 
@@ -283,7 +283,7 @@ If the default dashboard isn't right for you, you can update it in the browser. 
       ],
       "intervalFactor": 1,
       "legendFormat": "system",
-      "measurement": "geth.system/cpu/sysload.gauge",
+      "measurement": "parallax.system/cpu/sysload.gauge",
       "orderByTime": "ASC",
       "policy": "default",
       "refId": "A",
@@ -324,7 +324,7 @@ If the default dashboard isn't right for you, you can update it in the browser. 
       ],
       "intervalFactor": 1,
       "legendFormat": "iowait",
-      "measurement": "geth.system/cpu/syswait.gauge",
+      "measurement": "parallax.system/cpu/syswait.gauge",
       "orderByTime": "ASC",
       "policy": "default",
       "refId": "B",
@@ -354,7 +354,7 @@ If the default dashboard isn't right for you, you can update it in the browser. 
       }
     },
     {
-      "alias": "geth",
+      "alias": "parallax",
       "expr": "system_cpu_procload",
       "format": "time_series",
       "groupBy": [
@@ -364,8 +364,8 @@ If the default dashboard isn't right for you, you can update it in the browser. 
         }
       ],
       "intervalFactor": 1,
-      "legendFormat": "geth",
-      "measurement": "geth.system/cpu/procload.gauge",
+      "legendFormat": "parallax",
+      "measurement": "parallax.system/cpu/procload.gauge",
       "orderByTime": "ASC",
       "policy": "default",
       "refId": "C",

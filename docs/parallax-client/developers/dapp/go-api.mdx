@@ -127,9 +127,9 @@ import (
 // sendTransaction sends a transaction with 1 Lax to a specified address.
 func sendTransaction(cl *client.Client) error {
  var (
-  sk       = crypto.ToECDSAUnsafe(common.FromHex(SK))
+  sk       = crypto.ToECDSAUnsafe(util.FromHex(SK))
   to       = util.HexToAddress("0xb02A2EdA1b317FBd16760128836B0Ac59B560e9D")
-  value    = new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether))
+  value    = new(big.Int).Mul(big.NewInt(1), big.NewInt(chainparams.Ether))
   sender   = util.HexToAddress(ADDR)
   gasLimit = uint64(21000)
  )

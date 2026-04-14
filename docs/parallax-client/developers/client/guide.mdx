@@ -31,13 +31,13 @@ Cross compilation is not recommended, please build the Parallax client for the h
 Testing a package:
 
 ```sh
-go test -v ./eth
+go test -v ./node/fullnode
 ```
 
 Running an individual test:
 
 ```sh
-go test -v ./eth -run TestMethod
+go test -v ./node/fullnode -run TestMethod
 ```
 
 <Note>
@@ -98,9 +98,9 @@ github.com/ParallaxProtocol/parallax/internal/jsre.(*JSRE).Do(0xc0004223c0, 0xc0
  github.com/ParallaxProtocol/parallax/internal/jsre/jsre.go:230 +0xf4
 github.com/ParallaxProtocol/parallax/internal/jsre.(*JSRE).Evaluate(0xc00033eb60?, {0xc0013c00a0, 0x1e}, {0x180d720?, 0xc000010018})
  github.com/ParallaxProtocol/parallax/internal/jsre/jsre.go:289 +0xb3
-github.com/ParallaxProtocol/parallax/console.(*Console).Evaluate(0xc0005366e0, {0xc0013c00a0?, 0x0?})
+github.com/ParallaxProtocol/parallax/node/console.(*Console).Evaluate(0xc0005366e0, {0xc0013c00a0?, 0x0?})
  github.com/ParallaxProtocol/parallax/node/console/console.go:353 +0x6d
-github.com/ParallaxProtocol/parallax/console.(*Console).Interactive(0xc0005366e0)
+github.com/ParallaxProtocol/parallax/node/console.(*Console).Interactive(0xc0005366e0)
  github.com/ParallaxProtocol/parallax/node/console/console.go:481 +0x691
 main.localConsole(0xc00026d580?)
  github.com/ParallaxProtocol/parallax/cmd/parallax/consolecmd.go:109 +0x348
