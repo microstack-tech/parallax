@@ -229,6 +229,43 @@ integer, matching the scalar-output convention used by `+"`gasprice`"+`.`,
 		Category: "CLIENT COMMANDS",
 	}
 
+	getBlockHashCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientGetBlockHash),
+		Name:      "getblockhash",
+		Usage:     "Print the canonical hash of the block at a given height",
+		ArgsUsage: "<number>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli getblockhash. Prints a bare hex hash (0x…).`,
+	}
+
+	getHeaderCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientGetHeader),
+		Name:      "getheader",
+		Usage:     "Fetch a block header by number or hash",
+		ArgsUsage: "<number|hash>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli getblockheader. Returns the block header as
+JSON without the transactions list — smaller and faster than getblock
+when you only need metadata.`,
+	}
+
+	tipCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientTip),
+		Name:      "tip",
+		Usage:     "Summary of the latest canonical block",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Condensed JSON view of the chain tip: number, hash, parent, timestamp,
+miner, gas used and limit, transaction count. Handy at the top of ops
+scripts or in health probes.`,
+	}
+
 	gasPriceCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientGasPrice),
 		Name:      "gasprice",
@@ -284,6 +321,9 @@ var clientSugarCommands = []cli.Command{
 	getTxCommand,
 	getReceiptCommand,
 	getBlockCommand,
+	getBlockHashCommand,
+	getHeaderCommand,
+	tipCommand,
 	gasPriceCommand,
 	sendRawCommand,
 	addPeerCommand,
@@ -843,28 +883,16 @@ func clientGetBlock(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	full := ctx.Bool("full")
-
-	// eth_getBlockByNumber / eth_getBlockByHash share the same response
-	// shape; pick the right method based on whether id looks like a hash.
-	method := "eth_getBlockByNumber"
-	param := id
-	switch {
-	case strings.HasPrefix(id, "0x") && len(id) == 66:
-		method = "eth_getBlockByHash"
-	case id == "latest" || id == "earliest" || id == "pending" || id == "finalized" || id == "safe":
-		// keep as-is
-	default:
-		// numeric: convert to hex
-		n, ok := new(big.Int).SetString(id, 10)
-		if !ok {
-			return fmt.Errorf("invalid block number or hash: %s", id)
-		}
-		param = "0x" + n.Text(16)
+	byHash, param, err := resolveBlockID(id)
+	if err != nil {
+		return err
 	}
-
+	method := "eth_getBlockByNumber"
+	if byHash {
+		method = "eth_getBlockByHash"
+	}
 	var block json.RawMessage
-	if err := callRPC(ctx, &block, method, param, full); err != nil {
+	if err := callRPC(ctx, &block, method, param, ctx.Bool("full")); err != nil {
 		return err
 	}
 	if len(block) == 0 || string(block) == "null" {
@@ -875,6 +903,110 @@ func clientGetBlock(ctx *cli.Context) error {
 		return err
 	}
 	return printJSON(pretty)
+}
+
+func clientGetBlockHash(ctx *cli.Context) error {
+	id, err := requireArg(ctx, "number")
+	if err != nil {
+		return err
+	}
+	// Refuse hashes here — getblockhash maps height → hash, not the other
+	// way around. Bitcoin's getblockhash behaves the same way.
+	if strings.HasPrefix(id, "0x") && len(id) == 66 {
+		return fmt.Errorf("getblockhash takes a block number, not a hash (did you mean `getheader`?)")
+	}
+	_, param, err := resolveBlockID(id)
+	if err != nil {
+		return err
+	}
+	var block map[string]interface{}
+	if err := callRPC(ctx, &block, "eth_getBlockByNumber", param, false); err != nil {
+		return err
+	}
+	if block == nil {
+		return fmt.Errorf("block %s not found", id)
+	}
+	hash, _ := block["hash"].(string)
+	if hash == "" {
+		return fmt.Errorf("block %s has no hash (pending?)", id)
+	}
+	printScalar(hash)
+	return nil
+}
+
+func clientGetHeader(ctx *cli.Context) error {
+	id, err := requireArg(ctx, "number|hash")
+	if err != nil {
+		return err
+	}
+	byHash, param, err := resolveBlockID(id)
+	if err != nil {
+		return err
+	}
+	method := "eth_getHeaderByNumber"
+	if byHash {
+		method = "eth_getHeaderByHash"
+	}
+	var header json.RawMessage
+	if err := callRPC(ctx, &header, method, param); err != nil {
+		return err
+	}
+	if len(header) == 0 || string(header) == "null" {
+		return fmt.Errorf("header %s not found", id)
+	}
+	var pretty interface{}
+	if err := json.Unmarshal(header, &pretty); err != nil {
+		return err
+	}
+	return printJSON(pretty)
+}
+
+func clientTip(ctx *cli.Context) error {
+	var block map[string]interface{}
+	if err := callRPC(ctx, &block, "eth_getBlockByNumber", "latest", false); err != nil {
+		return err
+	}
+	if block == nil {
+		return fmt.Errorf("no chain tip available")
+	}
+	// Condense the block object into the fields operators most often
+	// want at a glance. Full details remain one `getblock latest` away.
+	txs, _ := block["transactions"].([]interface{})
+	out := map[string]interface{}{
+		"number":     hexToUint(stringField(block, "number")),
+		"hash":       stringField(block, "hash"),
+		"parent":     stringField(block, "parentHash"),
+		"timestamp":  hexToUint(stringField(block, "timestamp")),
+		"miner":      stringField(block, "miner"),
+		"gasused":    hexToUint(stringField(block, "gasUsed")),
+		"gaslimit":   hexToUint(stringField(block, "gasLimit")),
+		"difficulty": stringField(block, "difficulty"),
+		"size":       hexToUint(stringField(block, "size")),
+		"txs":        len(txs),
+	}
+	return printJSON(out)
+}
+
+// resolveBlockID parses a user-supplied block identifier and reports
+// whether the hash-keyed or number-keyed RPC should be used. It accepts:
+//   - 0x-prefixed 32-byte hex hashes (byHash=true),
+//   - the tags latest/earliest/pending/safe/finalized (passed through),
+//   - decimal block numbers (converted to 0x-hex).
+//
+// Returns (byHash, param, err). Used by getblock, getblockhash, getheader.
+func resolveBlockID(id string) (byHash bool, param string, err error) {
+	switch {
+	case strings.HasPrefix(id, "0x") && len(id) == 66:
+		return true, id, nil
+	case id == "latest" || id == "earliest" || id == "pending" || id == "finalized" || id == "safe":
+		return false, id, nil
+	default:
+		n, ok := new(big.Int).SetString(id, 10)
+		if !ok {
+			return false, "", fmt.Errorf("invalid block number or hash: %s", id)
+		}
+		return false, "0x" + n.Text(16), nil
+	}
 }
 
 func clientGasPrice(ctx *cli.Context) error {
