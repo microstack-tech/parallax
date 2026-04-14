@@ -63,6 +63,17 @@ var weiFlag = cli.BoolFlag{
 	Usage: "Print amounts in wei (integer) instead of LAX (decimal)",
 }
 
+// blockTagFlag selects which historical block account-state lookups should
+// be evaluated against. Accepts the same values eth_* RPCs take: a decimal
+// block number, a 0x-prefixed hex number, or latest/earliest/pending/safe/
+// finalized. Defaults to "latest" to match bitcoin-cli's "current balance"
+// default.
+var blockTagFlag = cli.StringFlag{
+	Name:  "block",
+	Usage: "Block tag or number to query against (default: latest)",
+	Value: "latest",
+}
+
 var (
 	stopCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientStop),
@@ -196,8 +207,45 @@ integer, matching the scalar-output convention used by `+"`gasprice`"+`.`,
 		Name:      "balance",
 		Usage:     "Print the balance of an account",
 		ArgsUsage: "<address>",
-		Flags:     append([]cli.Flag{weiFlag}, clientCommandFlags...),
+		Flags:     append([]cli.Flag{weiFlag, blockTagFlag}, clientCommandFlags...),
 		Category:  "CLIENT COMMANDS",
+	}
+
+	nonceCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientNonce),
+		Name:      "nonce",
+		Usage:     "Print the transaction count (nonce) of an account",
+		ArgsUsage: "<address>",
+		Flags:     append([]cli.Flag{blockTagFlag}, clientCommandFlags...),
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to eth_getTransactionCount. Use this to craft raw transactions
+or debug stuck transactions.`,
+	}
+
+	codeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientCode),
+		Name:      "code",
+		Usage:     "Print the deployed bytecode at an address",
+		ArgsUsage: "<address>",
+		Flags:     append([]cli.Flag{blockTagFlag}, clientCommandFlags...),
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Returns the contract bytecode as a 0x-prefixed hex string, or "0x" if
+the address is an externally owned account (EOA). Uses eth_getCode.`,
+	}
+
+	storageCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientStorage),
+		Name:      "storage",
+		Usage:     "Read a 32-byte storage slot from a contract",
+		ArgsUsage: "<address> <slot>",
+		Flags:     append([]cli.Flag{blockTagFlag}, clientCommandFlags...),
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Returns the 32-byte value at the given storage slot as a 0x-prefixed
+hex string. <slot> accepts a decimal index or a 0x-prefixed hex key.
+Uses eth_getStorageAt.`,
 	}
 
 	getTxCommand = cli.Command{
@@ -317,6 +365,9 @@ var clientSugarCommands = []cli.Command{
 	mempoolCommand,
 	mempoolContentCommand,
 	balanceCommand,
+	nonceCommand,
+	codeCommand,
+	storageCommand,
 	estimateGasCommand,
 	getTxCommand,
 	getReceiptCommand,
@@ -826,7 +877,7 @@ func clientBalance(ctx *cli.Context) error {
 		return err
 	}
 	var hex string
-	if err := callRPC(ctx, &hex, "eth_getBalance", addr, "latest"); err != nil {
+	if err := callRPC(ctx, &hex, "eth_getBalance", addr, resolveBlockTag(ctx)); err != nil {
 		return err
 	}
 	wei := hexToBigInt(hex)
@@ -838,6 +889,75 @@ func clientBalance(ctx *cli.Context) error {
 		printScalar(weiToLAX(wei))
 	}
 	return nil
+}
+
+func clientNonce(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	var hex string
+	if err := callRPC(ctx, &hex, "eth_getTransactionCount", addr, resolveBlockTag(ctx)); err != nil {
+		return err
+	}
+	// Bare integer, matching bitcoin-cli's getreceivedbyaddress output
+	// style (plain number for counters).
+	printScalar(hexToBigInt(hex).String())
+	return nil
+}
+
+func clientCode(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	var code string
+	if err := callRPC(ctx, &code, "eth_getCode", addr, resolveBlockTag(ctx)); err != nil {
+		return err
+	}
+	// EOAs return "0x"; contracts return their bytecode. Print the raw
+	// hex either way so shell pipelines can grep "^0x$" to branch.
+	printScalar(code)
+	return nil
+}
+
+func clientStorage(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	if ctx.NArg() < 2 {
+		return fmt.Errorf("missing required argument: slot")
+	}
+	slot := ctx.Args().Get(1)
+	var value string
+	if err := callRPC(ctx, &value, "eth_getStorageAt", addr, toHexAmount(slot), resolveBlockTag(ctx)); err != nil {
+		return err
+	}
+	printScalar(value)
+	return nil
+}
+
+// resolveBlockTag returns the block identifier for account-state RPC
+// calls. Accepts the named tags unchanged, and converts decimal numbers
+// to 0x-hex because eth_* RPCs refuse decimal block parameters.
+func resolveBlockTag(ctx *cli.Context) string {
+	tag := ctx.String(blockTagFlag.Name)
+	if tag == "" {
+		return "latest"
+	}
+	switch tag {
+	case "latest", "earliest", "pending", "safe", "finalized":
+		return tag
+	}
+	if strings.HasPrefix(tag, "0x") || strings.HasPrefix(tag, "0X") {
+		return tag
+	}
+	if n, ok := new(big.Int).SetString(tag, 10); ok {
+		return "0x" + n.Text(16)
+	}
+	// Pass it through unchanged; the RPC will surface a clear error.
+	return tag
 }
 
 func clientGetTx(ctx *cli.Context) error {
