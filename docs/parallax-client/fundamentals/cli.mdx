@@ -45,6 +45,7 @@ DATABASE COMMANDS:
 
 CLIENT COMMANDS:
    addpeer                            Add a static peer by enode URL
+   addtrusted                         Mark a peer as trusted (bypasses connection slot limits)
    balance                            Print the balance of an account
    blockcount                         Print the latest block number known to the running node
    chaininfo                          Chain state summary (height, tip, difficulty, total difficulty)
@@ -63,6 +64,7 @@ CLIENT COMMANDS:
    nonce                              Print the transaction count (nonce) of an account
    peers                              List peers connected to the running parallax node
    removepeer                         Remove a static peer by enode URL
+   removetrusted                      Remove a peer from the trusted list
    sendraw                            Submit a signed, hex-encoded transaction and print the hash
    stop                               Gracefully stop a running parallax daemon
    storage                            Read a 32-byte storage slot from a contract

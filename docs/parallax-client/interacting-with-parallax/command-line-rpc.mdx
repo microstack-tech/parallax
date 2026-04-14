@@ -357,20 +357,50 @@ $ parallax sendraw 0xf86c...
 0xabc...def
 ```
 
-### `addpeer <enode>`
+### Peer identifiers
 
-Adds a static peer by its enode URL. Equivalent to `bitcoin-cli addnode <node> add`. Silent on success, non-zero exit on failure. Uses `admin_addPeer`.
+The four peer-admin commands (`addpeer`, `removepeer`, `addtrusted`, `removetrusted`) accept either form:
+
+- **Full enode URL** — `enode://<64-hex-id>@host:port[?discport=…]`, or an `enr:<base64>` record. Always works.
+- **`host:port`** — resolved against the running node's current peer list by matching IP and advertised listen port.
+- **`host`** — as above, but without the port constraint; must uniquely identify a connected peer. If multiple peers share the same host, the error message lists them so you can disambiguate.
+
+The host-based forms only work when the target peer is **currently connected** (so its cryptographic node ID is known to us). If the lookup fails the command exits non-zero with a pointer to use the full enode form. The shortcut deliberately never dials an unknown address to discover its node ID, because adopting an arbitrary pubkey picked up that way would let any process at that address get itself trusted.
+
+### `addpeer <enode|host[:port]>`
+
+Adds a static peer. Equivalent to `bitcoin-cli addnode <node> add`. Silent on success, non-zero exit on failure. Uses `admin_addPeer`.
 
 ```sh
 parallax addpeer enode://a979...@1.2.3.4:32110
+parallax addpeer 1.2.3.4:32110   # resolves via connected peers
 ```
 
-### `removepeer <enode>`
+### `removepeer <enode|host[:port]>`
 
 Removes a static peer. Silent on success. Uses `admin_removePeer`.
 
 ```sh
 parallax removepeer enode://a979...@1.2.3.4:32110
+parallax removepeer 1.2.3.4:32110
+```
+
+### `addtrusted <enode|host[:port]>`
+
+Marks a peer as trusted, so it is always allowed to connect even when the node has hit its `--maxpeers` limit. Silent on success. Uses `admin_addTrustedPeer`.
+
+```sh
+parallax addtrusted enode://a979...@1.2.3.4:32110
+parallax addtrusted 1.2.3.4:32110
+```
+
+### `removetrusted <enode|host[:port]>`
+
+Removes a peer from the trusted list. The peer is not disconnected automatically — run `removepeer` afterwards if you also want to drop the connection. Uses `admin_removeTrustedPeer`.
+
+```sh
+parallax removetrusted enode://a979...@1.2.3.4:32110
+parallax removetrusted 1.2.3.4:32110
 ```
 
 ## When to use the JS console instead
