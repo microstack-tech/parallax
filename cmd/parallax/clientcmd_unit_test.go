@@ -92,11 +92,11 @@ func TestWeiToLAX(t *testing.T) {
 		wei  string
 		want string
 	}{
-		{"0", "0.0"},                                // zero preserves a fractional digit
-		{"1", "0.000000000000000001"},               // min wei
-		{"1000000000000000000", "1.0"},              // 1 LAX
-		{"1234567890000000000", "1.23456789"},       // trailing zeros trimmed
-		{"100000000000000000", "0.1"},               // 0.1 LAX
+		{"0", "0.0"},                          // zero preserves a fractional digit
+		{"1", "0.000000000000000001"},         // min wei
+		{"1000000000000000000", "1.0"},        // 1 LAX
+		{"1234567890000000000", "1.23456789"}, // trailing zeros trimmed
+		{"100000000000000000", "0.1"},         // 0.1 LAX
 		{"1000000000000000001", "1.000000000000000001"},
 		{"-500000000000000000", "-0.5"}, // negative preserved
 	}
@@ -121,8 +121,8 @@ func TestToHexAmount(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"0", "0x0"},
 		{"42", "0x2a"},
-		{"0xff", "0xff"},   // hex passthrough
-		{"0XFF", "0XFF"},   // upper-case prefix passthrough
+		{"0xff", "0xff"}, // hex passthrough
+		{"0XFF", "0XFF"}, // upper-case prefix passthrough
 		{"1000000000000000000", "0xde0b6b3a7640000"},
 		{"garbage", "0x0"}, // unparseable → 0x0; RPC surfaces any real error
 	}
@@ -135,7 +135,7 @@ func TestToHexAmount(t *testing.T) {
 
 func TestResolveBlockID(t *testing.T) {
 	cases := []struct {
-		in        string
+		in         string
 		wantByHash bool
 		wantParam  string
 		wantErr    bool

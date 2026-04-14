@@ -233,7 +233,7 @@ it to a single sender or --inspect for one-line summaries.`,
 		Category: "CLIENT COMMANDS",
 		Description: `
 Calls eth_estimateGas and prints the estimated gas units as a bare
-integer, matching the scalar-output convention used by `+"`gasprice`"+`.`,
+integer, matching the scalar-output convention used by ` + "`gasprice`" + `.`,
 	}
 
 	balanceCommand = cli.Command{

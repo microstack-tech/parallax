@@ -242,4 +242,3 @@ func writeDaemonPIDFile(ctx *cli.Context) (func(), error) {
 		}
 	}, nil
 }
-
