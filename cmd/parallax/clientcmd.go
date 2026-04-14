@@ -413,6 +413,49 @@ Updates the coinbase (the address credited with block rewards) without
 restarting the node. Silent on success. Uses miner_setCoinbase.`,
 	}
 
+	logLevelCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientLogLevel),
+		Name:      "loglevel",
+		Usage:     "Set log verbosity at runtime (integer level or vmodule pattern)",
+		ArgsUsage: "<level|pattern>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Accepts either an integer level (0=silent, 1=error, 2=warn, 3=info,
+4=debug, 5=detail) or a vmodule pattern like "eth/*=5,p2p=4".
+Equivalent to bitcoin-cli's logging command. Uses debug_verbosity or
+debug_vmodule depending on the argument shape.`,
+	}
+
+	traceCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientTrace),
+		Name:      "trace",
+		Usage:     "Trace the execution of a mined transaction",
+		ArgsUsage: "<txhash>",
+		Flags: append([]cli.Flag{
+			cli.StringFlag{Name: "tracer", Usage: "Named tracer (e.g. callTracer, prestateTracer, 4byteTracer); default returns opcode-level steps"},
+			cli.StringFlag{Name: "timeout", Usage: "RPC timeout as a Go duration (e.g. 30s, 2m); default 5m because traces can be slow"},
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Calls debug_traceTransaction and prints the trace as JSON. Without
+--tracer the output is the full opcode-by-opcode trace (can be huge);
+pass a named tracer for a condensed view. Use --timeout to raise the
+client deadline for long-running traces.`,
+	}
+
+	dbStatsCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientDbStats),
+		Name:      "dbstats",
+		Usage:     "Show chaindata and ancient database sizes",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Summary of on-disk database state: per-category ancient-freezer sizes
+(bytes) and the LevelDB compaction stats table. Uses debug_dbStats.`,
+	}
+
 	setExtraCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientSetExtra),
 		Name:      "setextra",
@@ -475,6 +518,9 @@ var clientSugarCommands = []cli.Command{
 	stopMiningCommand,
 	setCoinbaseCommand,
 	setExtraCommand,
+	logLevelCommand,
+	traceCommand,
+	dbStatsCommand,
 }
 
 // ----------------------------------------------------------------------------
@@ -1274,6 +1320,82 @@ func clientRemoveTrusted(ctx *cli.Context) error {
 // enode URL if the user gave a bare host:port, and dispatches the named
 // admin_* RPC. The RPCs all return (bool, error) with false-meaning-no-op
 // semantics, so we raise that to an error for script-friendliness.
+func clientLogLevel(ctx *cli.Context) error {
+	arg, err := requireArg(ctx, "level|pattern")
+	if err != nil {
+		return err
+	}
+	// Heuristic: an integer in [0,5] is a verbosity level; anything else
+	// (e.g. "eth/*=5" or "p2p=4") is a vmodule pattern.
+	if n, err := strconv.Atoi(arg); err == nil && n >= 0 && n <= 5 {
+		var result json.RawMessage
+		if err := callRPC(ctx, &result, "debug_verbosity", n); err != nil {
+			return err
+		}
+		return nil
+	}
+	var result json.RawMessage
+	if err := callRPC(ctx, &result, "debug_vmodule", arg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func clientTrace(ctx *cli.Context) error {
+	hash, err := requireArg(ctx, "txhash")
+	if err != nil {
+		return err
+	}
+	// Traces can be slow and huge; give them a generous default deadline.
+	timeout := 5 * time.Minute
+	if raw := ctx.String("timeout"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("invalid --timeout %q: %v", raw, err)
+		}
+		timeout = d
+	}
+
+	client, _, err := dialClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	cctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Build the tracer-config object only if a tracer was requested; an
+	// absent second param makes debug_traceTransaction return the
+	// opcode-level trace.
+	var params []interface{}
+	params = append(params, hash)
+	if tracer := ctx.String("tracer"); tracer != "" {
+		params = append(params, map[string]interface{}{"tracer": tracer})
+	}
+
+	var raw json.RawMessage
+	if err := client.CallContext(cctx, &raw, "debug_traceTransaction", params...); err != nil {
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("no trace returned for %s (is the transaction mined?)", hash)
+	}
+	var pretty interface{}
+	if err := json.Unmarshal(raw, &pretty); err != nil {
+		return err
+	}
+	return printJSON(pretty)
+}
+
+func clientDbStats(ctx *cli.Context) error {
+	var stats map[string]interface{}
+	if err := callRPC(ctx, &stats, "debug_dbStats"); err != nil {
+		return err
+	}
+	return printJSON(stats)
+}
+
 func clientMining(ctx *cli.Context) error {
 	client, _, err := dialClient(ctx)
 	if err != nil {
