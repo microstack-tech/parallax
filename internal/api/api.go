@@ -1931,6 +1931,27 @@ func (api *PrivateDebugAPI) ChaindbProperty(property string) (string, error) {
 	return api.b.ChainDb().Stat(property)
 }
 
+// DbStats returns a summary of on-disk database sizes so operators can
+// gauge storage use without running the full (expensive) inspect walk.
+// The ancient map lists per-category frozen-chain sizes in bytes; the
+// `leveldb` field carries the same human-readable table that
+// ChaindbProperty("leveldb.stats") returns, for callers that want a
+// one-stop diagnostic view.
+func (api *PrivateDebugAPI) DbStats() (map[string]interface{}, error) {
+	db := api.b.ChainDb()
+	ancients := make(map[string]uint64)
+	for _, cat := range []string{"headers", "hashes", "bodies", "receipts", "diffs"} {
+		if size, err := db.AncientSize(cat); err == nil {
+			ancients[cat] = size
+		}
+	}
+	leveldb, _ := db.Stat("leveldb.stats")
+	return map[string]interface{}{
+		"ancients": ancients,
+		"leveldb":  leveldb,
+	}, nil
+}
+
 // ChaindbCompact flattens the entire key-value database into a single level,
 // removing all unused slots and merging all keys.
 func (api *PrivateDebugAPI) ChaindbCompact() error {
