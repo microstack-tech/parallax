@@ -56,7 +56,7 @@ var (
 	gitCommit = ""
 	gitDate   = ""
 	// The app that holds all commands and flags.
-	app = flags.NewApp(gitCommit, gitDate, "the Prlx command line interface")
+	app = flags.NewApp(gitCommit, gitDate, "the Parallax command line interface")
 	// flags that configure the node
 	nodeFlags = utils.GroupFlags([]cli.Flag{
 		utils.IdentityFlag,
