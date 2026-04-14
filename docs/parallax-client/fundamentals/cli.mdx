@@ -2,9 +2,9 @@
 title: 'Command-line options'
 ---
 
-The Parallax client is primarily controlled using the command line. The Parallax client is started using the `parallax` command. It is stopped by pressing ctrl-c.
+The Parallax client is primarily controlled using the command line. The Parallax client is started using the `parallax` command. It is stopped by pressing ctrl-c — or, when running in the background, with `parallax stop` (see [Daemon mode](./daemon-mode) and [Command-line RPC](../interacting-with-parallax/command-line-rpc)).
 
-You can configure the Parallax client using command-line options (a.k.a. flags). The Parallax client also has sub-commands, which can be used to invoke functionality such as the console or blockchain import/export.
+You can configure the Parallax client using command-line options (a.k.a. flags). The Parallax client also has sub-commands, which can be used to invoke functionality such as the console, blockchain import/export, or RPC-client operations against a running node.
 
 The command-line help listing is reproduced below for your convenience. The same information can be obtained at any time from your own Parallax client instance by running:
 
@@ -27,29 +27,54 @@ USAGE:
 VERSION:
    0.1.1-stable-d9425677
 
-COMMANDS:
-   account                            Manage accounts
-   attach                             Start an interactive JavaScript environment (connect to node)
-   console                            Start an interactive JavaScript environment
-   db                                 Low level database operations
+BLOCKCHAIN COMMANDS:
    dump                               Dump a specific block from storage
-   dumpconfig                         Show configuration values
    dumpgenesis                        Dumps genesis block JSON configuration to stdout
    export                             Export blockchain into file
    export-preimages                   Export the preimage database into an RLP stream
    import                             Import a blockchain file
    import-preimages                   Import the preimage database from an RLP stream
    init                               Bootstrap and initialize a new genesis block
+
+ACCOUNT COMMANDS:
+   account                            Manage accounts
+
+DATABASE COMMANDS:
+   db                                 Low level database operations
+   removedb                           Remove blockchain and state databases
+
+CLIENT COMMANDS:
+   addpeer                            Add a static peer by enode URL
+   balance                            Print the balance of an account
+   blockcount                         Print the latest block number known to the running node
+   gasprice                           Print the current suggested gas price (wei)
+   getblock                           Fetch a block by number or hash
+   getreceipt                         Fetch a transaction receipt by hash
+   gettx                              Fetch a transaction by hash
+   info                               Combined overview of chain, network and mempool state
+   mempool                            Summary of the node's transaction pool
+   peers                              List peers connected to the running parallax node
+   removepeer                         Remove a static peer by enode URL
+   sendraw                            Submit a signed, hex-encoded transaction and print the hash
+   stop                               Gracefully stop a running parallax daemon
+   syncing                            Show sync progress of the running node
+
+CONSOLE COMMANDS:
+   attach                             Start an interactive JavaScript environment (connect to node)
+   console                            Start an interactive JavaScript environment
    js                                 Execute the specified JavaScript files
+
+MISCELLANEOUS COMMANDS:
+   dumpconfig                         Show configuration values
    license                            Display license information
    makecache                          Generate XHash verification cache (for testing)
    makedag                            Generate XHash mining DAG (for testing)
-   removedb                           Remove blockchain and state databases
    show-deprecated-flags              Show flags that have been deprecated
    snapshot                           A set of commands based on the snapshot
    version                            Print version numbers
    version-check                      Checks (online) whether the current version suffers from any known security vulnerabilities
-   wallet                             Manage Parallax presale wallets
+
+COMMANDS:
    help, h                            Shows a list of commands or help for one command
 
 PARALLAX OPTIONS:
@@ -224,6 +249,10 @@ METRICS AND STATS OPTIONS:
 ALIASED (deprecated) OPTIONS:
   --nousb                             Disables monitoring for and managing USB hardware wallets (deprecated)
   --whitelist value                   Comma separated block number-to-hash mappings to enforce (<number>=<hash>) (deprecated in favor of --eth.requiredblocks)
+
+DAEMON OPTIONS:
+  --daemon                            Detach and run the node as a background daemon (logs redirected to <datadir>/parallax.log)
+  --pid value                         Path to the PID file when running with --daemon (default: <datadir>/parallax.pid)
 
 MISC OPTIONS:
   --snapshot                                Enables snapshot-database mode (default = enable)

@@ -1,0 +1,207 @@
+---
+title: 'Command-line RPC'
+---
+
+The `parallax` binary doubles as a JSON-RPC client for talking to a running node, in the same spirit as Bitcoin Core's `bitcoin-cli`. Rather than curling the RPC endpoint directly or entering the [JavaScript console](./js-console) for a quick status check, you invoke short subcommands:
+
+```sh
+parallax info         # → JSON node overview
+parallax blockcount   # → 12345
+parallax stop         # → graceful shutdown
+```
+
+Each subcommand opens an RPC connection, issues a single request, prints the result, and exits.
+
+## Endpoint resolution
+
+By default every command connects to `<datadir>/parallax.ipc`, picking the data directory from `--datadir` (honoring `--testnet` as `<datadir>/testnet/parallax.ipc`). You can override the endpoint with `--rpc`, which accepts a filesystem path (IPC) or a `http://`, `https://`, or `ws://` URL:
+
+```sh
+parallax --datadir ~/.parallax info
+parallax --rpc http://127.0.0.1:8545 info
+parallax --rpc /tmp/parallax.ipc info
+```
+
+If the node cannot be reached the command exits non-zero with a short hint.
+
+## Output conventions
+
+The command output mirrors `bitcoin-cli`:
+
+- **Object or array responses** are pretty-printed JSON (2-space indent), safe to pipe into `jq`.
+- **Scalar responses** (numbers, hashes, decimal amounts) are printed as a bare value plus a newline, so `$(parallax blockcount)` works in shell scripts.
+- **Mutating commands** (`stop`, `addpeer`, `removepeer`) print nothing on success and return exit code 0. Errors are written to stderr and produce exit code 1.
+
+## Command reference
+
+All commands below accept `--datadir`, `--testnet`, and `--rpc`.
+
+### `stop`
+
+Gracefully shuts down the running daemon. Equivalent to `bitcoin-cli stop`. Prints `Parallax server stopping` on success. Uses the [`admin_stop`](./json-rpc-namespaces/admin#admin_stop) RPC.
+
+```sh
+parallax --datadir ~/.parallax stop
+```
+
+### `info`
+
+Combined overview of chain, network, and mempool state. Merges the fields you would get from `getblockchaininfo`, `getnetworkinfo`, and `getmempoolinfo` in Bitcoin Core into a single JSON object.
+
+```sh
+$ parallax info
+{
+  "blocks": 1234567,
+  "chainid": 2110,
+  "connections": 8,
+  "enode": "enode://...",
+  "gasprice": "1000000000",
+  "id": "3a...e4",
+  "listenaddr": ":32110",
+  "mempool": {
+    "pending": 3,
+    "queued": 1
+  },
+  "mining": false,
+  "networkid": "2110",
+  "protocolversion": 66,
+  "syncing": false,
+  "version": "Parallax/v2.0.0-.../linux-amd64/go1.22.0"
+}
+```
+
+### `blockcount`
+
+Prints the latest block number as a bare integer. Equivalent to `bitcoin-cli getblockcount`. Uses `eth_blockNumber`.
+
+```sh
+$ parallax blockcount
+1234567
+```
+
+### `syncing`
+
+Prints `false` if the node is caught up, otherwise a JSON object with sync progress. Uses `eth_syncing`.
+
+```sh
+$ parallax syncing
+false
+```
+
+### `mempool`
+
+Summary of the node's transaction pool. Uses `txpool_status`.
+
+```sh
+$ parallax mempool
+{
+  "pending": 42,
+  "queued": 5
+}
+```
+
+### `peers`
+
+JSON array of connected peers. Equivalent to `bitcoin-cli getpeerinfo`. Uses `admin_peers`.
+
+```sh
+$ parallax peers
+[
+  {
+    "enode": "enode://...",
+    "id": "...",
+    "name": "Parallax/v2.0.0/...",
+    "caps": ["eth/66", "snap/1"],
+    "network": {
+      "localAddress": "10.0.0.2:32110",
+      "remoteAddress": "203.0.113.1:32110",
+      "inbound": false,
+      "trusted": false,
+      "static": false
+    },
+    "protocols": { "eth": { "version": 66, "difficulty": 123, "head": "0x..." } }
+  }
+]
+```
+
+### `balance <address>`
+
+Prints the balance of an account. Equivalent to `bitcoin-cli getbalance` (applied to a specific address, since the daemon has no wallet of its own). By default prints a decimal LAX value; pass `--wei` for the exact integer.
+
+```sh
+$ parallax balance 0xabc...123
+1.234567890123456789
+
+$ parallax balance 0xabc...123 --wei
+1234567890123456789
+```
+
+Uses `eth_getBalance`.
+
+### `gettx <txhash>`
+
+Fetches a transaction by hash and prints it as JSON. Equivalent to `bitcoin-cli getrawtransaction <txid> 1`. Uses `eth_getTransactionByHash`.
+
+```sh
+parallax gettx 0xabc...
+```
+
+Exits non-zero with `transaction ... not found` if the node does not know the hash.
+
+### `getreceipt <txhash>`
+
+Fetches the receipt of a mined transaction as JSON. Uses `eth_getTransactionReceipt`. Exits non-zero if the transaction is not mined yet or unknown.
+
+```sh
+parallax getreceipt 0xabc...
+```
+
+### `getblock <number|hash> [--full]`
+
+Fetches a block as JSON. Accepts a decimal block number, a hex block hash, or one of the tags `latest`, `earliest`, `pending`, `safe`, `finalized`. Pass `--full` to include full transaction objects instead of only hashes.
+
+```sh
+parallax getblock 1234567
+parallax getblock latest --full
+parallax getblock 0xabc...def
+```
+
+Uses `eth_getBlockByNumber` or `eth_getBlockByHash` depending on the argument shape.
+
+### `gasprice`
+
+Prints the current suggested gas price as a bare wei integer. Uses `eth_gasPrice`.
+
+```sh
+$ parallax gasprice
+1000000000
+```
+
+### `sendraw <hex>`
+
+Submits a signed, hex-encoded transaction and prints the resulting hash on a single line. Equivalent to `bitcoin-cli sendrawtransaction`. The `0x` prefix is optional. Uses `eth_sendRawTransaction`.
+
+```sh
+$ parallax sendraw 0xf86c...
+0xabc...def
+```
+
+### `addpeer <enode>`
+
+Adds a static peer by its enode URL. Equivalent to `bitcoin-cli addnode <node> add`. Silent on success, non-zero exit on failure. Uses `admin_addPeer`.
+
+```sh
+parallax addpeer enode://a979...@1.2.3.4:32110
+```
+
+### `removepeer <enode>`
+
+Removes a static peer. Silent on success. Uses `admin_removePeer`.
+
+```sh
+parallax removepeer enode://a979...@1.2.3.4:32110
+```
+
+## When to use the JS console instead
+
+For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.

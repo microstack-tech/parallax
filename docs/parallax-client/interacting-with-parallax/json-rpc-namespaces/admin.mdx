@@ -255,6 +255,25 @@ The method returns a boolean flag specifying whether the WebSocket RPC listener 
 true
 ```
 
+### admin\_stop
+
+Gracefully shuts down the running node. The method schedules the shutdown on a short delay (about 100 ms) and returns immediately so the RPC response can be delivered before the RPC server itself tears down. Client callers should therefore tolerate the RPC connection being closed without a final response — that outcome still indicates a successful shutdown.
+
+This is the underlying method used by the `parallax stop` command-line helper, analogous to `bitcoin-cli stop` in Bitcoin Core.
+
+| CLIENT  | METHOD INVOCATION          |
+| ------- | -------------------------- |
+| Go      | admin.Stop() (bool, error) |
+| Console | admin.stop()               |
+| RPC     | \{method": "admin\_stop"\}  |
+
+#### Example
+
+```javascript
+> admin.stop()
+true
+```
+
 ### admin\_stopHTTP
 
 The stopHTTP administrative method closes the currently open HTTP RPC endpoint. As the node can only have a single HTTP endpoint running, this method takes no parameters, returning a boolean whether the endpoint was closed or not.

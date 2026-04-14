@@ -122,6 +122,7 @@
                 "expanded": false,
                 "pages": [
                   "parallax-client/fundamentals/cli",
+                  "parallax-client/fundamentals/daemon-mode",
                   "parallax-client/fundamentals/security",
                   "parallax-client/fundamentals/sync-modes",
                   "parallax-client/fundamentals/account-management",
@@ -159,6 +160,7 @@
                       "parallax-client/interacting-with-parallax/json-rpc-namespaces/txpool"
                     ]
                   },
+                  "parallax-client/interacting-with-parallax/command-line-rpc",
                   "parallax-client/interacting-with-parallax/js-console",
                   "parallax-client/interacting-with-parallax/js-console-contracts",
                   "parallax-client/interacting-with-parallax/graph-ql-server"
