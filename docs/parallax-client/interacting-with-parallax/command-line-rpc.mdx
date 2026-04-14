@@ -251,6 +251,51 @@ parallax getblock 0xabc...def
 
 Uses `eth_getBlockByNumber` or `eth_getBlockByHash` depending on the argument shape.
 
+### `getblockhash <number>`
+
+Prints the canonical hash of the block at a given height. Equivalent to `bitcoin-cli getblockhash`. Refuses hash input (use `getheader` for the hash → header direction).
+
+```sh
+$ parallax getblockhash 0
+0xb3a45e5033f0a0a4ccfa8a82cbe2fbf93bbc26c50fc3340fa749e5a5678d4391
+```
+
+Backed by `eth_getBlockByNumber(n, false)` since there is no dedicated `eth_getBlockHash` RPC.
+
+### `getheader <number|hash>`
+
+Fetches a block header as JSON — same shape as `getblock` but without the `transactions` list, so it's smaller and faster when you only need metadata. Equivalent to `bitcoin-cli getblockheader`.
+
+```sh
+parallax getheader 1234567
+parallax getheader 0xabc...def
+parallax getheader latest
+```
+
+Uses `eth_getHeaderByNumber` or `eth_getHeaderByHash` depending on the argument shape.
+
+### `tip`
+
+Condensed JSON view of the chain tip: number, hash, parent, timestamp, miner, gas used and limit, transaction count, size, difficulty. Useful at the top of operational scripts or in health checks.
+
+```sh
+$ parallax tip
+{
+  "difficulty": "0x2",
+  "gaslimit": 11556255,
+  "gasused": 0,
+  "hash": "0xc8a6...15a8",
+  "miner": "0x0000000000000000000000000000000000000000",
+  "number": 5,
+  "parent": "0xa5a9...a284",
+  "size": 578,
+  "timestamp": 1776147050,
+  "txs": 0
+}
+```
+
+Derived from a single `eth_getBlockByNumber("latest", false)` call.
+
 ### `gasprice`
 
 Prints the current suggested gas price as a bare wei integer. Uses `eth_gasPrice`.
