@@ -30,7 +30,9 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -528,6 +530,32 @@ Prints the signature as a 0x-prefixed hex string. Prompts for the
 passphrase unless --password is set.`,
 	}
 
+	decodeRawCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientDecodeRaw),
+		Name:      "decoderaw",
+		Usage:     "Decode a raw signed transaction (offline, no daemon required)",
+		ArgsUsage: "<hex>",
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Parses a 0x-prefixed RLP-encoded signed transaction locally and prints
+its fields as JSON, including the recovered sender. Does not contact
+the running node — runs entirely client-side, analogous to
+bitcoin-cli's decoderawtransaction / bitcoin-tx decodetx.`,
+	}
+
+	toAddrCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientToAddr),
+		Name:      "toaddr",
+		Usage:     "Derive the address for a private key (offline, no daemon required)",
+		ArgsUsage: "<privkey-hex>",
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Derives and prints the 0x-address for a hex-encoded secp256k1 private
+key. Runs entirely client-side: the key is never sent to any node or
+written to disk. Useful when verifying a backup or wiring up a key
+before funding it.`,
+	}
+
 	sendTxCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientSendTx),
 		Name:      "sendtx",
@@ -633,6 +661,8 @@ var clientSugarCommands = []cli.Command{
 	lockAccountCommand,
 	signCommand,
 	sendTxCommand,
+	decodeRawCommand,
+	toAddrCommand,
 }
 
 // ----------------------------------------------------------------------------
@@ -1596,6 +1626,88 @@ func clientSendTx(ctx *cli.Context) error {
 		return err
 	}
 	printScalar(hash)
+	return nil
+}
+
+func clientDecodeRaw(ctx *cli.Context) error {
+	hexStr, err := requireArg(ctx, "hex")
+	if err != nil {
+		return err
+	}
+	hexStr = strings.TrimPrefix(strings.TrimPrefix(hexStr, "0x"), "0X")
+	raw, err := hexDecode(hexStr)
+	if err != nil {
+		return fmt.Errorf("invalid hex: %v", err)
+	}
+	var tx types.Transaction
+	if err := tx.UnmarshalBinary(raw); err != nil {
+		return fmt.Errorf("decode transaction: %v", err)
+	}
+
+	// Recover sender. ChainId is zero for pre-EIP-155 legacy txs; in
+	// that case LatestSignerForChainID still returns a usable signer.
+	chainID := tx.ChainId()
+	if chainID == nil {
+		chainID = new(big.Int)
+	}
+	signer := types.LatestSignerForChainID(chainID)
+	from, err := types.Sender(signer, &tx)
+	fromStr := ""
+	if err == nil {
+		fromStr = from.Hex()
+	}
+
+	v, r, s := tx.RawSignatureValues()
+	out := map[string]interface{}{
+		"hash":     tx.Hash().Hex(),
+		"type":     tx.Type(),
+		"chainid":  chainID.String(),
+		"nonce":    tx.Nonce(),
+		"value":    tx.Value().String(),
+		"gas":      tx.Gas(),
+		"gasprice": tx.GasPrice().String(),
+		"data":     "0x" + hexEncode(tx.Data()),
+		"v":        v.String(),
+		"r":        r.String(),
+		"s":        s.String(),
+	}
+	if fromStr != "" {
+		out["from"] = fromStr
+	} else {
+		out["from"] = nil
+	}
+	if to := tx.To(); to != nil {
+		out["to"] = to.Hex()
+	} else {
+		out["to"] = nil // contract creation
+	}
+	// Dynamic-fee fields only mean anything for EIP-1559 txs. Legacy
+	// txs synthesise GasTipCap/GasFeeCap by returning gasPrice for
+	// compatibility — emitting those under 1559-specific keys would
+	// mislead readers, so skip them unless the tx is actually typed.
+	if tx.Type() == types.DynamicFeeTxType {
+		if tip := tx.GasTipCap(); tip != nil {
+			out["maxpriorityfeepergas"] = tip.String()
+		}
+		if cap := tx.GasFeeCap(); cap != nil {
+			out["maxfeepergas"] = cap.String()
+		}
+	}
+	return printJSON(out)
+}
+
+func clientToAddr(ctx *cli.Context) error {
+	key, err := requireArg(ctx, "privkey-hex")
+	if err != nil {
+		return err
+	}
+	key = strings.TrimPrefix(strings.TrimPrefix(key, "0x"), "0X")
+	priv, err := crypto.HexToECDSA(key)
+	if err != nil {
+		return fmt.Errorf("invalid private key: %v", err)
+	}
+	addr := crypto.PubkeyToAddress(priv.PublicKey)
+	printScalar(addr.Hex())
 	return nil
 }
 
