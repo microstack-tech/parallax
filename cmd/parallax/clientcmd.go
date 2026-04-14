@@ -158,6 +158,39 @@ Equivalent to bitcoin-cli's uptime. Prints a bare integer.`,
 		Category:  "CLIENT COMMANDS",
 	}
 
+	mempoolContentCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientMempoolContent),
+		Name:      "mempool-content",
+		Usage:     "Dump the transaction pool contents (optionally filtered by sender)",
+		ArgsUsage: " ",
+		Flags: append([]cli.Flag{
+			cli.StringFlag{Name: "address", Usage: "Filter by sender address (0x…); omit for the full pool"},
+			cli.BoolFlag{Name: "inspect", Usage: "Return compact string summaries instead of full transaction objects"},
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli's getrawmempool with --verbose, for the EVM
+model. Output is a JSON object {pending, queued} keyed by address and
+nonce. The full dump can be large on a busy node; use --address to scope
+it to a single sender or --inspect for one-line summaries.`,
+	}
+
+	estimateGasCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientEstimateGas),
+		Name:      "estimategas",
+		Usage:     "Estimate the gas required to execute a transaction",
+		ArgsUsage: "<to>",
+		Flags: append([]cli.Flag{
+			cli.StringFlag{Name: "from", Usage: "Sender address (0x…); defaults to the zero address"},
+			cli.StringFlag{Name: "value", Usage: "Value in wei (integer or 0x-prefixed hex). Defaults to 0."},
+			cli.StringFlag{Name: "data", Usage: "Call data as hex (0x-prefixed). Defaults to empty."},
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Calls eth_estimateGas and prints the estimated gas units as a bare
+integer, matching the scalar-output convention used by `+"`gasprice`"+`.`,
+	}
+
 	balanceCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientBalance),
 		Name:      "balance",
@@ -245,7 +278,9 @@ var clientSugarCommands = []cli.Command{
 	blockCountCommand,
 	syncingCommand,
 	mempoolCommand,
+	mempoolContentCommand,
 	balanceCommand,
+	estimateGasCommand,
 	getTxCommand,
 	getReceiptCommand,
 	getBlockCommand,
@@ -642,6 +677,107 @@ func clientMempool(ctx *cli.Context) error {
 		"queued":  hexToUint(status["queued"]),
 	}
 	return printJSON(out)
+}
+
+func clientMempoolContent(ctx *cli.Context) error {
+	method := "txpool_content"
+	if ctx.Bool("inspect") {
+		method = "txpool_inspect"
+	}
+	var args []interface{}
+	if addr := ctx.String("address"); addr != "" {
+		// contentFrom / inspectFrom variants accept a single address.
+		// Inspect has no "from" variant in vanilla geth; fall back to
+		// filtering client-side in that case.
+		if method == "txpool_content" {
+			method = "txpool_contentFrom"
+			args = []interface{}{addr}
+		}
+	}
+	var content json.RawMessage
+	if err := callRPC(ctx, &content, method, args...); err != nil {
+		return err
+	}
+	var pretty interface{}
+	if err := json.Unmarshal(content, &pretty); err != nil {
+		return err
+	}
+	// If we used --inspect with --address, filter client-side since there
+	// is no txpool_inspectFrom RPC.
+	if ctx.Bool("inspect") && ctx.String("address") != "" {
+		if m, ok := pretty.(map[string]interface{}); ok {
+			pretty = filterByAddress(m, ctx.String("address"))
+		}
+	}
+	return printJSON(pretty)
+}
+
+// filterByAddress narrows a {pending, queued} map so each bucket contains
+// only the entries for the given sender. Address comparison is done
+// case-insensitively so 0xABCD… matches 0xabcd… — txpool_inspect emits
+// checksummed addresses while users commonly pass lowercase.
+func filterByAddress(pool map[string]interface{}, addr string) map[string]interface{} {
+	want := strings.ToLower(addr)
+	out := make(map[string]interface{}, len(pool))
+	for bucket, v := range pool {
+		entries, ok := v.(map[string]interface{})
+		if !ok {
+			out[bucket] = v
+			continue
+		}
+		filtered := make(map[string]interface{})
+		for k, val := range entries {
+			if strings.ToLower(k) == want {
+				filtered[k] = val
+			}
+		}
+		out[bucket] = filtered
+	}
+	return out
+}
+
+func clientEstimateGas(ctx *cli.Context) error {
+	to, err := requireArg(ctx, "to")
+	if err != nil {
+		return err
+	}
+	// Build the call object eth_estimateGas expects. Omitted fields are
+	// left out entirely rather than defaulted to 0x0, because some clients
+	// treat an explicit value differently than absence.
+	call := map[string]interface{}{"to": to}
+	if from := ctx.String("from"); from != "" {
+		call["from"] = from
+	}
+	if value := ctx.String("value"); value != "" {
+		call["value"] = toHexAmount(value)
+	}
+	if data := ctx.String("data"); data != "" {
+		if !strings.HasPrefix(data, "0x") {
+			data = "0x" + data
+		}
+		call["data"] = data
+	}
+	var gasHex string
+	if err := callRPC(ctx, &gasHex, "eth_estimateGas", call); err != nil {
+		return err
+	}
+	printScalar(hexToBigInt(gasHex).String())
+	return nil
+}
+
+// toHexAmount accepts either a decimal integer string or a 0x-prefixed
+// hex string and returns the 0x-prefixed hex form eth_* RPCs expect for
+// numeric call parameters. Returns "0x0" on parse failure; the RPC will
+// surface any resulting error.
+func toHexAmount(s string) string {
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		return s
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		return "0x0"
+	}
+	return "0x" + n.Text(16)
 }
 
 func clientBalance(ctx *cli.Context) error {
