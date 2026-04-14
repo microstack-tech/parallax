@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
@@ -89,6 +90,25 @@ var blockTagFlag = cli.StringFlag{
 }
 
 var (
+	startCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientStart),
+		Name:      "start",
+		Usage:     "Start parallax in daemon (background) mode",
+		ArgsUsage: "[config]",
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Convenience wrapper for "parallax --daemon". An optional positional
+argument points at a TOML configuration file to pass to the daemon
+(--config <path>). All global flags placed before "start" on the
+command line are preserved; for example:
+
+    parallax --datadir /var/lib/parallax start /etc/parallax.toml
+
+becomes:
+
+    parallax --datadir /var/lib/parallax --daemon --config /etc/parallax.toml`,
+	}
+
 	stopCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientStop),
 		Name:      "stop",
@@ -620,6 +640,7 @@ automatically; use removepeer for that. Uses admin_removeTrustedPeer.`,
 // clientSugarCommands is the set of RPC-client subcommands registered on
 // the app. Exported as a slice to keep the main.go command list compact.
 var clientSugarCommands = []cli.Command{
+	startCommand,
 	stopCommand,
 	infoCommand,
 	chainInfoCommand,
@@ -815,6 +836,53 @@ func requireArg(ctx *cli.Context, name string) (string, error) {
 // ----------------------------------------------------------------------------
 // Commands
 // ----------------------------------------------------------------------------
+
+// clientStart is syntactic sugar for `parallax --daemon [--config <path>]`.
+// It re-executes the current binary, preserving every argv token that
+// preceded "start" on the command line (so global flags like --datadir
+// carry through) and injecting --daemon (+ --config if a positional
+// config path was supplied).
+//
+// syscall.Exec replaces the running process, so the daemonization flow
+// that --daemon triggers sees the exact invocation a user who typed
+// `parallax --daemon` directly would have used.
+func clientStart(ctx *cli.Context) error {
+	configPath := ctx.Args().First()
+
+	// Take every token up to "start" as the global prefix. Anything
+	// after it is a subcommand argument we're replacing. This relies
+	// on the usual cli convention that global flags precede the
+	// subcommand; mixing them after "start" is not supported (urfave
+	// cli doesn't reliably parse flags after a subcommand token either).
+	prefix := make([]string, 0, len(os.Args))
+	found := false
+	for _, a := range os.Args[1:] {
+		if a == "start" {
+			found = true
+			break
+		}
+		prefix = append(prefix, a)
+	}
+	if !found {
+		// Shouldn't happen — cli handed us the start action. Guard
+		// anyway so a weird invocation doesn't loop forever.
+		return fmt.Errorf("could not locate the 'start' token in argv")
+	}
+
+	newArgs := append(prefix, "--daemon")
+	if configPath != "" {
+		newArgs = append(newArgs, "--config", configPath)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %v", err)
+	}
+	// syscall.Exec returns only on error. On success the current
+	// process image is replaced and the daemonize() flow in main
+	// takes over.
+	return syscall.Exec(exe, append([]string{exe}, newArgs...), os.Environ())
+}
 
 func clientStop(ctx *cli.Context) error {
 	client, endpoint, err := dialClient(ctx)
