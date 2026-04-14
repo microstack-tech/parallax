@@ -59,18 +59,23 @@ CLIENT COMMANDS:
    getreceipt                         Fetch a transaction receipt by hash
    gettx                              Fetch a transaction by hash
    info                               Combined overview of chain, network and mempool state
+   listaccounts                       List accounts the running node can see
+   lock                               Lock a previously unlocked account
    loglevel                           Set log verbosity at runtime (integer level or vmodule pattern)
    mempool                            Summary of the node's transaction pool
    mempool-content                    Dump the transaction pool contents (optionally filtered by sender)
    mining                             Show mining status (enabled, hashrate, coinbase)
    netinfo                            Network state summary (peer count, listen addr, enode, NAT)
+   newaccount                         Create a new account in the running node's keystore
    nonce                              Print the transaction count (nonce) of an account
    peers                              List peers connected to the running parallax node
    removepeer                         Remove a static peer by enode URL
    removetrusted                      Remove a peer from the trusted list
    sendraw                            Submit a signed, hex-encoded transaction and print the hash
+   sendtx                             Build, sign and send a transaction from an unlocked account
    setcoinbase                        Set the address that receives mining rewards
    setextra                           Set the extra-data field mined blocks will carry
+   sign                               Sign data with an account (Ethereum personal_sign)
    startmining                        Start the miner
    stop                               Gracefully stop a running parallax daemon
    stopmining                         Stop the miner
@@ -78,6 +83,7 @@ CLIENT COMMANDS:
    syncing                            Show sync progress of the running node
    tip                                Summary of the latest canonical block
    trace                              Trace the execution of a mined transaction
+   unlock                             Unlock an account on the running node
    uptime                             Seconds since the running node started
 
 CONSOLE COMMANDS:

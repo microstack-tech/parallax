@@ -505,6 +505,81 @@ $ parallax dbstats
 
 Intended for quick "am I running out of disk?" checks. For a full per-prefix chaindata walk, use `parallax db inspect` (offline, reads the database directly).
 
+## Wallet / accounts
+
+All commands below hit the running node's `personal_*` namespace. By default `personal_*` is refused over HTTP-RPC (it can expose key material); the sugar commands reach it via the IPC socket, which is the intended transport. If you must expose it over HTTP, enable it explicitly with `--http.api personal` and combine with `--allow-insecure-unlock`.
+
+**Never pass a passphrase as a CLI argument** — it would land in process listings and shell history. Pass it through `--password <file>` (first non-empty line) or let the command prompt on stdin.
+
+### `listaccounts`
+
+JSON array of addresses the running node can see. Equivalent to the offline `parallax account list`, but works without stopping the daemon. Uses `personal_listAccounts`.
+
+```sh
+$ parallax listaccounts
+[
+  "0xa202...5108",
+  "0x96a5...6b4d"
+]
+```
+
+### `newaccount`
+
+Creates a new keystore entry on the running node. Prompts for a passphrase with confirmation, or reads it from `--password <file>`. Prints the bare address. Uses `personal_newAccount`.
+
+```sh
+parallax newaccount
+parallax newaccount --password /etc/parallax/newkey.pass
+```
+
+### `unlock <address>`
+
+Unlocks an account so the node can sign transactions on its behalf. Equivalent to `bitcoin-cli walletpassphrase`. Silent on success. Uses `personal_unlockAccount`.
+
+```sh
+parallax unlock 0xabc...123
+parallax unlock 0xabc...123 --password /run/secrets/acct.pass --duration 1h
+parallax unlock 0xabc...123 --duration 0     # keep unlocked until the node stops
+```
+
+Default duration is 5 minutes (matching geth's built-in default). `--duration 0` passes a null duration to the RPC, which geth interprets as "until node stops".
+
+### `lock <address>`
+
+Clears the in-memory decrypted key for an account. Silent on success. Uses `personal_lockAccount`.
+
+```sh
+parallax lock 0xabc...123
+```
+
+### `sign <address> <data>`
+
+Signs `<data>` with the account's key (prefixed with the standard Ethereum signed-message preamble). Prints the 65-byte signature as a 0x-prefixed hex string.
+
+`<data>` accepts a plain UTF-8 string or a 0x-prefixed hex blob (auto-detected). Prompts for the passphrase unless `--password` is set.
+
+```sh
+parallax sign 0xabc...123 "approve this request"
+parallax sign 0xabc...123 0xdeadbeef --password /run/secrets/acct.pass
+```
+
+Uses `personal_sign`.
+
+### `sendtx --from <addr> ...`
+
+Builds a transaction from flags and submits it via `personal_sendTransaction` (signs client-side at the node using the sender's unlocked key). Prints the transaction hash on success.
+
+Required: `--from`.
+Optional: `--to` (omit for contract deploy), `--value` (wei, decimal or 0x-hex), `--data` (hex), `--gas`, `--gasprice`, `--nonce` (all decimal or 0x-hex).
+
+```sh
+parallax sendtx --from 0xabc... --to 0xdef... --value 1000000000000000000 --password /run/secrets/from.pass
+
+parallax sendtx --from 0xabc... --data 0x608060...   # contract deploy
+```
+
+Prompts for the passphrase unless `--password` is set.
+
 ## When to use the JS console instead
 
 For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.
