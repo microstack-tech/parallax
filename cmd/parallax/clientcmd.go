@@ -88,6 +88,40 @@ Equivalent to bitcoin-cli's getblockchaininfo + getnetworkinfo +
 getmempoolinfo merged into one call.`,
 	}
 
+	chainInfoCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientChainInfo),
+		Name:      "chaininfo",
+		Usage:     "Chain state summary (height, tip, difficulty, total difficulty)",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli's getblockchaininfo, scoped to chain state only
+(no network or mempool fields).`,
+	}
+
+	netInfoCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientNetInfo),
+		Name:      "netinfo",
+		Usage:     "Network state summary (peer count, listen addr, enode, NAT)",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli's getnetworkinfo.`,
+	}
+
+	uptimeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientUptime),
+		Name:      "uptime",
+		Usage:     "Seconds since the running node started",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli's uptime. Prints a bare integer.`,
+	}
+
 	peersCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientPeers),
 		Name:      "peers",
@@ -204,6 +238,9 @@ getmempoolinfo merged into one call.`,
 var clientSugarCommands = []cli.Command{
 	stopCommand,
 	infoCommand,
+	chainInfoCommand,
+	netInfoCommand,
+	uptimeCommand,
 	peersCommand,
 	blockCountCommand,
 	syncingCommand,
@@ -448,6 +485,107 @@ func clientInfo(ctx *cli.Context) error {
 		},
 	}
 	return printJSON(out)
+}
+
+func clientChainInfo(ctx *cli.Context) error {
+	client, _, err := dialClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		chainIDHex string
+		netVersion string
+		blockHex   string
+		syncing    json.RawMessage
+		head       map[string]interface{}
+	)
+	_ = client.CallContext(cctx, &chainIDHex, "eth_chainId")
+	_ = client.CallContext(cctx, &netVersion, "net_version")
+	_ = client.CallContext(cctx, &blockHex, "eth_blockNumber")
+	_ = client.CallContext(cctx, &syncing, "eth_syncing")
+	// Pull tip metadata (hash + difficulty + td) from the latest block
+	// header. false = tx hashes only, which is all we need.
+	_ = client.CallContext(cctx, &head, "eth_getBlockByNumber", "latest", false)
+
+	var syncVal interface{} = false
+	if len(syncing) > 0 && string(syncing) != "false" {
+		_ = json.Unmarshal(syncing, &syncVal)
+	}
+
+	out := map[string]interface{}{
+		"chainid":         hexToUint(chainIDHex),
+		"networkid":       netVersion,
+		"blocks":          hexToUint(blockHex),
+		"bestblockhash":   stringField(head, "hash"),
+		"difficulty":      stringField(head, "difficulty"),
+		"totaldifficulty": stringField(head, "totalDifficulty"),
+		"timestamp":       hexToUint(stringField(head, "timestamp")),
+		"gasused":         hexToUint(stringField(head, "gasUsed")),
+		"gaslimit":        hexToUint(stringField(head, "gasLimit")),
+		"syncing":         syncVal,
+	}
+	return printJSON(out)
+}
+
+func clientNetInfo(ctx *cli.Context) error {
+	client, _, err := dialClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		peerHex  string
+		listen   bool
+		nodeInfo p2p.NodeInfo
+	)
+	_ = client.CallContext(cctx, &peerHex, "net_peerCount")
+	_ = client.CallContext(cctx, &listen, "net_listening")
+	_ = client.CallContext(cctx, &nodeInfo, "admin_nodeInfo")
+
+	out := map[string]interface{}{
+		"version":         nodeInfo.Name,
+		"protocolversion": 66,
+		"connections":     hexToUint(peerHex),
+		"listening":       listen,
+		"listenaddr":      nodeInfo.ListenAddr,
+		"enode":           nodeInfo.Enode,
+		"id":              nodeInfo.ID,
+		"ip":              nodeInfo.IP,
+		"ports": map[string]int{
+			"discovery": nodeInfo.Ports.Discovery,
+			"listener":  nodeInfo.Ports.Listener,
+		},
+	}
+	return printJSON(out)
+}
+
+func clientUptime(ctx *cli.Context) error {
+	var seconds uint64
+	if err := callRPC(ctx, &seconds, "admin_uptime"); err != nil {
+		return err
+	}
+	printScalar(seconds)
+	return nil
+}
+
+// stringField reads a string field from a decoded JSON object, returning
+// "" if absent or not a string. Used to safely sift nullable block fields
+// in chaininfo output.
+func stringField(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func clientPeers(ctx *cli.Context) error {
