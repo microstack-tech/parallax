@@ -152,31 +152,6 @@ Repeat password: {{.InputLine "foobar2"}}
 `)
 }
 
-func TestWalletImport(t *testing.T) {
-	geth := runPrlx(t, "wallet", "import", "--lightkdf", "testdata/guswallet.json")
-	defer geth.ExpectExit()
-	geth.Expect(`
-!! Unsupported terminal, password will be echoed.
-Password: {{.InputLine "foo"}}
-Address: {d4584b5f6229b7be90727b0fc8c6b91bb427821f}
-`)
-
-	files, err := os.ReadDir(filepath.Join(geth.Datadir, "keystore"))
-	if len(files) != 1 {
-		t.Errorf("expected one key file in keystore directory, found %d files (error: %v)", len(files), err)
-	}
-}
-
-func TestWalletImportBadPassword(t *testing.T) {
-	geth := runPrlx(t, "wallet", "import", "--lightkdf", "testdata/guswallet.json")
-	defer geth.ExpectExit()
-	geth.Expect(`
-!! Unsupported terminal, password will be echoed.
-Password: {{.InputLine "wrong"}}
-Fatal: could not decrypt key with given password
-`)
-}
-
 func TestUnlockFlag(t *testing.T) {
 	geth := runMinimalPrlx(t, "--port", "0", "--ipcdisable", "--datadir", tmpDatadirWithKeystore(t),
 		"--unlock", "f466859ead1932d743d622cb74fc058882e8648a", "js", "testdata/empty.js")

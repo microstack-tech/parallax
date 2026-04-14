@@ -113,7 +113,7 @@ func defaultNodeConfig() node.Config {
 	cfg.Version = parallax.VersionWithCommit(gitCommit, gitDate)
 	cfg.HTTPModules = append(cfg.HTTPModules, "eth")
 	cfg.WSModules = append(cfg.WSModules, "eth")
-	cfg.IPCPath = "prlx.ipc"
+	cfg.IPCPath = "parallax.ipc"
 	return cfg
 }
 

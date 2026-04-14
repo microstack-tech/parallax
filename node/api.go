@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/debug"
@@ -122,6 +123,20 @@ func (api *privateAdminAPI) RemoveTrustedPeer(url string) (bool, error) {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
 	server.RemoveTrustedPeer(node)
+	return true, nil
+}
+
+// Stop requests a graceful shutdown of the node. It returns immediately; the
+// actual shutdown runs in a background goroutine so that the RPC response can
+// be delivered to the caller before the RPC server is torn down.
+func (api *privateAdminAPI) Stop() (bool, error) {
+	go func() {
+		// Give the RPC server a short grace period to flush the response.
+		time.Sleep(100 * time.Millisecond)
+		if err := api.node.Close(); err != nil && err != ErrNodeStopped {
+			logging.Error("admin_stop: node close failed", "err", err)
+		}
+	}()
 	return true, nil
 }
 

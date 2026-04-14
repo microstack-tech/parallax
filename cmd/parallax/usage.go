@@ -210,6 +210,10 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		},
 	},
 	{
+		Name:  "DAEMON",
+		Flags: daemonFlags,
+	},
+	{
 		Name: "MISC",
 		Flags: []cli.Flag{
 			utils.SnapshotFlag,
@@ -258,7 +262,11 @@ func init() {
 				}()
 			}
 			// Render out custom usage screen
-			originalHelpPrinter(w, tmpl, flags.HelpData{App: data, FlagGroups: AppHelpFlagGroups})
+			originalHelpPrinter(w, tmpl, flags.HelpData{
+				App:           data,
+				FlagGroups:    AppHelpFlagGroups,
+				CommandGroups: groupCommands(data.(*cli.App).Commands),
+			})
 		} else if tmpl == flags.CommandHelpTemplate {
 			// Iterate over all command specific flags and categorize them
 			categorized := make(map[string][]cli.Flag)
@@ -284,4 +292,59 @@ func init() {
 			originalHelpPrinter(w, tmpl, data)
 		}
 	}
+}
+
+// commandCategoryOrder is the display order of command category headings
+// in the app help output. Categories not listed here are appended at the
+// end in alphabetical order; commands with no Category land in a trailing
+// "COMMANDS" bucket so `help` itself stays visible.
+var commandCategoryOrder = []string{
+	"BLOCKCHAIN COMMANDS",
+	"ACCOUNT COMMANDS",
+	"DATABASE COMMANDS",
+	"CLIENT COMMANDS",
+	"CONSOLE COMMANDS",
+	"MISCELLANEOUS COMMANDS",
+}
+
+// groupCommands buckets the app's commands by their Category field and
+// returns them in the display order defined by commandCategoryOrder.
+// Within each bucket commands are sorted alphabetically by name to match
+// the default flat help output users are already familiar with.
+func groupCommands(cmds []cli.Command) []flags.CommandGroup {
+	buckets := make(map[string][]cli.Command)
+	for _, c := range cmds {
+		cat := c.Category
+		if cat == "" {
+			cat = "COMMANDS"
+		}
+		buckets[cat] = append(buckets[cat], c)
+	}
+	for cat := range buckets {
+		sort.Slice(buckets[cat], func(i, j int) bool {
+			return buckets[cat][i].Name < buckets[cat][j].Name
+		})
+	}
+
+	groups := make([]flags.CommandGroup, 0, len(buckets))
+	seen := make(map[string]bool)
+	for _, cat := range commandCategoryOrder {
+		if cmds := buckets[cat]; len(cmds) > 0 {
+			groups = append(groups, flags.CommandGroup{Name: cat, Commands: cmds})
+			seen[cat] = true
+		}
+	}
+	// Append any remaining categories (e.g. future additions, or the
+	// fallback "COMMANDS" bucket for uncategorised entries like `help`).
+	var extras []string
+	for cat := range buckets {
+		if !seen[cat] {
+			extras = append(extras, cat)
+		}
+	}
+	sort.Strings(extras)
+	for _, cat := range extras {
+		groups = append(groups, flags.CommandGroup{Name: cat, Commands: buckets[cat]})
+	}
+	return groups
 }

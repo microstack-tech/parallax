@@ -92,9 +92,9 @@ func TestAttachWelcome(t *testing.T) {
 	)
 	// Configure the instance for IPC attachment
 	if runtime.GOOS == "windows" {
-		ipc = `\\.\pipe\prlx` + strconv.Itoa(trulyRandInt(100000, 999999))
+		ipc = `\\.\pipe\parallax` + strconv.Itoa(trulyRandInt(100000, 999999))
 	} else {
-		ipc = filepath.Join(t.TempDir(), "prlx.ipc")
+		ipc = filepath.Join(t.TempDir(), "parallax.ipc")
 	}
 	// And HTTP + WS attachment
 	p := trulyRandInt(1024, 65533) // Yeah, sometimes this will fail, sorry :P

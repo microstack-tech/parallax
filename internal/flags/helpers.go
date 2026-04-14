@@ -61,7 +61,10 @@ VERSION:
    {{end}}{{if len .App.Authors}}
 AUTHOR(S):
    {{range .App.Authors}}{{ . }}{{end}}
-   {{end}}{{if .App.Commands}}
+   {{end}}{{if .CommandGroups}}{{range .CommandGroups}}
+{{.Name}}:
+   {{range .Commands}}{{join .Names ", "}}{{ "\t" }}{{.Usage}}
+   {{end}}{{end}}{{else if .App.Commands}}
 COMMANDS:
    {{range .App.Commands}}{{join .Names ", "}}{{ "\t" }}{{.Usage}}
    {{end}}{{end}}{{if .FlagGroups}}
@@ -97,8 +100,17 @@ COPYRIGHT:
 
 // HelpData is a one shot struct to pass to the usage template
 type HelpData struct {
-	App        any
-	FlagGroups []FlagGroup
+	App           any
+	FlagGroups    []FlagGroup
+	CommandGroups []CommandGroup
+}
+
+// CommandGroup is a collection of commands sharing the same Category, used
+// to render the app help output grouped by purpose rather than as one flat
+// alphabetical list.
+type CommandGroup struct {
+	Name     string
+	Commands []cli.Command
 }
 
 // FlagGroup is a collection of flags belonging to a single topic.

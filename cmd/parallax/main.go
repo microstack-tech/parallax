@@ -142,6 +142,8 @@ var (
 		utils.GpoEnableSmartFeeFlag,
 		utils.MinerNotifyFullFlag,
 		configFileFlag,
+		DaemonFlag,
+		PIDFileFlag,
 	}, utils.NetworkFlags, utils.DatabasePathFlags)
 
 	rpcFlags = []cli.Flag{
@@ -209,7 +211,6 @@ func init() {
 		dumpGenesisCommand,
 		// See accountcmd.go:
 		accountCommand,
-		walletCommand,
 		// See consolecmd.go:
 		consoleCommand,
 		attachCommand,
@@ -229,6 +230,8 @@ func init() {
 		// See snapshot.go
 		snapshotCommand,
 	}
+	// See clientcmd.go — RPC-client sugar subcommands (stop, status, peers, ...)
+	app.Commands = append(app.Commands, clientSugarCommands...)
 	sort.Sort(cli.CommandsByName(app.Commands))
 
 	app.Flags = utils.GroupFlags(nodeFlags,
@@ -310,11 +313,35 @@ func geth(ctx *cli.Context) error {
 		return fmt.Errorf("invalid command: %q", args[0])
 	}
 
+	// Daemonization: if --daemon is set and we are the original (pre-fork)
+	// process, re-exec ourselves into the background. daemonize() does not
+	// return on success — the parent exits with status 0.
+	if ctx.GlobalBool(DaemonFlag.Name) && !isDaemonChild() {
+		if err := daemonize(ctx); err != nil {
+			return fmt.Errorf("daemonize: %v", err)
+		}
+		return nil // unreachable
+	}
+
 	prepare(ctx)
 	stack, backend := makeFullNode(ctx)
 	defer stack.Close()
 
 	startNode(ctx, stack, backend, false)
+
+	// Once the node has started and its RPC/IPC endpoints are up, write the
+	// PID file so external tooling (and `parallax stop`) can locate us. Only
+	// do this when running as the daemon child — foreground mode doesn't
+	// own a PID file.
+	if isDaemonChild() {
+		cleanup, err := writeDaemonPIDFile(ctx)
+		if err != nil {
+			logging.Error("Failed to write PID file", "err", err)
+			return err
+		}
+		defer cleanup()
+	}
+
 	stack.Wait()
 	return nil
 }
