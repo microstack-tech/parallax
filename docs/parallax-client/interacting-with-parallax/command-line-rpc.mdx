@@ -148,6 +148,41 @@ $ parallax mempool
 }
 ```
 
+### `mempool-content`
+
+Dump the full transaction pool as JSON, or narrow it with `--address <sender>` (useful when you're debugging a specific account). Pass `--inspect` for one-line summaries instead of full transaction objects — handy when the pool is large.
+
+Uses `txpool_content`, `txpool_contentFrom`, or `txpool_inspect` depending on the flags.
+
+```sh
+parallax mempool-content
+parallax mempool-content --address 0xabc...123
+parallax mempool-content --inspect
+```
+
+Output shape (both variants):
+
+```json
+{
+  "pending": { "0xabc…": { "42": { "from": "…", "to": "…", ... } } },
+  "queued":  {}
+}
+```
+
+### `estimategas`
+
+Estimates the gas required to execute a transaction. Prints a bare integer, matching the scalar-output convention used by `gasprice`. Errors from the RPC (e.g. insufficient funds, revert) are surfaced to stderr with exit 1.
+
+```sh
+# Simple transfer (always 21000 on basic accounts)
+parallax estimategas 0x1111...2222
+
+# With value and calldata
+parallax estimategas 0xcontract... --from 0xsender... --value 1000000000000000000 --data 0xa9059cbb...
+```
+
+`--value` accepts decimal wei or 0x-prefixed hex. Uses `eth_estimateGas`.
+
 ### `peers`
 
 JSON array of connected peers. Equivalent to `bitcoin-cli getpeerinfo`. Uses `admin_peers`.
