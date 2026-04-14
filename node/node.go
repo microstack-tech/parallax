@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
@@ -52,6 +53,7 @@ type Node struct {
 	server        *p2p.Server       // Currently running P2P networking layer
 	startStopLock sync.Mutex        // Start/Stop are protected by an additional lock
 	state         int               // Tracks state of node lifecycle
+	startedAt     time.Time         // Wall-clock time of the latest successful Start; zero until running
 
 	lock          sync.Mutex
 	lifecycles    []Lifecycle // All registered backends, services, and auxiliary services that have a lifecycle
@@ -176,6 +178,7 @@ func (n *Node) Start() error {
 		return ErrNodeStopped
 	}
 	n.state = runningState
+	n.startedAt = time.Now()
 	// open networking and RPC endpoints
 	err := n.openEndpoints()
 	lifecycles := make([]Lifecycle, len(n.lifecycles))

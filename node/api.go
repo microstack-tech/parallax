@@ -126,6 +126,20 @@ func (api *privateAdminAPI) RemoveTrustedPeer(url string) (bool, error) {
 	return true, nil
 }
 
+// Uptime returns the number of seconds the node has been running since its
+// most recent Start. Returns 0 if the node is not yet running. Mirrors
+// bitcoin-cli's `uptime` and backs the `parallax uptime` sugar command.
+func (api *privateAdminAPI) Uptime() (uint64, error) {
+	api.node.lock.Lock()
+	startedAt := api.node.startedAt
+	state := api.node.state
+	api.node.lock.Unlock()
+	if state != runningState || startedAt.IsZero() {
+		return 0, nil
+	}
+	return uint64(time.Since(startedAt).Seconds()), nil
+}
+
 // Stop requests a graceful shutdown of the node. It returns immediately; the
 // actual shutdown runs in a background goroutine so that the RPC response can
 // be delivered to the caller before the RPC server is torn down.
