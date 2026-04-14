@@ -70,6 +70,54 @@ $ parallax info
 }
 ```
 
+### `chaininfo`
+
+Chain state only (no network or mempool). Equivalent to `bitcoin-cli getblockchaininfo`.
+
+```sh
+$ parallax chaininfo
+{
+  "bestblockhash": "0x2e9f...0150",
+  "blocks": 1234567,
+  "chainid": 2110,
+  "difficulty": "0x1",
+  "gaslimit": 11500000,
+  "gasused": 0,
+  "networkid": "2110",
+  "syncing": false,
+  "timestamp": 1700000000,
+  "totaldifficulty": "0x1"
+}
+```
+
+### `netinfo`
+
+Network state only. Equivalent to `bitcoin-cli getnetworkinfo`. Uses `admin_nodeInfo` + `net_peerCount` + `net_listening`.
+
+```sh
+$ parallax netinfo
+{
+  "connections": 8,
+  "enode": "enode://...",
+  "id": "3ab8...cecf",
+  "ip": "127.0.0.1",
+  "listenaddr": ":32110",
+  "listening": true,
+  "ports": { "discovery": 32110, "listener": 32110 },
+  "protocolversion": 66,
+  "version": "Parallax/v2.0.0/.../go1.22.0"
+}
+```
+
+### `uptime`
+
+Seconds since the running node started. Equivalent to `bitcoin-cli uptime`. Backed by a new `admin_uptime` RPC.
+
+```sh
+$ parallax uptime
+86400
+```
+
 ### `blockcount`
 
 Prints the latest block number as a bare integer. Equivalent to `bitcoin-cli getblockcount`. Uses `eth_blockNumber`.

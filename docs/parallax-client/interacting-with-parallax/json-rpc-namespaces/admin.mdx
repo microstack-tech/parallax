@@ -255,6 +255,23 @@ The method returns a boolean flag specifying whether the WebSocket RPC listener 
 true
 ```
 
+### admin\_uptime
+
+Returns the number of seconds the node has been running since its most recent `Start`. Returns 0 if the node is not yet fully started. Mirrors Bitcoin Core's `uptime` command and backs the `parallax uptime` command-line helper.
+
+| CLIENT  | METHOD INVOCATION             |
+| ------- | ----------------------------- |
+| Go      | admin.Uptime() (uint64, error) |
+| Console | admin.uptime()                |
+| RPC     | \{method": "admin\_uptime"\}   |
+
+#### Example
+
+```javascript
+> admin.uptime()
+86400
+```
+
 ### admin\_stop
 
 Gracefully shuts down the running node. The method schedules the shutdown on a short delay (about 100 ms) and returns immediately so the RPC response can be delivered before the RPC server itself tears down. Client callers should therefore tolerate the RPC connection being closed without a final response — that outcome still indicates a successful shutdown.
