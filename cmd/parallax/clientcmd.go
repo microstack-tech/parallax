@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -349,6 +351,30 @@ scripts or in health probes.`,
 		Flags:     clientCommandFlags,
 		Category:  "CLIENT COMMANDS",
 	}
+
+	addTrustedCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientAddTrusted),
+		Name:      "addtrusted",
+		Usage:     "Mark a peer as trusted (bypasses connection slot limits)",
+		ArgsUsage: "<enode>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Adds the peer to the trusted list so it is always allowed to connect,
+even when the node is at its max-peers limit. Uses admin_addTrustedPeer.`,
+	}
+
+	removeTrustedCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientRemoveTrusted),
+		Name:      "removetrusted",
+		Usage:     "Remove a peer from the trusted list",
+		ArgsUsage: "<enode>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Removes the peer from the trusted list. The peer is not disconnected
+automatically; use removepeer for that. Uses admin_removeTrustedPeer.`,
+	}
 )
 
 // clientSugarCommands is the set of RPC-client subcommands registered on
@@ -379,6 +405,8 @@ var clientSugarCommands = []cli.Command{
 	sendRawCommand,
 	addPeerCommand,
 	removePeerCommand,
+	addTrustedCommand,
+	removeTrustedCommand,
 }
 
 // ----------------------------------------------------------------------------
@@ -1158,32 +1186,124 @@ func clientSendRaw(ctx *cli.Context) error {
 }
 
 func clientAddPeer(ctx *cli.Context) error {
-	enode, err := requireArg(ctx, "enode")
-	if err != nil {
-		return err
-	}
-	var ok bool
-	if err := callRPC(ctx, &ok, "admin_addPeer", enode); err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("admin_addPeer returned false")
-	}
-	// bitcoin-cli addnode prints nothing on success.
-	return nil
+	return callPeerAdmin(ctx, "admin_addPeer", "enode|host:port")
 }
 
 func clientRemovePeer(ctx *cli.Context) error {
-	enode, err := requireArg(ctx, "enode")
+	return callPeerAdmin(ctx, "admin_removePeer", "enode|host:port")
+}
+
+func clientAddTrusted(ctx *cli.Context) error {
+	return callPeerAdmin(ctx, "admin_addTrustedPeer", "enode|host:port")
+}
+
+func clientRemoveTrusted(ctx *cli.Context) error {
+	return callPeerAdmin(ctx, "admin_removeTrustedPeer", "enode|host:port")
+}
+
+// callPeerAdmin implements the shared body of all four peer-admin sugar
+// commands. It reads the first positional argument, resolves it to a full
+// enode URL if the user gave a bare host:port, and dispatches the named
+// admin_* RPC. The RPCs all return (bool, error) with false-meaning-no-op
+// semantics, so we raise that to an error for script-friendliness.
+func callPeerAdmin(ctx *cli.Context, method, argName string) error {
+	input, err := requireArg(ctx, argName)
+	if err != nil {
+		return err
+	}
+	enode, err := resolvePeerTarget(ctx, input)
 	if err != nil {
 		return err
 	}
 	var ok bool
-	if err := callRPC(ctx, &ok, "admin_removePeer", enode); err != nil {
+	if err := callRPC(ctx, &ok, method, enode); err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("admin_removePeer returned false")
+		return fmt.Errorf("%s returned false", method)
 	}
 	return nil
+}
+
+// resolvePeerTarget normalises a user-supplied peer identifier into the
+// full enode URL that the admin_* peer RPCs require.
+//
+// Accepted inputs:
+//   - enode://<64-hex-id>@host:port[?discport=…]  — passed through
+//   - enr:<base64>                                 — passed through
+//   - host:port                                    — resolved against the
+//     running node's current peer list by matching IP and listen port.
+//   - host                                         — as above, but without
+//     the port constraint; must uniquely identify a connected peer.
+//
+// The host forms only work when the target peer is currently connected
+// (so its cryptographic node ID is known to us). If we cannot identify
+// it, we fail with a message pointing the user at the full enode URL
+// form. This is intentionally restrictive: adopting an arbitrary pubkey
+// discovered by dialling a host would let any process at that address
+// get itself trusted.
+func resolvePeerTarget(ctx *cli.Context, input string) (string, error) {
+	if strings.HasPrefix(input, "enode://") || strings.HasPrefix(input, "enr:") {
+		return input, nil
+	}
+
+	// Split host[:port]. A missing-port error isn't fatal here — we
+	// support both "ip:port" and bare "ip" forms.
+	host, port, err := net.SplitHostPort(input)
+	if err != nil {
+		if strings.Contains(err.Error(), "missing port") {
+			host, port = input, ""
+		} else {
+			return "", fmt.Errorf("invalid peer identifier %q: %v", input, err)
+		}
+	}
+
+	var peers []*p2p.PeerInfo
+	if err := callRPC(ctx, &peers, "admin_peers"); err != nil {
+		return "", fmt.Errorf("looking up node id for %s: %v", input, err)
+	}
+
+	wantIP := net.ParseIP(host)
+	var matches []*p2p.PeerInfo
+	for _, p := range peers {
+		// p.Enode is the peer's authenticated enode URL with its
+		// advertised listen address (not the ephemeral socket port
+		// that RemoteAddress would report for inbound peers).
+		u, err := url.Parse(p.Enode)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		peerHost, peerPort, err := net.SplitHostPort(u.Host)
+		if err != nil {
+			continue
+		}
+		if port != "" && peerPort != port {
+			continue
+		}
+		if wantIP != nil {
+			if ip := net.ParseIP(peerHost); ip == nil || !ip.Equal(wantIP) {
+				continue
+			}
+		} else if peerHost != host {
+			continue
+		}
+		matches = append(matches, p)
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no currently connected peer at %s — pass the full enode:// URL instead", input)
+	case 1:
+		return matches[0].Enode, nil
+	default:
+		// Ambiguous: multiple peers share this host (e.g. two nodes
+		// behind the same NAT). Make the user disambiguate with a
+		// port, and show them the candidates.
+		candidates := make([]string, 0, len(matches))
+		for _, p := range matches {
+			candidates = append(candidates, p.Enode)
+		}
+		return "", fmt.Errorf("multiple peers match %s; disambiguate with host:port or a full enode URL. Candidates:\n  %s",
+			input, strings.Join(candidates, "\n  "))
+	}
 }
