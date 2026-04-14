@@ -66,6 +66,15 @@ var weiFlag = cli.BoolFlag{
 	Usage: "Print amounts in wei (integer) instead of LAX (decimal)",
 }
 
+// passwordFileFlag lets the wallet commands read a passphrase from a file
+// instead of prompting. Only the first line of the file is used. Matches
+// bitcoin-cli's -stdinrpcpass / -rpcwallet pattern in spirit — keep the
+// secret out of the process table (never pass it as a CLI arg).
+var passwordFileFlag = cli.StringFlag{
+	Name:  "password",
+	Usage: "Read the passphrase from this file (first line). Omit to prompt on stdin.",
+}
+
 // blockTagFlag selects which historical block account-state lookups should
 // be evaluated against. Accepts the same values eth_* RPCs take: a decimal
 // block number, a 0x-prefixed hex number, or latest/earliest/pending/safe/
@@ -444,6 +453,103 @@ pass a named tracer for a condensed view. Use --timeout to raise the
 client deadline for long-running traces.`,
 	}
 
+	listAccountsCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientListAccounts),
+		Name:      "listaccounts",
+		Usage:     "List accounts the running node can see",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Calls personal_listAccounts and prints a JSON array of addresses.
+Equivalent to the offline "parallax account list" but works against a
+running daemon without stopping it.`,
+	}
+
+	newAccountCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientNewAccount),
+		Name:      "newaccount",
+		Usage:     "Create a new account in the running node's keystore",
+		ArgsUsage: " ",
+		Flags: append([]cli.Flag{
+			passwordFileFlag,
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Prompts for a password (with confirmation) and asks the node to create
+a new keystore entry via personal_newAccount. Prints the bare address
+on success. Use --password to read the passphrase from a file instead
+of prompting; the first line of the file is used.`,
+	}
+
+	unlockAccountCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientUnlockAccount),
+		Name:      "unlock",
+		Usage:     "Unlock an account on the running node",
+		ArgsUsage: "<address>",
+		Flags: append([]cli.Flag{
+			passwordFileFlag,
+			cli.DurationFlag{
+				Name:  "duration",
+				Usage: "How long to keep the account unlocked (e.g. 5m, 1h); 0 = until the node stops. Default 5m.",
+			},
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Calls personal_unlockAccount. Equivalent to bitcoin-cli walletpassphrase.
+Silent on success. Prompts for the passphrase unless --password is set.`,
+	}
+
+	lockAccountCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientLockAccount),
+		Name:      "lock",
+		Usage:     "Lock a previously unlocked account",
+		ArgsUsage: "<address>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Calls personal_lockAccount. Equivalent to bitcoin-cli walletlock.
+Silent on success.`,
+	}
+
+	signCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientSign),
+		Name:      "sign",
+		Usage:     "Sign data with an account (Ethereum personal_sign)",
+		ArgsUsage: "<address> <data>",
+		Flags: append([]cli.Flag{
+			passwordFileFlag,
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Calls personal_sign with the Ethereum text-message prefix. <data>
+accepts a plain UTF-8 string or a 0x-prefixed hex blob (auto-detected).
+Prints the signature as a 0x-prefixed hex string. Prompts for the
+passphrase unless --password is set.`,
+	}
+
+	sendTxCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientSendTx),
+		Name:      "sendtx",
+		Usage:     "Build, sign and send a transaction from an unlocked account",
+		ArgsUsage: " ",
+		Flags: append([]cli.Flag{
+			cli.StringFlag{Name: "from", Usage: "Sender address (required)"},
+			cli.StringFlag{Name: "to", Usage: "Recipient address; omit to deploy a contract"},
+			cli.StringFlag{Name: "value", Usage: "Value in wei (integer or 0x hex); default 0"},
+			cli.StringFlag{Name: "data", Usage: "Call data as hex (0x-prefixed); default empty"},
+			cli.StringFlag{Name: "gas", Usage: "Gas limit (integer); let the node estimate if omitted"},
+			cli.StringFlag{Name: "gasprice", Usage: "Gas price in wei; let the node default if omitted"},
+			cli.StringFlag{Name: "nonce", Usage: "Explicit nonce; looked up automatically if omitted"},
+			passwordFileFlag,
+		}, clientCommandFlags...),
+		Category: "CLIENT COMMANDS",
+		Description: `
+Builds a transaction from flags and signs+submits it via
+personal_sendTransaction. Prints the transaction hash on success.
+Prompts for the passphrase unless --password is set.`,
+	}
+
 	dbStatsCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientDbStats),
 		Name:      "dbstats",
@@ -521,6 +627,12 @@ var clientSugarCommands = []cli.Command{
 	logLevelCommand,
 	traceCommand,
 	dbStatsCommand,
+	listAccountsCommand,
+	newAccountCommand,
+	unlockAccountCommand,
+	lockAccountCommand,
+	signCommand,
+	sendTxCommand,
 }
 
 // ----------------------------------------------------------------------------
@@ -1320,6 +1432,186 @@ func clientRemoveTrusted(ctx *cli.Context) error {
 // enode URL if the user gave a bare host:port, and dispatches the named
 // admin_* RPC. The RPCs all return (bool, error) with false-meaning-no-op
 // semantics, so we raise that to an error for script-friendliness.
+// readPassword returns the passphrase to use for a personal_* call. If
+// --password points at a file, the first non-empty line is used; otherwise
+// the user is prompted on stdin/tty. Confirmation (double-entry) is used
+// for newaccount where a typo would leave an unrecoverable keystore file.
+func readPassword(ctx *cli.Context, prompt string, confirm bool) (string, error) {
+	if file := ctx.String(passwordFileFlag.Name); file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("read password file: %v", err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimRight(line, "\r")
+			if line != "" {
+				return line, nil
+			}
+		}
+		return "", fmt.Errorf("password file %s is empty", file)
+	}
+	// Prompt interactively. Reuse the same terminal prompter the offline
+	// account commands use so the UX is consistent.
+	return utils.GetPassPhrase(prompt, confirm), nil
+}
+
+func clientListAccounts(ctx *cli.Context) error {
+	var accounts []string
+	if err := callRPC(ctx, &accounts, "personal_listAccounts"); err != nil {
+		return err
+	}
+	if accounts == nil {
+		accounts = []string{}
+	}
+	return printJSON(accounts)
+}
+
+func clientNewAccount(ctx *cli.Context) error {
+	pwd, err := readPassword(ctx, "Your new account is locked with a password. Please give a password. Do not forget this password.", true)
+	if err != nil {
+		return err
+	}
+	var addr string
+	if err := callRPC(ctx, &addr, "personal_newAccount", pwd); err != nil {
+		return err
+	}
+	printScalar(addr)
+	return nil
+}
+
+func clientUnlockAccount(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	pwd, err := readPassword(ctx, fmt.Sprintf("Unlock account %s", addr), false)
+	if err != nil {
+		return err
+	}
+	// The RPC accepts *uint64 seconds. Default to 300s (matching geth's
+	// built-in default for personal_unlockAccount) when --duration is 0
+	// so a bare "parallax unlock" doesn't silently keep the key available
+	// forever.
+	seconds := uint64(300)
+	if d := ctx.Duration("duration"); d > 0 {
+		seconds = uint64(d.Seconds())
+	} else if ctx.IsSet("duration") {
+		// Explicit --duration 0 — preserve geth's "until node stops"
+		// semantics by passing a null duration.
+		var ok bool
+		if err := callRPC(ctx, &ok, "personal_unlockAccount", addr, pwd, nil); err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("personal_unlockAccount returned false")
+		}
+		return nil
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "personal_unlockAccount", addr, pwd, seconds); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("personal_unlockAccount returned false")
+	}
+	return nil
+}
+
+func clientLockAccount(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "personal_lockAccount", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("personal_lockAccount returned false")
+	}
+	return nil
+}
+
+func clientSign(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	if ctx.NArg() < 2 {
+		return fmt.Errorf("missing required argument: data")
+	}
+	data := ctx.Args().Get(1)
+	// personal_sign expects 0x-prefixed hex bytes. A plain UTF-8 string
+	// gets hex-encoded client-side so users can pass either form without
+	// thinking about encoding.
+	hexData := data
+	if !(strings.HasPrefix(data, "0x") || strings.HasPrefix(data, "0X")) {
+		hexData = "0x" + hexEncode([]byte(data))
+	}
+	pwd, err := readPassword(ctx, fmt.Sprintf("Sign with %s", addr), false)
+	if err != nil {
+		return err
+	}
+	var sig string
+	if err := callRPC(ctx, &sig, "personal_sign", hexData, addr, pwd); err != nil {
+		return err
+	}
+	printScalar(sig)
+	return nil
+}
+
+func clientSendTx(ctx *cli.Context) error {
+	from := ctx.String("from")
+	if from == "" {
+		return fmt.Errorf("--from is required")
+	}
+	args := map[string]interface{}{"from": from}
+	if to := ctx.String("to"); to != "" {
+		args["to"] = to
+	}
+	if v := ctx.String("value"); v != "" {
+		args["value"] = toHexAmount(v)
+	}
+	if d := ctx.String("data"); d != "" {
+		if !strings.HasPrefix(d, "0x") {
+			d = "0x" + d
+		}
+		args["data"] = d
+	}
+	if g := ctx.String("gas"); g != "" {
+		args["gas"] = toHexAmount(g)
+	}
+	if gp := ctx.String("gasprice"); gp != "" {
+		args["gasPrice"] = toHexAmount(gp)
+	}
+	if n := ctx.String("nonce"); n != "" {
+		args["nonce"] = toHexAmount(n)
+	}
+	pwd, err := readPassword(ctx, fmt.Sprintf("Send transaction from %s", from), false)
+	if err != nil {
+		return err
+	}
+	var hash string
+	if err := callRPC(ctx, &hash, "personal_sendTransaction", args, pwd); err != nil {
+		return err
+	}
+	printScalar(hash)
+	return nil
+}
+
+// hexEncode is the complement of hexDecode: byte slice → lowercase hex
+// string without the 0x prefix. Used for encoding plain-text sign payloads
+// that personal_sign expects as hex bytes.
+func hexEncode(b []byte) string {
+	const hexdigits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = hexdigits[v>>4]
+		out[i*2+1] = hexdigits[v&0x0f]
+	}
+	return string(out)
+}
+
 func clientLogLevel(ctx *cli.Context) error {
 	arg, err := requireArg(ctx, "level|pattern")
 	if err != nil {
