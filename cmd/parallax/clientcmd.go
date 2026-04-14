@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -364,6 +365,68 @@ Adds the peer to the trusted list so it is always allowed to connect,
 even when the node is at its max-peers limit. Uses admin_addTrustedPeer.`,
 	}
 
+	miningCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientMining),
+		Name:      "mining",
+		Usage:     "Show mining status (enabled, hashrate, coinbase)",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Equivalent to bitcoin-cli getmininginfo. Returns a JSON object summarising
+the miner state: whether mining is enabled, current hashrate, configured
+coinbase, and the latest canonical block's number/timestamp for context.`,
+	}
+
+	startMiningCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientStartMining),
+		Name:      "startmining",
+		Usage:     "Start the miner",
+		ArgsUsage: "[threads]",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Starts the built-in miner. Optional positional argument specifies the
+number of CPU threads; omit it to use all logical CPUs. Uses miner_start.`,
+	}
+
+	stopMiningCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientStopMining),
+		Name:      "stopmining",
+		Usage:     "Stop the miner",
+		ArgsUsage: " ",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Stops the built-in miner. Silent on success. Uses miner_stop.`,
+	}
+
+	setCoinbaseCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientSetCoinbase),
+		Name:      "setcoinbase",
+		Usage:     "Set the address that receives mining rewards",
+		ArgsUsage: "<address>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Updates the coinbase (the address credited with block rewards) without
+restarting the node. Silent on success. Uses miner_setCoinbase.`,
+	}
+
+	setExtraCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientSetExtra),
+		Name:      "setextra",
+		Usage:     "Set the extra-data field mined blocks will carry",
+		ArgsUsage: "<data>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Updates the extra-data bytes embedded in blocks this node mines.
+Accepts a plain string or a 0x-prefixed hex blob (auto-detected).
+Must fit the 32-byte extradata limit — longer values are rejected by
+the miner. Uses miner_setExtra.`,
+	}
+
 	removeTrustedCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientRemoveTrusted),
 		Name:      "removetrusted",
@@ -407,6 +470,11 @@ var clientSugarCommands = []cli.Command{
 	removePeerCommand,
 	addTrustedCommand,
 	removeTrustedCommand,
+	miningCommand,
+	startMiningCommand,
+	stopMiningCommand,
+	setCoinbaseCommand,
+	setExtraCommand,
 }
 
 // ----------------------------------------------------------------------------
@@ -1206,6 +1274,148 @@ func clientRemoveTrusted(ctx *cli.Context) error {
 // enode URL if the user gave a bare host:port, and dispatches the named
 // admin_* RPC. The RPCs all return (bool, error) with false-meaning-no-op
 // semantics, so we raise that to an error for script-friendliness.
+func clientMining(ctx *cli.Context) error {
+	client, _, err := dialClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		mining       bool
+		hashrateHex  string
+		coinbase     string
+		coinbaseErr  error
+		blockHex     string
+		blockHashPtr map[string]interface{}
+	)
+	_ = client.CallContext(cctx, &mining, "eth_mining")
+	_ = client.CallContext(cctx, &hashrateHex, "eth_hashrate")
+	coinbaseErr = client.CallContext(cctx, &coinbase, "eth_coinbase")
+	_ = client.CallContext(cctx, &blockHex, "eth_blockNumber")
+	_ = client.CallContext(cctx, &blockHashPtr, "eth_getBlockByNumber", "latest", false)
+
+	out := map[string]interface{}{
+		"mining":   mining,
+		"hashrate": hexToBigInt(hashrateHex).String(),
+		"blocks":   hexToUint(blockHex),
+	}
+	// eth_coinbase errors when no coinbase is configured (e.g. fresh dev
+	// node without --miner.coinbase). Surface that as null rather than
+	// failing the whole command.
+	if coinbaseErr == nil {
+		out["coinbase"] = coinbase
+	} else {
+		out["coinbase"] = nil
+	}
+	// Include a small hint about the tip so operators can sanity-check
+	// that "mining" actually produces blocks without a follow-up call.
+	if blockHashPtr != nil {
+		out["bestblockhash"] = stringField(blockHashPtr, "hash")
+		out["bestblocktime"] = hexToUint(stringField(blockHashPtr, "timestamp"))
+	}
+	return printJSON(out)
+}
+
+func clientStartMining(ctx *cli.Context) error {
+	args := ctx.Args()
+	var params []interface{}
+	if args.Present() {
+		n, err := strconv.Atoi(args.First())
+		if err != nil {
+			return fmt.Errorf("invalid threads value %q: %v", args.First(), err)
+		}
+		params = []interface{}{n}
+	}
+	// miner_start returns error only on failure; ignore the zero-value
+	// response decoded into a typed placeholder.
+	var result json.RawMessage
+	if err := callRPC(ctx, &result, "miner_start", params...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func clientStopMining(ctx *cli.Context) error {
+	var result json.RawMessage
+	if err := callRPC(ctx, &result, "miner_stop"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func clientSetCoinbase(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "address")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "miner_setCoinbase", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("miner_setCoinbase returned false")
+	}
+	return nil
+}
+
+func clientSetExtra(ctx *cli.Context) error {
+	data, err := requireArg(ctx, "data")
+	if err != nil {
+		return err
+	}
+	// Accept either a plain string ("my pool v1") or a 0x-prefixed hex
+	// blob. The miner's SetExtra wants raw bytes as a Go string, so we
+	// decode hex client-side to avoid double-encoding.
+	payload := data
+	if strings.HasPrefix(data, "0x") || strings.HasPrefix(data, "0X") {
+		raw, err := hexDecode(data[2:])
+		if err != nil {
+			return fmt.Errorf("invalid hex for extra data: %v", err)
+		}
+		payload = string(raw)
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "miner_setExtra", payload); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("miner_setExtra returned false")
+	}
+	return nil
+}
+
+// hexDecode is a small wrapper around hex decoding that tolerates odd
+// lengths by left-padding with a leading zero — matches how people
+// casually pass short values like "0x1" for convenience.
+func hexDecode(s string) ([]byte, error) {
+	if len(s)%2 == 1 {
+		s = "0" + s
+	}
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		var v byte
+		for j := 0; j < 2; j++ {
+			c := s[i*2+j]
+			v <<= 4
+			switch {
+			case c >= '0' && c <= '9':
+				v |= c - '0'
+			case c >= 'a' && c <= 'f':
+				v |= c - 'a' + 10
+			case c >= 'A' && c <= 'F':
+				v |= c - 'A' + 10
+			default:
+				return nil, fmt.Errorf("invalid hex character %q", c)
+			}
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
 func callPeerAdmin(ctx *cli.Context, method, argName string) error {
 	input, err := requireArg(ctx, argName)
 	if err != nil {
