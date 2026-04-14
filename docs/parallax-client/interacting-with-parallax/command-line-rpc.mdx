@@ -580,6 +580,47 @@ parallax sendtx --from 0xabc... --data 0x608060...   # contract deploy
 
 Prompts for the passphrase unless `--password` is set.
 
+## Offline utilities
+
+Two commands run entirely client-side and do not require a running daemon — useful for air-gapped key handling and tx inspection.
+
+### `decoderaw <hex>`
+
+Decodes a 0x-prefixed RLP-encoded signed transaction and prints its fields as JSON, including the recovered sender. Equivalent to `bitcoin-cli decoderawtransaction`. Works for legacy, EIP-2930, and EIP-1559 transactions; dynamic-fee fields (`maxfeepergas`, `maxpriorityfeepergas`) only appear on EIP-1559 txs so legacy output stays clean.
+
+```sh
+$ parallax decoderaw 0xf86580843b9aca00825208941111111111111111111111111111111111111111010180820a96a0...
+{
+  "chainid": "1337",
+  "data": "0x",
+  "from": "0x43Ec477b3dd00BF4434Fc457425b0425AB39F00f",
+  "gas": 21000,
+  "gasprice": "1000000000",
+  "hash": "0xabc...",
+  "nonce": 0,
+  "r": "...",
+  "s": "...",
+  "to": "0x1111111111111111111111111111111111111111",
+  "type": 0,
+  "v": "2710",
+  "value": "1"
+}
+```
+
+No RPC call is made. Parsing and sender recovery happen in the binary itself.
+
+### `toaddr <privkey-hex>`
+
+Derives and prints the 0x-address for a hex-encoded secp256k1 private key. Runs entirely client-side — the key is never sent to any node or written to disk. Useful when verifying a backup or wiring up a key before funding it.
+
+```sh
+$ parallax toaddr 0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318
+0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
+
+$ parallax toaddr 4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   # 0x prefix optional
+0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
+```
+
 ## When to use the JS console instead
 
 For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.
