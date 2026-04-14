@@ -97,7 +97,7 @@ Some snags and todos
 * Geth todos
   * The signer should pass the `Origin` header as call-info to the UI. As of right now, the way that info about the request is put together is a bit of a hack into the HTTP server. This could probably be greatly improved.
   * Relay: Geth should be started in `geth --signer localhost:8550`.
-  * Currently, the Geth APIs use `common.Address` in the arguments to transaction submission (e.g `to` field). This type is 20 `bytes`, and is incapable of carrying checksum information. The signer uses `common.MixedcaseAddress`, which retains the original input.
+  * Currently, the Geth APIs use `util.Address` in the arguments to transaction submission (e.g `to` field). This type is 20 `bytes`, and is incapable of carrying checksum information. The signer uses `util.MixedcaseAddress`, which retains the original input.
   * The Geth API should switch to use the same type, and relay `to`-account verbatim to the external API.
 * [x] Storage
   * [x] An encrypted key-value storage should be implemented.

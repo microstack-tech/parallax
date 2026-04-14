@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package simulations
 
@@ -26,11 +26,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/event"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/adapters"
+	"github.com/ParallaxProtocol/parallax/support/event"
 )
 
 var DialBanTimeout = 200 * time.Millisecond
@@ -119,7 +119,7 @@ func (net *Network) NewNodeWithConfig(conf *adapters.NodeConfig) (*Node, error) 
 		return nil, err
 	}
 	node := newNode(adapterNode, conf, false)
-	log.Trace("Node created", "id", conf.ID)
+	logging.Trace("Node created", "id", conf.ID)
 
 	nodeIndex := len(net.Nodes)
 	net.nodeMap[conf.ID] = nodeIndex
@@ -185,13 +185,13 @@ func (net *Network) startWithSnapshots(id enode.ID, snapshots map[string][]byte)
 	if node.Up() {
 		return fmt.Errorf("node %v already up", id)
 	}
-	log.Trace("Starting node", "id", id, "adapter", net.nodeAdapter.Name())
+	logging.Trace("Starting node", "id", id, "adapter", net.nodeAdapter.Name())
 	if err := node.Start(snapshots); err != nil {
-		log.Warn("Node startup failed", "id", id, "err", err)
+		logging.Warn("Node startup failed", "id", id, "err", err)
 		return err
 	}
 	node.SetUp(true)
-	log.Info("Started node", "id", id)
+	logging.Info("Started node", "id", id)
 	ev := NewEvent(node)
 	net.events.Send(ev)
 
@@ -250,7 +250,7 @@ func (net *Network) watchPeerEvents(id enode.ID, events chan *p2p.PeerEvent, sub
 
 		case err := <-sub.Err():
 			if err != nil {
-				log.Error("Error in peer event subscription", "id", id, "err", err)
+				logging.Error("Error in peer event subscription", "id", id, "err", err)
 			}
 			return
 		}
@@ -293,7 +293,7 @@ func (net *Network) Stop(id enode.ID) error {
 		node.SetUp(true)
 		return err
 	}
-	log.Info("Stopped node", "id", id, "err", err)
+	logging.Info("Stopped node", "id", id, "err", err)
 	ev := ControlEvent(node)
 	net.events.Send(ev)
 	return nil
@@ -308,7 +308,7 @@ func (net *Network) Connect(oneID, otherID enode.ID) error {
 }
 
 func (net *Network) connect(oneID, otherID enode.ID) error {
-	log.Debug("Connecting nodes with addPeer", "id", oneID, "other", otherID)
+	logging.Debug("Connecting nodes with addPeer", "id", oneID, "other", otherID)
 	conn, err := net.initConn(oneID, otherID)
 	if err != nil {
 		return err
@@ -677,10 +677,10 @@ func (net *Network) initConn(oneID, otherID enode.ID) (*Conn, error) {
 
 	err = conn.nodesUp()
 	if err != nil {
-		log.Trace("Nodes not up", "err", err)
+		logging.Trace("Nodes not up", "err", err)
 		return nil, fmt.Errorf("nodes not up: %v", err)
 	}
-	log.Debug("Connection initiated", "id", oneID, "other", otherID)
+	logging.Debug("Connection initiated", "id", oneID, "other", otherID)
 	conn.initiated = time.Now()
 	return conn, nil
 }
@@ -688,9 +688,9 @@ func (net *Network) initConn(oneID, otherID enode.ID) (*Conn, error) {
 // Shutdown stops all nodes in the network and closes the quit channel
 func (net *Network) Shutdown() {
 	for _, node := range net.Nodes {
-		log.Debug("Stopping node", "id", node.ID())
+		logging.Debug("Stopping node", "id", node.ID())
 		if err := node.Stop(); err != nil {
-			log.Warn("Can't stop node", "id", node.ID(), "err", err)
+			logging.Warn("Can't stop node", "id", node.ID(), "err", err)
 		}
 	}
 	close(net.quitc)
@@ -786,7 +786,7 @@ func (n *Node) MarshalJSON() ([]byte, error) {
 // status. IMPORTANT: The implementation is incomplete; we lose p2p.NodeInfo.
 func (n *Node) UnmarshalJSON(raw []byte) error {
 	// TODO: How should we turn back NodeInfo into n.Node?
-	// Ticket: https://github.com/ethersphere/go-ethereum/issues/1177
+	// Ticket: https://github.com/ethersphere/parallax/issues/1177
 	var node struct {
 		Config *adapters.NodeConfig `json:"config,omitempty"`
 		Up     bool                 `json:"up"`
@@ -992,7 +992,7 @@ func (net *Network) Load(snap *Snapshot) error {
 					// Delete the connection from the set of established connections.
 					// This will prevent false positive in case disconnections happen.
 					delete(connections, connection)
-					log.Warn("load snapshot: unexpected disconnection", "one", e.Conn.One, "other", e.Conn.Other)
+					logging.Warn("load snapshot: unexpected disconnection", "one", e.Conn.One, "other", e.Conn.Other)
 					continue
 				}
 				// Check that the connection is from the snapshot.
@@ -1056,18 +1056,18 @@ func (net *Network) Subscribe(events chan *Event) {
 }
 
 func (net *Network) executeControlEvent(event *Event) {
-	log.Trace("Executing control event", "type", event.Type, "event", event)
+	logging.Trace("Executing control event", "type", event.Type, "event", event)
 	switch event.Type {
 	case EventTypeNode:
 		if err := net.executeNodeEvent(event); err != nil {
-			log.Error("Error executing node event", "event", event, "err", err)
+			logging.Error("Error executing node event", "event", event, "err", err)
 		}
 	case EventTypeConn:
 		if err := net.executeConnEvent(event); err != nil {
-			log.Error("Error executing conn event", "event", event, "err", err)
+			logging.Error("Error executing conn event", "event", event, "err", err)
 		}
 	case EventTypeMsg:
-		log.Warn("Ignoring control msg event")
+		logging.Warn("Ignoring control msg event")
 	}
 }
 

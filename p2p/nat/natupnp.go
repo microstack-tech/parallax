@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package nat
 
@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/huin/goupnp"
 	"github.com/huin/goupnp/dcps/internetgateway1"
 	"github.com/huin/goupnp/dcps/internetgateway2"
@@ -78,14 +78,14 @@ func (n *upnp) natEnabled() bool {
 		// GetNATRSIPStatus action. Treat SOAP errors as "NAT is probably
 		// enabled" and proceed - the actual port mapping call will fail
 		// later if NAT is truly not available.
-		log.Debug("UPnP GetNATRSIPStatus not supported, assuming NAT is enabled", "service", n.service, "err", err)
+		logging.Debug("UPnP GetNATRSIPStatus not supported, assuming NAT is enabled", "service", n.service, "err", err)
 		return true
 	}
 	if !ok {
-		log.Debug("UPnP device reports NAT is not enabled", "service", n.service)
+		logging.Debug("UPnP device reports NAT is not enabled", "service", n.service)
 		return false
 	}
-	log.Debug("UPnP device confirms NAT is enabled", "service", n.service)
+	logging.Debug("UPnP device confirms NAT is enabled", "service", n.service)
 	return true
 }
 
@@ -97,22 +97,22 @@ func (n *upnp) ExternalIP() (addr net.IP, err error) {
 	})
 
 	if err != nil {
-		log.Warn("UPnP failed to get external IP", "service", n.service, "err", err)
+		logging.Warn("UPnP failed to get external IP", "service", n.service, "err", err)
 		return nil, err
 	}
 	ip := net.ParseIP(ipString)
 	if ip == nil {
-		log.Warn("UPnP returned invalid external IP", "service", n.service, "response", ipString)
+		logging.Warn("UPnP returned invalid external IP", "service", n.service, "response", ipString)
 		return nil, errors.New("bad IP in response")
 	}
-	log.Info("UPnP external IP address", "service", n.service, "ip", ip)
+	logging.Info("UPnP external IP address", "service", n.service, "ip", ip)
 	return ip, nil
 }
 
 func (n *upnp) AddMapping(protocol string, extport, intport int, desc string, lifetime time.Duration) (uint16, error) {
 	ip, err := n.internalAddress()
 	if err != nil {
-		log.Warn("UPnP could not determine internal address", "service", n.service, "err", err)
+		logging.Warn("UPnP could not determine internal address", "service", n.service, "err", err)
 		return 0, err
 	}
 	protocol = strings.ToUpper(protocol)
@@ -122,7 +122,7 @@ func (n *upnp) AddMapping(protocol string, extport, intport int, desc string, li
 		extport = intport
 	}
 
-	log.Debug("UPnP adding port mapping", "service", n.service, "proto", protocol, "extport", extport, "intport", intport, "internal_ip", ip, "lifetime", lifetime, "desc", desc)
+	logging.Debug("UPnP adding port mapping", "service", n.service, "proto", protocol, "extport", extport, "intport", intport, "internal_ip", ip, "lifetime", lifetime, "desc", desc)
 	return n.addAnyPortMapping(protocol, extport, intport, ip, desc, lifetimeS)
 }
 
@@ -145,7 +145,7 @@ func (n *upnp) addAnyPortMapping(protocol string, extport, intport int, ip net.I
 		if lastErr == nil {
 			return uint16(extport), nil
 		}
-		log.Debug("UPnP AddPortMapping attempt failed", "service", n.service, "proto", protocol, "extport", extport, "attempt", i+1, "err", lastErr)
+		logging.Debug("UPnP AddPortMapping attempt failed", "service", n.service, "proto", protocol, "extport", extport, "attempt", i+1, "err", lastErr)
 	}
 
 	// If that fails, retry with random ports in case of port conflicts.
@@ -155,12 +155,12 @@ func (n *upnp) addAnyPortMapping(protocol string, extport, intport int, ip net.I
 			return n.client.AddPortMapping("", uint16(extport), protocol, uint16(intport), ip.String(), true, desc, lifetimeS)
 		})
 		if lastErr == nil {
-			log.Info("UPnP mapped to random port", "service", n.service, "proto", protocol, "extport", extport, "intport", intport)
+			logging.Info("UPnP mapped to random port", "service", n.service, "proto", protocol, "extport", extport, "intport", intport)
 			return uint16(extport), nil
 		}
-		log.Debug("UPnP random port mapping attempt failed", "service", n.service, "proto", protocol, "extport", extport, "err", lastErr)
+		logging.Debug("UPnP random port mapping attempt failed", "service", n.service, "proto", protocol, "extport", extport, "err", lastErr)
 	}
-	log.Warn("UPnP AddPortMapping failed (all attempts exhausted)", "service", n.service, "proto", protocol, "intport", intport, "err", lastErr)
+	logging.Warn("UPnP AddPortMapping failed (all attempts exhausted)", "service", n.service, "proto", protocol, "intport", intport, "err", lastErr)
 	return 0, lastErr
 }
 
@@ -187,7 +187,7 @@ func (n *upnp) internalAddress() (net.IP, error) {
 		}
 		for _, addr := range addrs {
 			if x, ok := addr.(*net.IPNet); ok && x.Contains(devaddr.IP) {
-				log.Debug("UPnP internal address resolved", "ip", x.IP, "iface", iface.Name, "device", devaddr.IP)
+				logging.Debug("UPnP internal address resolved", "ip", x.IP, "iface", iface.Name, "device", devaddr.IP)
 				return x.IP, nil
 			}
 		}
@@ -200,7 +200,7 @@ func (n *upnp) DeleteMapping(protocol string, extport, intport int) error {
 		return n.client.DeletePortMapping("", uint16(extport), strings.ToUpper(protocol))
 	})
 	if err != nil {
-		log.Debug("UPnP DeletePortMapping failed", "service", n.service, "proto", protocol, "extport", extport, "err", err)
+		logging.Debug("UPnP DeletePortMapping failed", "service", n.service, "proto", protocol, "extport", extport, "err", err)
 	}
 	return err
 }
@@ -253,12 +253,12 @@ var ssdpTargets = []string{
 // the multicast group and directly to the default gateway (unicast),
 // which is more reliable than multicast alone on many Linux systems.
 func discoverUPnP() Interface {
-	log.Info("Searching for UPnP Internet Gateway Device...")
+	logging.Info("Searching for UPnP Internet Gateway Device...")
 
 	// Discover device description URLs via SSDP.
 	locations := ssdpDiscover()
 	if len(locations) == 0 {
-		log.Warn("No UPnP gateway device discovered on the local network",
+		logging.Warn("No UPnP gateway device discovered on the local network",
 			"hint", "ensure your router has UPnP enabled and that a local firewall (ufw, iptables, nftables) is not blocking SSDP UDP traffic to/from port 1900")
 		return nil
 	}
@@ -271,16 +271,16 @@ func discoverUPnP() Interface {
 		}
 		root, err := goupnp.DeviceByURL(loc)
 		if err != nil {
-			log.Debug("UPnP device fetch failed", "url", locStr, "err", err)
+			logging.Debug("UPnP device fetch failed", "url", locStr, "err", err)
 			continue
 		}
-		log.Debug("UPnP inspecting device", "url", locStr, "friendly_name", root.Device.FriendlyName)
+		logging.Debug("UPnP inspecting device", "url", locStr, "friendly_name", root.Device.FriendlyName)
 		var found *upnp
 		root.Device.VisitServices(func(service *goupnp.Service) {
 			if found != nil {
 				return
 			}
-			log.Debug("UPnP found service", "type", service.ServiceType, "id", service.ServiceId, "url", locStr)
+			logging.Debug("UPnP found service", "type", service.ServiceType, "id", service.ServiceId, "url", locStr)
 			sc := goupnp.ServiceClient{
 				SOAPClient: service.NewSOAPClient(),
 				RootDevice: root,
@@ -293,17 +293,17 @@ func discoverUPnP() Interface {
 				return
 			}
 			u.dev = root
-			log.Debug("UPnP matched service, checking NAT status", "service", u.service)
+			logging.Debug("UPnP matched service, checking NAT status", "service", u.service)
 			if u.natEnabled() {
 				found = u
 			}
 		})
 		if found != nil {
-			log.Info("UPnP gateway device found", "service", found.service, "url", locStr)
+			logging.Info("UPnP gateway device found", "service", found.service, "url", locStr)
 			return found
 		}
 	}
-	log.Warn("UPnP SSDP found devices but no valid IGD service")
+	logging.Warn("UPnP SSDP found devices but no valid IGD service")
 	return nil
 }
 
@@ -314,7 +314,7 @@ func discoverUPnP() Interface {
 func ssdpDiscover() map[string]bool {
 	conn, err := net.ListenPacket("udp4", ":0")
 	if err != nil {
-		log.Warn("UPnP SSDP: failed to open UDP socket", "err", err)
+		logging.Warn("UPnP SSDP: failed to open UDP socket", "err", err)
 		return nil
 	}
 	defer conn.Close()
@@ -326,9 +326,9 @@ func ssdpDiscover() map[string]bool {
 	if gw := defaultGateway(); gw != nil {
 		unicast := &net.UDPAddr{IP: gw, Port: 1900}
 		destinations = append(destinations, unicast)
-		log.Debug("UPnP SSDP: will search via multicast and unicast", "gateway", gw)
+		logging.Debug("UPnP SSDP: will search via multicast and unicast", "gateway", gw)
 	} else {
-		log.Debug("UPnP SSDP: will search via multicast only (no gateway detected)")
+		logging.Debug("UPnP SSDP: will search via multicast only (no gateway detected)")
 	}
 
 	// Send M-SEARCH for each target to each destination, 3 times each.
@@ -337,7 +337,7 @@ func ssdpDiscover() map[string]bool {
 		for _, dest := range destinations {
 			for i := 0; i < 3; i++ {
 				if _, err := conn.WriteTo(req, dest); err != nil {
-					log.Debug("UPnP SSDP: send failed", "dest", dest, "target", target, "err", err)
+					logging.Debug("UPnP SSDP: send failed", "dest", dest, "target", target, "err", err)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -355,13 +355,13 @@ func ssdpDiscover() map[string]bool {
 		}
 		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(buf[:n])), nil)
 		if err != nil {
-			log.Debug("UPnP SSDP: malformed response", "from", from, "err", err)
+			logging.Debug("UPnP SSDP: malformed response", "from", from, "err", err)
 			continue
 		}
 		loc := resp.Header.Get("Location")
 		resp.Body.Close()
 		if loc != "" && !locations[loc] {
-			log.Info("UPnP SSDP: discovered device", "location", loc, "from", from)
+			logging.Info("UPnP SSDP: discovered device", "location", loc, "from", from)
 			locations[loc] = true
 		}
 	}

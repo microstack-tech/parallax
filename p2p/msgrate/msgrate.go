@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package msgrate allows estimating the throughput of peers for more balanced syncs.
 package msgrate
@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 )
 
 // measurementImpact is the impact a single measurement has on a peer's final
@@ -238,12 +238,12 @@ type Trackers struct {
 	// purpose is to allow quicker tests. Don't use them in production.
 	OverrideTTLLimit time.Duration
 
-	log  log.Logger
+	log  logging.Logger
 	lock sync.RWMutex
 }
 
 // NewTrackers creates an empty set of trackers to be filled with peers.
-func NewTrackers(log log.Logger) *Trackers {
+func NewTrackers(log logging.Logger) *Trackers {
 	return &Trackers{
 		trackers:         make(map[string]*Tracker),
 		roundtrip:        rttMaxEstimate,
@@ -414,7 +414,7 @@ func (t *Trackers) tune() {
 
 	t.tuned = time.Now()
 	t.log.Debug("Recalculated msgrate QoS values", "rtt", t.roundtrip, "confidence", t.confidence, "ttl", t.targetTimeout(), "next", t.tuned.Add(t.roundtrip))
-	t.log.Trace("Debug dump of mean capacities", "caps", log.Lazy{Fn: t.meanCapacities})
+	t.log.Trace("Debug dump of mean capacities", "caps", logging.Lazy{Fn: t.meanCapacities})
 }
 
 // detune reduces the tracker's confidence in order to make fresh measurements

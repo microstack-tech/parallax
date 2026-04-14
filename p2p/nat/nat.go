@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package nat provides access to common network port mapping protocols.
 package nat
@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	natpmp "github.com/jackpal/go-nat-pmp"
 )
 
@@ -104,7 +104,7 @@ const (
 // requested intport, and the caller needs to advertise the assigned port in
 // its node record so that remote peers can reach it.
 func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, name string, onMapped func(uint16)) {
-	log := log.New("proto", protocol, "extport", extport, "intport", intport, "interface", m)
+	logger := logging.New("proto", protocol, "extport", extport, "intport", intport, "interface", m)
 	refresh := time.NewTimer(mapTimeout)
 	var lastMapped uint16
 	notify := func(p uint16) {
@@ -125,13 +125,13 @@ func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, 
 		if delPort == 0 {
 			delPort = extport
 		}
-		log.Info("Deleting port mapping", "extport", delPort)
+		logger.Info("Deleting port mapping", "extport", delPort)
 		m.DeleteMapping(protocol, delPort, intport)
 	}()
 	if p, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
-		log.Warn("Couldn't add port mapping", "err", err)
+		logger.Warn("Couldn't add port mapping", "err", err)
 	} else {
-		log.Info("Mapped network port", "actual_extport", p)
+		logger.Info("Mapped network port", "actual_extport", p)
 		notify(p)
 	}
 	for {
@@ -141,9 +141,9 @@ func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, 
 				return
 			}
 		case <-refresh.C:
-			log.Debug("Refreshing port mapping")
+			logger.Debug("Refreshing port mapping")
 			if p, err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
-				log.Warn("Couldn't refresh port mapping", "err", err)
+				logger.Warn("Couldn't refresh port mapping", "err", err)
 			} else {
 				notify(p)
 			}
@@ -255,12 +255,12 @@ func (n *autodisc) String() string {
 // wait blocks until auto-discovery has been performed.
 func (n *autodisc) wait() error {
 	n.once.Do(func() {
-		log.Info("Starting NAT device discovery", "mechanism", n.what)
+		logging.Info("Starting NAT device discovery", "mechanism", n.what)
 		n.mu.Lock()
 		n.found = n.doit()
 		n.mu.Unlock()
 		if n.found != nil {
-			log.Info("NAT device discovered", "mechanism", n.what, "device", n.found)
+			logging.Info("NAT device discovered", "mechanism", n.what, "device", n.found)
 		}
 	})
 	if n.found == nil {

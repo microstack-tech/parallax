@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package t8ntool
 
@@ -21,35 +21,35 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/rlp"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
 )
 
 type Prestate struct {
-	Env stEnv             `json:"env"`
-	Pre core.GenesisAlloc `json:"pre"`
+	Env stEnv                   `json:"env"`
+	Pre validation.GenesisAlloc `json:"pre"`
 }
 
 // ExecutionResult contains the execution status after running a state test, any
 // error that might have occurred and a dump of the final state if requested.
 type ExecutionResult struct {
-	StateRoot   common.Hash           `json:"stateRoot"`
-	TxRoot      common.Hash           `json:"txRoot"`
-	ReceiptRoot common.Hash           `json:"receiptsRoot"`
-	LogsHash    common.Hash           `json:"logsHash"`
+	StateRoot   util.Hash             `json:"stateRoot"`
+	TxRoot      util.Hash             `json:"txRoot"`
+	ReceiptRoot util.Hash             `json:"receiptsRoot"`
+	LogsHash    util.Hash             `json:"logsHash"`
 	Bloom       types.Bloom           `json:"logsBloom"        gencodec:"required"`
 	Receipts    types.Receipts        `json:"receipts"`
 	Rejected    []*rejectedTx         `json:"rejected,omitempty"`
@@ -58,28 +58,28 @@ type ExecutionResult struct {
 }
 
 type ommer struct {
-	Delta   uint64         `json:"delta"`
-	Address common.Address `json:"address"`
+	Delta   uint64       `json:"delta"`
+	Address util.Address `json:"address"`
 }
 
 //go:generate go run github.com/fjl/gencodec -type stEnv -field-override stEnvMarshaling -out gen_stenv.go
 type stEnv struct {
-	Coinbase         common.Address                      `json:"currentCoinbase"   gencodec:"required"`
-	Difficulty       *big.Int                            `json:"currentDifficulty"`
-	Random           *big.Int                            `json:"currentRandom"`
-	ParentDifficulty *big.Int                            `json:"parentDifficulty"`
-	GasLimit         uint64                              `json:"currentGasLimit"   gencodec:"required"`
-	Number           uint64                              `json:"currentNumber"     gencodec:"required"`
-	Timestamp        uint64                              `json:"currentTimestamp"  gencodec:"required"`
-	ParentTimestamp  uint64                              `json:"parentTimestamp,omitempty"`
-	BlockHashes      map[math.HexOrDecimal64]common.Hash `json:"blockHashes,omitempty"`
-	Ommers           []ommer                             `json:"ommers,omitempty"`
-	BaseFee          *big.Int                            `json:"currentBaseFee,omitempty"`
-	ParentUncleHash  common.Hash                         `json:"parentUncleHash"`
+	Coinbase         util.Address                      `json:"currentCoinbase"   gencodec:"required"`
+	Difficulty       *big.Int                          `json:"currentDifficulty"`
+	Random           *big.Int                          `json:"currentRandom"`
+	ParentDifficulty *big.Int                          `json:"parentDifficulty"`
+	GasLimit         uint64                            `json:"currentGasLimit"   gencodec:"required"`
+	Number           uint64                            `json:"currentNumber"     gencodec:"required"`
+	Timestamp        uint64                            `json:"currentTimestamp"  gencodec:"required"`
+	ParentTimestamp  uint64                            `json:"parentTimestamp,omitempty"`
+	BlockHashes      map[math.HexOrDecimal64]util.Hash `json:"blockHashes,omitempty"`
+	Ommers           []ommer                           `json:"ommers,omitempty"`
+	BaseFee          *big.Int                          `json:"currentBaseFee,omitempty"`
+	ParentUncleHash  util.Hash                         `json:"parentUncleHash"`
 }
 
 type stEnvMarshaling struct {
-	Coinbase         common.UnprefixedAddress
+	Coinbase         util.UnprefixedAddress
 	Difficulty       *math.HexOrDecimal256
 	Random           *math.HexOrDecimal256
 	ParentDifficulty *math.HexOrDecimal256
@@ -96,17 +96,17 @@ type rejectedTx struct {
 }
 
 // Apply applies a set of transactions to a pre-state
-func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
+func (pre *Prestate) Apply(vmConfig script.Config, chainConfig *chainparams.ChainConfig,
 	txs types.Transactions, miningReward int64,
-	getTracerFn func(txIndex int, txHash common.Hash) (tracer vm.PVMLogger, err error),
+	getTracerFn func(txIndex int, txHash util.Hash) (tracer script.PVMLogger, err error),
 ) (*state.StateDB, *ExecutionResult, error) {
 	// Capture errors for BLOCKHASH operation, if we haven't been supplied the
 	// required blockhashes
 	var hashError error
-	getHash := func(num uint64) common.Hash {
+	getHash := func(num uint64) util.Hash {
 		if pre.Env.BlockHashes == nil {
 			hashError = fmt.Errorf("getHash(%d) invoked, no blockhashes provided", num)
-			return common.Hash{}
+			return util.Hash{}
 		}
 		h, ok := pre.Env.BlockHashes[math.HexOrDecimal64(num)]
 		if !ok {
@@ -117,8 +117,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	var (
 		statedb     = MakePreState(rawdb.NewMemoryDatabase(), pre.Pre)
 		signer      = types.MakeSigner(chainConfig, new(big.Int).SetUint64(pre.Env.Number))
-		gaspool     = new(core.GasPool)
-		blockHash   = common.Hash{0x13, 0x37}
+		gaspool     = new(validation.GasPool)
+		blockHash   = util.Hash{0x13, 0x37}
 		rejectedTxs []*rejectedTx
 		includedTxs types.Transactions
 		gasUsed     = uint64(0)
@@ -126,9 +126,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		txIndex     = 0
 	)
 	gaspool.AddGas(pre.Env.GasLimit)
-	vmContext := vm.BlockContext{
-		CanTransfer: core.CanTransfer,
-		Transfer:    core.Transfer,
+	vmContext := script.BlockContext{
+		CanTransfer: validation.CanTransfer,
+		Transfer:    validation.Transfer,
 		Coinbase:    pre.Env.Coinbase,
 		BlockNumber: new(big.Int).SetUint64(pre.Env.Number),
 		Time:        new(big.Int).SetUint64(pre.Env.Timestamp),
@@ -142,14 +142,14 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	}
 	// If random is defined, add it to the vmContext.
 	if pre.Env.Random != nil {
-		rnd := common.BigToHash(pre.Env.Random)
+		rnd := util.BigToHash(pre.Env.Random)
 		vmContext.Random = &rnd
 	}
 
 	for i, tx := range txs {
 		msg, err := tx.AsMessage(signer, pre.Env.BaseFee)
 		if err != nil {
-			log.Warn("rejected tx", "index", i, "hash", tx.Hash(), "error", err)
+			logging.Warn("rejected tx", "index", i, "hash", tx.Hash(), "error", err)
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, err.Error()})
 			continue
 		}
@@ -160,15 +160,15 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		vmConfig.Tracer = tracer
 		vmConfig.Debug = (tracer != nil)
 		statedb.Prepare(tx.Hash(), txIndex)
-		txContext := core.NewPVMTxContext(msg)
+		txContext := validation.NewPVMTxContext(msg)
 		snapshot := statedb.Snapshot()
-		pvm := vm.NewPVM(vmContext, txContext, statedb, chainConfig, vmConfig)
+		pvm := script.NewPVM(vmContext, txContext, statedb, chainConfig, vmConfig)
 
 		// (ret []byte, usedGas uint64, failed bool, err error)
-		msgResult, err := core.ApplyMessage(pvm, msg, gaspool)
+		msgResult, err := validation.ApplyMessage(pvm, msg, gaspool)
 		if err != nil {
 			statedb.RevertToSnapshot(snapshot)
-			log.Info("rejected tx", "index", i, "hash", tx.Hash(), "from", msg.From(), "error", err)
+			logging.Info("rejected tx", "index", i, "hash", tx.Hash(), "from", msg.From(), "error", err)
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, err.Error()})
 			continue
 		}
@@ -260,9 +260,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	return statedb, execRs, nil
 }
 
-func MakePreState(db prldb.Database, accounts core.GenesisAlloc) *state.StateDB {
+func MakePreState(db dbstore.Database, accounts validation.GenesisAlloc) *state.StateDB {
 	sdb := state.NewDatabase(db)
-	statedb, _ := state.New(common.Hash{}, sdb, nil)
+	statedb, _ := state.New(util.Hash{}, sdb, nil)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
 		statedb.SetNonce(addr, a.Nonce)
@@ -277,7 +277,7 @@ func MakePreState(db prldb.Database, accounts core.GenesisAlloc) *state.StateDB 
 	return statedb
 }
 
-func rlpHash(x any) (h common.Hash) {
+func rlpHash(x any) (h util.Hash) {
 	hw := sha3.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
@@ -288,11 +288,11 @@ func rlpHash(x any) (h common.Hash) {
 // the caller does not provide an explicit difficulty, but instead provides only
 // parent timestamp + difficulty.
 // Note: this method only works for xhash engine.
-func calcDifficulty(config *params.ChainConfig, number, currentTime, parentTime uint64,
+func calcDifficulty(config *chainparams.ChainConfig, number, currentTime, parentTime uint64,
 	parentDifficulty *big.Int,
 ) *big.Int {
 	parent := &types.Header{
-		ParentHash: common.Hash{},
+		ParentHash: util.Hash{},
 		Difficulty: parentDifficulty,
 		Number:     new(big.Int).SetUint64(number - 1),
 		Time:       parentTime,

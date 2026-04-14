@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package rpc
 
@@ -21,8 +21,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/math"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/math"
 )
 
 func TestBlockNumberJSONUnmarshal(t *testing.T) {
@@ -90,10 +90,10 @@ func TestBlockNumberOrHash_UnmarshalJSON(t *testing.T) {
 		14: {`someString`, true, BlockNumberOrHash{}},
 		15: {`""`, true, BlockNumberOrHash{}},
 		16: {``, true, BlockNumberOrHash{}},
-		17: {`"0x0000000000000000000000000000000000000000000000000000000000000000"`, false, BlockNumberOrHashWithHash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
-		18: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000"}`, false, BlockNumberOrHashWithHash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
-		19: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","requireCanonical":false}`, false, BlockNumberOrHashWithHash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
-		20: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","requireCanonical":true}`, false, BlockNumberOrHashWithHash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), true)},
+		17: {`"0x0000000000000000000000000000000000000000000000000000000000000000"`, false, BlockNumberOrHashWithHash(util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
+		18: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000"}`, false, BlockNumberOrHashWithHash(util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
+		19: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","requireCanonical":false}`, false, BlockNumberOrHashWithHash(util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), false)},
+		20: {`{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","requireCanonical":true}`, false, BlockNumberOrHashWithHash(util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"), true)},
 		21: {`{"blockNumber":"0x1"}`, false, BlockNumberOrHashWithNumber(1)},
 		22: {`{"blockNumber":"pending"}`, false, BlockNumberOrHashWithNumber(PendingBlockNumber)},
 		23: {`{"blockNumber":"latest"}`, false, BlockNumberOrHashWithNumber(LatestBlockNumber)},

@@ -1,28 +1,28 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package prltest
 
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/prl/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
 // Suite represents a structure used to test a node's conformance
@@ -710,7 +710,7 @@ func (s *Suite) TestLargeTxRequest66(t *utesting.T) {
 		t.Fatalf("peering failed: %v", err)
 	}
 	// create and send pooled tx request
-	hashes := make([]common.Hash, 0)
+	hashes := make([]util.Hash, 0)
 	for _, hash := range hashMap {
 		hashes = append(hashes, hash)
 	}
@@ -750,7 +750,7 @@ func (s *Suite) TestNewPooledTxs66(t *utesting.T) {
 	}
 
 	// create new pooled tx hashes announcement
-	hashes := make([]common.Hash, 0)
+	hashes := make([]util.Hash, 0)
 	for _, hash := range hashMap {
 		hashes = append(hashes, hash)
 	}

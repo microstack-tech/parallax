@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package node
 
@@ -25,12 +25,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
 const (
@@ -47,7 +47,7 @@ const (
 // all registered services.
 type Config struct {
 	// Name sets the instance name of the node. It must not contain the / character and is
-	// used in the devp2p node identifier. The instance name of prlx is "prlx". If no
+	// used in the devp2p node identifier. The instance name of parallax is "parallax". If no
 	// value is specified, the basename of the current executable is used.
 	Name string `toml:"-"`
 
@@ -192,7 +192,7 @@ type Config struct {
 	GraphQLVirtualHosts []string `toml:",omitempty"`
 
 	// Logger is a custom logger to use with the p2p.Server.
-	Logger log.Logger `toml:",omitempty"`
+	Logger logging.Logger `toml:",omitempty"`
 
 	staticNodesWarning     bool
 	trustedNodesWarning    bool
@@ -311,7 +311,7 @@ func (c *Config) name() string {
 	return c.Name
 }
 
-// These resources are resolved differently for "prlx" instances.
+// These resources are resolved differently for "parallax" instances.
 var isOldPrlxResource = map[string]bool{
 	"chaindata":          true,
 	"nodes":              true,
@@ -329,15 +329,15 @@ func (c *Config) ResolvePath(path string) string {
 		return ""
 	}
 	// Backwards-compatibility: ensure that data directory files created
-	// by prlx 1.4 are used if they exist.
+	// by parallax 1.4 are used if they exist.
 	if warn, isOld := isOldPrlxResource[path]; isOld {
 		oldpath := ""
-		if c.name() == "prlx" {
+		if c.name() == "parallax" {
 			oldpath = filepath.Join(c.DataDir, path)
 		}
-		if oldpath != "" && common.FileExist(oldpath) {
+		if oldpath != "" && util.FileExist(oldpath) {
 			if warn {
-				c.warnOnce(&c.oldPrlxResourceWarning, "Using deprecated resource file %s, please move this file to the 'prlx' subdirectory of datadir.", oldpath)
+				c.warnOnce(&c.oldPrlxResourceWarning, "Using deprecated resource file %s, please move this file to the 'parallax' subdirectory of datadir.", oldpath)
 			}
 			return oldpath
 		}
@@ -364,7 +364,7 @@ func (c *Config) NodeKey() *ecdsa.PrivateKey {
 	if c.DataDir == "" {
 		key, err := crypto.GenerateKey()
 		if err != nil {
-			log.Crit(fmt.Sprintf("Failed to generate ephemeral node key: %v", err))
+			logging.Crit(fmt.Sprintf("Failed to generate ephemeral node key: %v", err))
 		}
 		return key
 	}
@@ -376,16 +376,16 @@ func (c *Config) NodeKey() *ecdsa.PrivateKey {
 	// No persistent key found, generate and store a new one.
 	key, err := crypto.GenerateKey()
 	if err != nil {
-		log.Crit(fmt.Sprintf("Failed to generate node key: %v", err))
+		logging.Crit(fmt.Sprintf("Failed to generate node key: %v", err))
 	}
 	instanceDir := filepath.Join(c.DataDir, c.name())
 	if err := os.MkdirAll(instanceDir, 0700); err != nil {
-		log.Error(fmt.Sprintf("Failed to persist node key: %v", err))
+		logging.Error(fmt.Sprintf("Failed to persist node key: %v", err))
 		return key
 	}
 	keyfile = filepath.Join(instanceDir, datadirPrivateKey)
 	if err := crypto.SaveECDSA(keyfile, key); err != nil {
-		log.Error(fmt.Sprintf("Failed to persist node key: %v", err))
+		logging.Error(fmt.Sprintf("Failed to persist node key: %v", err))
 	}
 	return key
 }
@@ -414,8 +414,8 @@ func (c *Config) parsePersistentNodes(w *bool, path string) []*enode.Node {
 
 	// Load the nodes from the config file.
 	var nodelist []string
-	if err := common.LoadJSON(path, &nodelist); err != nil {
-		log.Error(fmt.Sprintf("Can't load node list file: %v", err))
+	if err := util.LoadJSON(path, &nodelist); err != nil {
+		logging.Error(fmt.Sprintf("Can't load node list file: %v", err))
 		return nil
 	}
 	// Interpret the list as a discovery node array
@@ -426,7 +426,7 @@ func (c *Config) parsePersistentNodes(w *bool, path string) []*enode.Node {
 		}
 		node, err := enode.Parse(enode.ValidSchemes, url)
 		if err != nil {
-			log.Error(fmt.Sprintf("Node URL %s: %v\n", url, err))
+			logging.Error(fmt.Sprintf("Node URL %s: %v\n", url, err))
 			continue
 		}
 		nodes = append(nodes, node)
@@ -465,7 +465,7 @@ func getKeyStoreDir(conf *Config) (string, bool, error) {
 	isEphemeral := false
 	if keydir == "" {
 		// There is no datadir.
-		keydir, err = os.MkdirTemp("", "go-ethereum-keystore")
+		keydir, err = os.MkdirTemp("", "parallax-keystore")
 		isEphemeral = true
 	}
 
@@ -490,7 +490,7 @@ func (c *Config) warnOnce(w *bool, format string, args ...any) {
 	}
 	l := c.Logger
 	if l == nil {
-		l = log.Root()
+		l = logging.Root()
 	}
 	l.Warn(fmt.Sprintf(format, args...))
 	*w = true

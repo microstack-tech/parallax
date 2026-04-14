@@ -1,25 +1,25 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package utils
 
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/prl/prlconfig"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -47,7 +47,7 @@ var (
 	LegacyMinerGasTargetFlag = cli.Uint64Flag{
 		Name:  "miner.gastarget",
 		Usage: "Target gas floor for mined blocks (deprecated)",
-		Value: prlconfig.Defaults.Miner.GasFloor,
+		Value: nodeconfig.Defaults.Miner.GasFloor,
 	}
 )
 

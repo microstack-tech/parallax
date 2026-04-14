@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package flags
 
@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ParallaxProtocol/parallax/params"
+	"github.com/ParallaxProtocol/parallax"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -51,8 +51,7 @@ OPTIONS:
 	AppHelpTemplate = `NAME:
    {{.App.Name}} - {{.App.Usage}}
 
-   Copyright 2013-2022 The go-ethereum Authors
-   Copyright 2025-2026 The ParallaxProtocol Authors
+   Copyright 2025-2026 The Parallax Protocol Authors
 
 USAGE:
    {{.App.HelpName}} [options]{{if .App.Commands}} [command] [command options]{{end}} {{if .App.ArgsUsage}}{{.App.ArgsUsage}}{{else}}[arguments...]{{end}}
@@ -72,14 +71,13 @@ COMMANDS:
 {{end}}{{end}}{{if .App.Copyright }}
 COPYRIGHT:
    {{.App.Copyright}}
-   Copyright 2025-2026 The ParallaxProtocol Authors
    {{end}}
 `
 	// ClefAppHelpTemplate is the template for the default, global app help topic.
 	ClefAppHelpTemplate = `NAME:
    {{.App.Name}} - {{.App.Usage}}
 
-   Copyright 2013-2022 The go-ethereum Authors
+   Copyright 2025-2026 The Parallax Protocol Authors
 
 USAGE:
    {{.App.HelpName}} [options]{{if .App.Commands}} command [command options]{{end}} {{if .App.ArgsUsage}}{{.App.ArgsUsage}}{{else}}[arguments...]{{end}}
@@ -149,7 +147,7 @@ func NewApp(gitCommit, gitDate, usage string) *cli.App {
 	app.Name = filepath.Base(os.Args[0])
 	app.Author = ""
 	app.Email = ""
-	app.Version = params.VersionWithCommit(gitCommit, gitDate)
+	app.Version = parallax.VersionWithCommit(gitCommit, gitDate)
 	app.Usage = usage
 	return app
 }

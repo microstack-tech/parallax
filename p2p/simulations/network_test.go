@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package simulations
 
@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/adapters"
@@ -112,7 +112,7 @@ OUTER:
 				checkIds[ev.Conn.One] = append(checkIds[ev.Conn.One], ev.Conn.Other)
 				checkIds[ev.Conn.Other] = append(checkIds[ev.Conn.Other], ev.Conn.One)
 				connEventCount--
-				log.Debug("ev", "count", connEventCount)
+				logging.Debug("ev", "count", connEventCount)
 				if connEventCount == 0 {
 					break OUTER
 				}
@@ -129,7 +129,7 @@ OUTER:
 	if err != nil {
 		t.Fatal(err)
 	}
-	log.Debug("snapshot taken", "nodes", len(snap.Nodes), "conns", len(snap.Conns), "json", string(j))
+	logging.Debug("snapshot taken", "nodes", len(snap.Nodes), "conns", len(snap.Conns), "json", string(j))
 
 	// verify that the snap element numbers check out
 	if len(checkIds) != len(snap.Conns) || len(checkIds) != len(snap.Nodes) {
@@ -159,7 +159,7 @@ OUTER:
 			}
 		}
 	}
-	log.Info("snapshot checked")
+	logging.Info("snapshot checked")
 
 	// PART II
 	// load snapshot and verify that exactly same connections are formed
@@ -207,11 +207,11 @@ OuterTwo:
 				if !ev.Conn.Up {
 					t.Fatalf("unexpected disconnect: %v -> %v", ev.Conn.One, ev.Conn.Other)
 				}
-				log.Debug("conn", "on", ev.Conn.One, "other", ev.Conn.Other)
+				logging.Debug("conn", "on", ev.Conn.One, "other", ev.Conn.Other)
 				checkIds[ev.Conn.One] = append(checkIds[ev.Conn.One], ev.Conn.Other)
 				checkIds[ev.Conn.Other] = append(checkIds[ev.Conn.Other], ev.Conn.One)
 				connEventCount--
-				log.Debug("ev", "count", connEventCount)
+				logging.Debug("ev", "count", connEventCount)
 				if connEventCount == 0 {
 					break OuterTwo
 				}
@@ -746,7 +746,7 @@ func benchmarkMinimalServiceTmp(b *testing.B) {
 		defer cancel()
 		for nodid, peers := range protoCMap {
 			for peerid, peerC := range peers {
-				log.Debug("getting ", "node", nodid, "peer", peerid)
+				logging.Debug("getting ", "node", nodid, "peer", peerid)
 				select {
 				case <-ctx.Done():
 					b.Fatal(ctx.Err())

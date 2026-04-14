@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package crypto
 
@@ -22,9 +22,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/math"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/math"
 )
 
 var (
@@ -62,13 +62,13 @@ func TestVerifySignature(t *testing.T) {
 	if VerifySignature(testpubkey, testmsg, nil) {
 		t.Errorf("nil signature valid")
 	}
-	if VerifySignature(testpubkey, testmsg, append(common.CopyBytes(sig), 1, 2, 3)) {
+	if VerifySignature(testpubkey, testmsg, append(util.CopyBytes(sig), 1, 2, 3)) {
 		t.Errorf("signature valid with extra bytes at the end")
 	}
 	if VerifySignature(testpubkey, testmsg, sig[:len(sig)-2]) {
 		t.Errorf("signature valid even though it's incomplete")
 	}
-	wrongkey := common.CopyBytes(testpubkey)
+	wrongkey := util.CopyBytes(testpubkey)
 	wrongkey[10]++
 	if VerifySignature(wrongkey, testmsg, sig) {
 		t.Errorf("signature valid with with wrong public key")
@@ -99,7 +99,7 @@ func TestDecompressPubkey(t *testing.T) {
 	if _, err := DecompressPubkey(testpubkeyc[:5]); err == nil {
 		t.Errorf("no error for incomplete pubkey")
 	}
-	if _, err := DecompressPubkey(append(common.CopyBytes(testpubkeyc), 1, 2, 3)); err == nil {
+	if _, err := DecompressPubkey(append(util.CopyBytes(testpubkeyc), 1, 2, 3)); err == nil {
 		t.Errorf("no error for pubkey with extra bytes at the end")
 	}
 }

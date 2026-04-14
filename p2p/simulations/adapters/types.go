@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package adapters
 
@@ -26,7 +26,7 @@ import (
 	"strconv"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
@@ -129,7 +129,7 @@ type NodeConfig struct {
 	// LogVerbosity is the log verbosity of the p2p node at runtime.
 	//
 	// The default verbosity is INFO.
-	LogVerbosity log.Lvl
+	LogVerbosity logging.Lvl
 }
 
 // nodeConfigJSON is used to encode and decode NodeConfig as JSON by encoding
@@ -197,7 +197,7 @@ func (n *NodeConfig) UnmarshalJSON(data []byte) error {
 	n.Port = confJSON.Port
 	n.EnableMsgEvents = confJSON.EnableMsgEvents
 	n.LogFile = confJSON.LogFile
-	n.LogVerbosity = log.Lvl(confJSON.LogVerbosity)
+	n.LogVerbosity = logging.Lvl(confJSON.LogVerbosity)
 
 	return nil
 }
@@ -227,7 +227,7 @@ func RandomNodeConfig() *NodeConfig {
 		Name:            fmt.Sprintf("node_%s", enodId.String()),
 		Port:            port,
 		EnableMsgEvents: true,
-		LogVerbosity:    log.LvlInfo,
+		LogVerbosity:    logging.LvlInfo,
 	}
 }
 
@@ -315,7 +315,7 @@ func (n *NodeConfig) initEnode(ip net.IP, tcpport int, udpport int) error {
 	if err != nil {
 		return fmt.Errorf("unable to create enode: %v", err)
 	}
-	log.Trace("simnode new", "record", n.Record)
+	logging.Trace("simnode new", "record", n.Record)
 	n.node = nod
 	return nil
 }

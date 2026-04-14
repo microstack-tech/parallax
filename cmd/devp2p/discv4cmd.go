@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/cmd/devp2p/internal/v4test"
-	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/params"
+	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/util"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -165,7 +165,7 @@ func discv4ResolveJSON(ctx *cli.Context) error {
 	}
 	nodesFile := ctx.Args().Get(0)
 	inputSet := make(nodeSet)
-	if common.FileExist(nodesFile) {
+	if util.FileExist(nodesFile) {
 		inputSet = loadNodesJSON(nodesFile)
 	}
 
@@ -195,7 +195,7 @@ func discv4Crawl(ctx *cli.Context) error {
 	}
 	nodesFile := ctx.Args().First()
 	var inputSet nodeSet
-	if common.FileExist(nodesFile) {
+	if util.FileExist(nodesFile) {
 		inputSet = loadNodesJSON(nodesFile)
 	}
 
@@ -295,7 +295,7 @@ func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
 }
 
 func parseBootnodes(ctx *cli.Context) ([]*enode.Node, error) {
-	s := params.MainnetBootnodes
+	s := netparams.MainnetBootnodes
 	if ctx.IsSet(bootnodesFlag.Name) {
 		input := ctx.String(bootnodesFlag.Name)
 		if input == "" {

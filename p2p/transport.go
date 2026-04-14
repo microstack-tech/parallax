@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package p2p
 
@@ -25,11 +25,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/bitutil"
-	"github.com/ParallaxProtocol/parallax/metrics"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/bitutil"
 )
 
 const (
@@ -66,7 +66,7 @@ func (t *rlpxTransport) ReadMsg() (Msg, error) {
 		// Protocol messages are dispatched to subprotocol handlers asynchronously,
 		// but package rlpx may reuse the returned 'data' buffer on the next call
 		// to Read. Copy the message data to avoid this being an issue.
-		data = common.CopyBytes(data)
+		data = util.CopyBytes(data)
 		msg = Msg{
 			ReceivedAt: time.Now(),
 			Code:       code,

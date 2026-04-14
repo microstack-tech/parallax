@@ -1,18 +1,18 @@
-// Copyright 2018 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -34,25 +34,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/flags"
-	"github.com/ParallaxProtocol/parallax/internal/prlapi"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/signer/core"
-	"github.com/ParallaxProtocol/parallax/signer/core/apitypes"
-	"github.com/ParallaxProtocol/parallax/signer/fourbyte"
-	"github.com/ParallaxProtocol/parallax/signer/rules"
-	"github.com/ParallaxProtocol/parallax/signer/storage"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/wallet"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/wallet/signer/core"
+	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/wallet/signer/fourbyte"
+	"github.com/ParallaxProtocol/parallax/wallet/signer/rules"
+	"github.com/ParallaxProtocol/parallax/wallet/signer/storage"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"gopkg.in/urfave/cli.v1"
@@ -98,7 +98,7 @@ var (
 	}
 	chainIdFlag = cli.Int64Flag{
 		Name:  "chainid",
-		Value: params.MainnetChainConfig.ChainID.Int64(),
+		Value: chainparams.MainnetChainConfig.ChainID.Int64(),
 		Usage: "Chain id to use for signing (2110=Mainnet, 2111=Testnet)",
 	}
 	rpcPortFlag = cli.IntFlag{
@@ -335,7 +335,7 @@ func initializeSecrets(c *cli.Context) error {
 	}
 	// Ensure the master key does not yet exist, we're not willing to overwrite
 	configDir := c.GlobalString(configdirFlag.Name)
-	if err := os.Mkdir(configDir, 0700); err != nil && !os.IsExist(err) {
+	if err := os.Mkdir(configDir, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
 	location := filepath.Join(configDir, "masterseed.json")
@@ -371,14 +371,14 @@ func initializeSecrets(c *cli.Context) error {
 		return fmt.Errorf("failed to encrypt master seed: %v", err)
 	}
 	// Double check the master key path to ensure nothing wrote there in between
-	if err = os.Mkdir(configDir, 0700); err != nil && !os.IsExist(err) {
+	if err = os.Mkdir(configDir, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
 	if _, err := os.Stat(location); err == nil {
 		return fmt.Errorf("master key %v already exists, will not overwrite", location)
 	}
 	// Write the file and print the usual warning message
-	if err = os.WriteFile(location, cipherSeed, 0400); err != nil {
+	if err = os.WriteFile(location, cipherSeed, 0o400); err != nil {
 		return err
 	}
 	fmt.Printf("A master seed has been generated into %s\n", location)
@@ -409,14 +409,14 @@ func attestFile(ctx *cli.Context) error {
 		utils.Fatalf(err.Error())
 	}
 	configDir := ctx.GlobalString(configdirFlag.Name)
-	vaultLocation := filepath.Join(configDir, common.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
+	vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
 	confKey := crypto.Keccak256([]byte("config"), stretchedKey)
 
 	// Initialize the encrypted storages
 	configStorage := storage.NewAESEncryptedStorage(filepath.Join(vaultLocation, "config.json"), confKey)
 	val := ctx.Args().First()
 	configStorage.Put("ruleset_sha256", val)
-	log.Info("Ruleset attestation updated", "sha256", val)
+	logging.Info("Ruleset attestation updated", "sha256", val)
 	return nil
 }
 
@@ -428,10 +428,10 @@ func setCredential(ctx *cli.Context) error {
 		return err
 	}
 	addr := ctx.Args().First()
-	if !common.IsHexAddress(addr) {
+	if !util.IsHexAddress(addr) {
 		utils.Fatalf("Invalid address specified: %s", addr)
 	}
-	address := common.HexToAddress(addr)
+	address := util.HexToAddress(addr)
 	password := utils.GetPassPhrase("Please enter a password to store for this address:", true)
 	fmt.Println()
 
@@ -440,13 +440,13 @@ func setCredential(ctx *cli.Context) error {
 		utils.Fatalf(err.Error())
 	}
 	configDir := ctx.GlobalString(configdirFlag.Name)
-	vaultLocation := filepath.Join(configDir, common.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
+	vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
 	pwkey := crypto.Keccak256([]byte("credentials"), stretchedKey)
 
 	pwStorage := storage.NewAESEncryptedStorage(filepath.Join(vaultLocation, "credentials.json"), pwkey)
 	pwStorage.Put(address.Hex(), password)
 
-	log.Info("Credential store updated", "set", address)
+	logging.Info("Credential store updated", "set", address)
 	return nil
 }
 
@@ -458,23 +458,23 @@ func removeCredential(ctx *cli.Context) error {
 		return err
 	}
 	addr := ctx.Args().First()
-	if !common.IsHexAddress(addr) {
+	if !util.IsHexAddress(addr) {
 		utils.Fatalf("Invalid address specified: %s", addr)
 	}
-	address := common.HexToAddress(addr)
+	address := util.HexToAddress(addr)
 
 	stretchedKey, err := readMasterKey(ctx, nil)
 	if err != nil {
 		utils.Fatalf(err.Error())
 	}
 	configDir := ctx.GlobalString(configdirFlag.Name)
-	vaultLocation := filepath.Join(configDir, common.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
+	vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
 	pwkey := crypto.Keccak256([]byte("credentials"), stretchedKey)
 
 	pwStorage := storage.NewAESEncryptedStorage(filepath.Join(vaultLocation, "credentials.json"), pwkey)
 	pwStorage.Del(address.Hex())
 
-	log.Info("Credential store updated", "unset", address)
+	logging.Info("Credential store updated", "unset", address)
 	return nil
 }
 
@@ -490,7 +490,7 @@ func newAccount(c *cli.Context) error {
 		ksLoc                     = c.GlobalString(keystoreFlag.Name)
 		lightKdf                  = c.GlobalBool(utils.LightKDFFlag.Name)
 	)
-	log.Info("Starting clef", "keystore", ksLoc, "light-kdf", lightKdf)
+	logging.Info("Starting clef", "keystore", ksLoc, "light-kdf", lightKdf)
 	am := core.StartClefAccountManager(ksLoc, true, lightKdf, "")
 	// This gives is us access to the external API
 	apiImpl := core.NewSignerAPI(am, 0, true, ui, nil, false, pwStorage)
@@ -523,7 +523,7 @@ func initialize(c *cli.Context) error {
 	if usecolor {
 		output = colorable.NewColorable(logOutput)
 	}
-	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(c.Int(logLevelFlag.Name)), log.StreamHandler(output, log.TerminalFormat(usecolor))))
+	logging.Root().SetHandler(logging.LvlFilterHandler(logging.Lvl(c.Int(logLevelFlag.Name)), logging.StreamHandler(output, logging.TerminalFormat(usecolor))))
 
 	return nil
 }
@@ -559,10 +559,10 @@ func signer(c *cli.Context) error {
 	}
 	var ui core.UIClientAPI
 	if c.GlobalBool(stdiouiFlag.Name) {
-		log.Info("Using stdin/stdout as UI-channel")
+		logging.Info("Using stdin/stdout as UI-channel")
 		ui = core.NewStdIOUI()
 	} else {
-		log.Info("Using CLI as UI-channel")
+		logging.Info("Using CLI as UI-channel")
 		ui = core.NewCommandlineUI()
 	}
 	// 4bytedb data
@@ -572,7 +572,7 @@ func signer(c *cli.Context) error {
 		utils.Fatalf(err.Error())
 	}
 	embeds, locals := db.Size()
-	log.Info("Loaded 4byte database", "embeds", embeds, "locals", locals, "local", fourByteLocal)
+	logging.Info("Loaded 4byte database", "embeds", embeds, "locals", locals, "local", fourByteLocal)
 
 	var (
 		api       core.ExternalAPI
@@ -580,9 +580,9 @@ func signer(c *cli.Context) error {
 	)
 	configDir := c.GlobalString(configdirFlag.Name)
 	if stretchedKey, err := readMasterKey(c, ui); err != nil {
-		log.Warn("Failed to open master, rules disabled", "err", err)
+		logging.Warn("Failed to open master, rules disabled", "err", err)
 	} else {
-		vaultLocation := filepath.Join(configDir, common.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
+		vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), stretchedKey)[:10]))
 
 		// Generate domain specific keys
 		pwkey := crypto.Keccak256([]byte("credentials"), stretchedKey)
@@ -598,13 +598,13 @@ func signer(c *cli.Context) error {
 		if ruleFile := c.GlobalString(ruleFlag.Name); ruleFile != "" {
 			ruleJS, err := os.ReadFile(ruleFile)
 			if err != nil {
-				log.Warn("Could not load rules, disabling", "file", ruleFile, "err", err)
+				logging.Warn("Could not load rules, disabling", "file", ruleFile, "err", err)
 			} else {
 				shasum := sha256.Sum256(ruleJS)
 				foundShaSum := hex.EncodeToString(shasum[:])
 				storedShasum, _ := configStorage.Get("ruleset_sha256")
 				if storedShasum != foundShaSum {
-					log.Warn("Rule hash not attested, disabling", "hash", foundShaSum, "attested", storedShasum)
+					logging.Warn("Rule hash not attested, disabling", "hash", foundShaSum, "attested", storedShasum)
 				} else {
 					// Initialize rules
 					ruleEngine, err := rules.NewRuleEvaluator(ui, jsStorage)
@@ -613,7 +613,7 @@ func signer(c *cli.Context) error {
 					}
 					ruleEngine.Init(string(ruleJS))
 					ui = ruleEngine
-					log.Info("Rule engine configured", "file", c.String(ruleFlag.Name))
+					logging.Info("Rule engine configured", "file", c.String(ruleFlag.Name))
 				}
 			}
 		}
@@ -626,7 +626,7 @@ func signer(c *cli.Context) error {
 		nousb    = c.GlobalBool(utils.NoUSBFlag.Name)
 		scpath   = c.GlobalString(utils.SmartCardDaemonPathFlag.Name)
 	)
-	log.Info("Starting signer", "chainid", chainId, "keystore", ksLoc,
+	logging.Info("Starting signer", "chainid", chainId, "keystore", ksLoc,
 		"light-kdf", lightKdf, "advanced", advanced)
 	am := core.StartClefAccountManager(ksLoc, nousb, lightKdf, scpath)
 	apiImpl := core.NewSignerAPI(am, chainId, nousb, ui, db, advanced, pwStorage)
@@ -641,7 +641,7 @@ func signer(c *cli.Context) error {
 		if err != nil {
 			utils.Fatalf(err.Error())
 		}
-		log.Info("Audit logs configured", "file", logfile)
+		logging.Info("Audit logs configured", "file", logfile)
 	}
 	// register signer API with server
 	var (
@@ -677,12 +677,12 @@ func signer(c *cli.Context) error {
 			utils.Fatalf("Could not start RPC api: %v", err)
 		}
 		extapiURL = fmt.Sprintf("http://%v/", addr)
-		log.Info("HTTP endpoint opened", "url", extapiURL)
+		logging.Info("HTTP endpoint opened", "url", extapiURL)
 
 		defer func() {
 			// Don't bother imposing a timeout here.
 			httpServer.Shutdown(context.Background())
-			log.Info("HTTP endpoint closed", "url", extapiURL)
+			logging.Info("HTTP endpoint closed", "url", extapiURL)
 		}()
 	}
 	if !c.GlobalBool(utils.IPCDisabledFlag.Name) {
@@ -692,15 +692,15 @@ func signer(c *cli.Context) error {
 		if err != nil {
 			utils.Fatalf("Could not start IPC api: %v", err)
 		}
-		log.Info("IPC endpoint opened", "url", ipcapiURL)
+		logging.Info("IPC endpoint opened", "url", ipcapiURL)
 		defer func() {
 			listener.Close()
-			log.Info("IPC endpoint closed", "url", ipcapiURL)
+			logging.Info("IPC endpoint closed", "url", ipcapiURL)
 		}()
 	}
 
 	if c.GlobalBool(testFlag.Name) {
-		log.Info("Performing UI test")
+		logging.Info("Performing UI test")
 		go testExternalUI(apiImpl)
 	}
 	ui.OnSignerStartup(core.StartupInfo{
@@ -716,7 +716,7 @@ func signer(c *cli.Context) error {
 	signal.Notify(abortChan, os.Interrupt)
 
 	sig := <-abortChan
-	log.Info("Exiting...", "signal", sig)
+	logging.Info("Exiting...", "signal", sig)
 
 	return nil
 }
@@ -782,8 +782,8 @@ func readMasterKey(ctx *cli.Context, ui core.UIClientAPI) ([]byte, error) {
 		return nil, fmt.Errorf("master seed of insufficient length, expected >255 bytes, got %d", len(masterSeed))
 	}
 	// Create vault location
-	vaultLocation := filepath.Join(configDir, common.Bytes2Hex(crypto.Keccak256([]byte("vault"), masterSeed)[:10]))
-	err = os.Mkdir(vaultLocation, 0700)
+	vaultLocation := filepath.Join(configDir, util.Bytes2Hex(crypto.Keccak256([]byte("vault"), masterSeed)[:10]))
+	err = os.Mkdir(vaultLocation, 0o700)
 	if err != nil && !os.IsExist(err) {
 		return nil, err
 	}
@@ -801,7 +801,7 @@ func checkFile(filename string) error {
 	// Check the unix permission bits
 	// However, on windows, we cannot use the unix perm-bits, see
 	// https://github.com/ParallaxProtocol/parallax/issues/20123
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0377 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o377 != 0 {
 		return fmt.Errorf("file (%v) has insecure file permissions (%v)", filename, info.Mode().String())
 	}
 	return nil
@@ -814,7 +814,7 @@ func confirm(text string) bool {
 
 	text, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
-		log.Crit("Failed to read user input", "err", err)
+		logging.Crit("Failed to read user input", "err", err)
 	}
 	if text := strings.TrimSpace(text); text == "ok" {
 		return true
@@ -828,9 +828,9 @@ func testExternalUI(api *core.SignerAPI) {
 	ctx = context.WithValue(ctx, "local", "main")
 	errs := make([]string, 0)
 
-	a := common.HexToAddress("0xdeadbeef000000000000000000000000deadbeef")
+	a := util.HexToAddress("0xdeadbeef000000000000000000000000deadbeef")
 	addErr := func(errStr string) {
-		log.Info("Test error", "err", errStr)
+		logging.Info("Test error", "err", errStr)
 		errs = append(errs, errStr)
 	}
 
@@ -850,7 +850,7 @@ func testExternalUI(api *core.SignerAPI) {
 		}
 	}
 	expectApprove := func(testcase string, err error) {
-		if err == nil || err == accounts.ErrUnknownAccount {
+		if err == nil || err == wallet.ErrUnknownAccount {
 			return
 		}
 		addErr(fmt.Sprintf("%v: expected no error, got %v", testcase, err.Error()))
@@ -874,31 +874,31 @@ func testExternalUI(api *core.SignerAPI) {
 		api.UI.ShowInfo("Please approve the next request for signing a clique header")
 		time.Sleep(delay)
 		cliqueHeader := types.Header{
-			ParentHash:  common.HexToHash("0000H45H"),
-			Coinbase:    common.HexToAddress("0000H45H"),
-			Root:        common.HexToHash("0000H00H"),
-			TxHash:      common.HexToHash("0000H45H"),
-			ReceiptHash: common.HexToHash("0000H45H"),
+			ParentHash:  util.HexToHash("0000H45H"),
+			Coinbase:    util.HexToAddress("0000H45H"),
+			Root:        util.HexToHash("0000H00H"),
+			TxHash:      util.HexToHash("0000H45H"),
+			ReceiptHash: util.HexToHash("0000H45H"),
 			Difficulty:  big.NewInt(1337),
 			Number:      big.NewInt(1337),
 			GasLimit:    1338,
 			GasUsed:     1338,
 			Time:        1338,
 			Extra:       []byte("Extra data Extra data Extra data  Extra data  Extra data  Extra data  Extra data Extra data"),
-			MixDigest:   common.HexToHash("0x0000H45H"),
+			MixDigest:   util.HexToHash("0x0000H45H"),
 		}
 		cliqueRlp, err := rlp.EncodeToBytes(cliqueHeader)
 		if err != nil {
 			utils.Fatalf("Should not error: %v", err)
 		}
-		addr, _ := common.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
-		_, err = api.SignData(ctx, accounts.MimetypeClique, *addr, hexutil.Encode(cliqueRlp))
+		addr, _ := util.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
+		_, err = api.SignData(ctx, wallet.MimetypeClique, *addr, hexutil.Encode(cliqueRlp))
 		expectApprove("signdata - clique header", err)
 	}
 	{ // Sign data test - typed data
 		api.UI.ShowInfo("Please approve the next request for signing EIP-712 typed data")
 		time.Sleep(delay)
-		addr, _ := common.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
+		addr, _ := util.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
 		data := `{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Person":[{"name":"name","type":"string"},{"name":"test","type":"uint8"},{"name":"wallet","type":"address"}],"Mail":[{"name":"from","type":"Person"},{"name":"to","type":"Person"},{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Ether Mail","version":"1","chainId":"1","verifyingContract":"0xCCCcccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"},"message":{"from":{"name":"Cow","test":"3","wallet":"0xcD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},"to":{"name":"Bob","wallet":"0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB","test":"2"},"contents":"Hello, Bob!"}}`
 		//_, err := api.SignData(ctx, accounts.MimetypeTypedData, *addr, hexutil.Encode([]byte(data)))
 		var typedData apitypes.TypedData
@@ -909,27 +909,27 @@ func testExternalUI(api *core.SignerAPI) {
 	{ // Sign data test - plain text
 		api.UI.ShowInfo("Please approve the next request for signing text")
 		time.Sleep(delay)
-		addr, _ := common.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
-		_, err := api.SignData(ctx, accounts.MimetypeTextPlain, *addr, hexutil.Encode([]byte("hello world")))
+		addr, _ := util.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
+		_, err := api.SignData(ctx, wallet.MimetypeTextPlain, *addr, hexutil.Encode([]byte("hello world")))
 		expectApprove("signdata - text", err)
 	}
 	{ // Sign data test - plain text reject
 		api.UI.ShowInfo("Please deny the next request for signing text")
 		time.Sleep(delay)
-		addr, _ := common.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
-		_, err := api.SignData(ctx, accounts.MimetypeTextPlain, *addr, hexutil.Encode([]byte("hello world")))
+		addr, _ := util.NewMixedcaseAddressFromString("0x0011223344556677889900112233445566778899")
+		_, err := api.SignData(ctx, wallet.MimetypeTextPlain, *addr, hexutil.Encode([]byte("hello world")))
 		expectDeny("signdata - text", err)
 	}
 	{ // Sign transaction
 		api.UI.ShowInfo("Please reject next transaction")
 		time.Sleep(delay)
 		data := hexutil.Bytes([]byte{})
-		to := common.NewMixedcaseAddress(a)
+		to := util.NewMixedcaseAddress(a)
 		tx := apitypes.SendTxArgs{
 			Data:     &data,
 			Nonce:    0x1,
 			Value:    hexutil.Big(*big.NewInt(6)),
-			From:     common.NewMixedcaseAddress(a),
+			From:     util.NewMixedcaseAddress(a),
 			To:       &to,
 			GasPrice: (*hexutil.Big)(big.NewInt(5)),
 			Gas:      1000,
@@ -959,7 +959,7 @@ func testExternalUI(api *core.SignerAPI) {
 	}
 
 	for _, e := range errs {
-		log.Error(e)
+		logging.Error(e)
 	}
 	result := fmt.Sprintf("Tests completed. %d errors:\n%s\n", len(errs), strings.Join(errs, "\n"))
 	api.UI.ShowInfo(result)
@@ -988,7 +988,7 @@ func decryptSeed(keyjson []byte, auth string) ([]byte, error) {
 		return nil, err
 	}
 	if encSeed.Version != 1 {
-		log.Warn(fmt.Sprintf("unsupported encryption format of seed: %d, operation will likely fail", encSeed.Version))
+		logging.Warn(fmt.Sprintf("unsupported encryption format of seed: %d, operation will likely fail", encSeed.Version))
 	}
 	seed, err := keystore.DecryptDataV3(encSeed.Params, auth)
 	if err != nil {
@@ -1000,8 +1000,8 @@ func decryptSeed(keyjson []byte, auth string) ([]byte, error) {
 // GenDoc outputs examples of all structures used in json-rpc communication
 func GenDoc(ctx *cli.Context) {
 	var (
-		a    = common.HexToAddress("0xdeadbeef000000000000000000000000deadbeef")
-		b    = common.HexToAddress("0x1111111122222222222233333333334444444444")
+		a    = util.HexToAddress("0xdeadbeef000000000000000000000000deadbeef")
+		b    = util.HexToAddress("0x1111111122222222222233333333334444444444")
 		meta = core.Metadata{
 			Scheme:    "http",
 			Local:     "localhost:8545",
@@ -1014,7 +1014,7 @@ func GenDoc(ctx *cli.Context) {
 			if data, err := json.MarshalIndent(v, "", "  "); err == nil {
 				output = append(output, fmt.Sprintf("### %s\n\n%s\n\nExample:\n```json\n%s\n```", name, desc, data))
 			} else {
-				log.Error("Error generating output", "err", err)
+				logging.Error("Error generating output", "err", err)
 			}
 		}
 	)
@@ -1024,13 +1024,13 @@ func GenDoc(ctx *cli.Context) {
 			"The data to be signed can be of various types, defined by content-type. Clef has done most " +
 			"of the work in canonicalizing and making sense of the data, and it's up to the UI to present" +
 			"the user with the contents of the `message`"
-		sighash, msg := accounts.TextAndHash([]byte("hello world"))
-		messages := []*apitypes.NameValueType{{Name: "message", Value: msg, Typ: accounts.MimetypeTextPlain}}
+		sighash, msg := wallet.TextAndHash([]byte("hello world"))
+		messages := []*apitypes.NameValueType{{Name: "message", Value: msg, Typ: wallet.MimetypeTextPlain}}
 
 		add("SignDataRequest", desc, &core.SignDataRequest{
-			Address:     common.NewMixedcaseAddress(a),
+			Address:     util.NewMixedcaseAddress(a),
 			Meta:        meta,
-			ContentType: accounts.MimetypeTextPlain,
+			ContentType: wallet.MimetypeTextPlain,
 			Rawdata:     []byte(msg),
 			Messages:    messages,
 			Hash:        sighash,
@@ -1064,7 +1064,7 @@ func GenDoc(ctx *cli.Context) {
 				Data:     &data,
 				Nonce:    0x1,
 				Value:    hexutil.Big(*big.NewInt(6)),
-				From:     common.NewMixedcaseAddress(a),
+				From:     util.NewMixedcaseAddress(a),
 				To:       nil,
 				GasPrice: (*hexutil.Big)(big.NewInt(5)),
 				Gas:      1000,
@@ -1082,7 +1082,7 @@ func GenDoc(ctx *cli.Context) {
 					Data:     &data,
 					Nonce:    0x4,
 					Value:    hexutil.Big(*big.NewInt(6)),
-					From:     common.NewMixedcaseAddress(a),
+					From:     util.NewMixedcaseAddress(a),
 					To:       nil,
 					GasPrice: (*hexutil.Big)(big.NewInt(5)),
 					Gas:      1000,
@@ -1108,10 +1108,10 @@ func GenDoc(ctx *cli.Context) {
 			"\n\n" +
 			"The `OnApproved` method cannot be responded to, it's purely informative"
 
-		rlpdata := common.FromHex("0xf85d640101948a8eafb1cf62bfbeb1741769dae1a9dd47996192018026a0716bd90515acb1e68e5ac5867aa11a1e65399c3349d479f5fb698554ebc6f293a04e8a4ebfff434e971e0ef12c5bf3a881b06fd04fc3f8b8a7291fb67a26a1d4ed")
+		rlpdata := util.FromHex("0xf85d640101948a8eafb1cf62bfbeb1741769dae1a9dd47996192018026a0716bd90515acb1e68e5ac5867aa11a1e65399c3349d479f5fb698554ebc6f293a04e8a4ebfff434e971e0ef12c5bf3a881b06fd04fc3f8b8a7291fb67a26a1d4ed")
 		var tx types.Transaction
 		tx.UnmarshalBinary(rlpdata)
-		add("OnApproved - SignTransactionResult", desc, &prlapi.SignTransactionResult{Raw: rlpdata, Tx: &tx})
+		add("OnApproved - SignTransactionResult", desc, &api.SignTransactionResult{Raw: rlpdata, Tx: &tx})
 	}
 	{ // User input
 		add("UserInputRequest", "Sent when clef needs the user to provide data. If 'password' is true, the input field should be treated accordingly (echo-free)",
@@ -1125,22 +1125,22 @@ func GenDoc(ctx *cli.Context) {
 			"who only sees the `address`es. ",
 			&core.ListRequest{
 				Meta: meta,
-				Accounts: []accounts.Account{
-					{Address: a, URL: accounts.URL{Scheme: "keystore", Path: "/path/to/keyfile/a"}},
-					{Address: b, URL: accounts.URL{Scheme: "keystore", Path: "/path/to/keyfile/b"}},
+				Accounts: []wallet.Account{
+					{Address: a, URL: wallet.URL{Scheme: "keystore", Path: "/path/to/keyfile/a"}},
+					{Address: b, URL: wallet.URL{Scheme: "keystore", Path: "/path/to/keyfile/b"}},
 				},
 			})
 
 		add("ListResponse", "Response to list request. The response contains a list of all addresses to show to the caller. "+
 			"Note: the UI is free to respond with any address the caller, regardless of whether it exists or not",
 			&core.ListResponse{
-				Accounts: []accounts.Account{
+				Accounts: []wallet.Account{
 					{
-						Address: common.HexToAddress("0xcowbeef000000cowbeef00000000000000000c0w"),
-						URL:     accounts.URL{Path: ".. ignored .."},
+						Address: util.HexToAddress("0xcowbeef000000cowbeef00000000000000000c0w"),
+						URL:     wallet.URL{Path: ".. ignored .."},
 					},
 					{
-						Address: common.HexToAddress("0xffffffffffffffffffffffffffffffffffffffff"),
+						Address: util.HexToAddress("0xffffffffffffffffffffffffffffffffffffffff"),
 					},
 				},
 			})

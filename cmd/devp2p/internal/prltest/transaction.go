@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package prltest
 
@@ -22,14 +22,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core/types"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/params"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
-// var faucetAddr = common.HexToAddress("0x71562b71999873DB5b286dF957af199Ec94617F7")
+// var faucetAddr = util.HexToAddress("0x71562b71999873DB5b286dF957af199Ec94617F7")
 var faucetKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 
 func (s *Suite) sendSuccessfulTxs(t *utesting.T, isEth66 bool) error {
@@ -201,7 +201,7 @@ func sendMultipleSuccessfulTxs(t *utesting.T, s *Suite, txs []*types.Transaction
 	// update nonce
 	nonce = txs[len(txs)-1].Nonce()
 	// Wait for the transaction announcement(s) and make sure all sent txs are being propagated
-	recvHashes := make([]common.Hash, 0)
+	recvHashes := make([]util.Hash, 0)
 	// all txs should be announced within 3 announcements
 	for i := 0; i < 3; i++ {
 		switch msg := recvConn.readAndServe(s.chain, timeout).(type) {
@@ -246,7 +246,7 @@ func checkMaliciousTxPropagation(s *Suite, txs []*types.Transaction, conn *Conn)
 	switch msg := conn.readAndServe(s.chain, time.Second*8).(type) {
 	case *Transactions:
 		// check to see if any of the failing txs were in the announcement
-		recvTxs := make([]common.Hash, len(*msg))
+		recvTxs := make([]util.Hash, len(*msg))
 		for i, recvTx := range *msg {
 			recvTxs[i] = recvTx.Hash()
 		}
@@ -271,9 +271,9 @@ func checkMaliciousTxPropagation(s *Suite, txs []*types.Transaction, conn *Conn)
 // compareReceivedTxs compares the received set of txs against the given set of txs,
 // returning both the set received txs that were present within the given txs, and
 // the set of txs that were missing from the set of received txs
-func compareReceivedTxs(recvTxs []common.Hash, txs []*types.Transaction) (present []*types.Transaction, missing []*types.Transaction) {
+func compareReceivedTxs(recvTxs []util.Hash, txs []*types.Transaction) (present []*types.Transaction, missing []*types.Transaction) {
 	// create a map of the hashes received from node
-	recvHashes := make(map[common.Hash]common.Hash)
+	recvHashes := make(map[util.Hash]util.Hash)
 	for _, hash := range recvTxs {
 		recvHashes[hash] = hash
 	}
@@ -296,7 +296,7 @@ func unknownTx(s *Suite) *types.Transaction {
 	if tx == nil {
 		return nil
 	}
-	var to common.Address
+	var to util.Address
 	if tx.To() != nil {
 		to = *tx.To()
 	}
@@ -315,8 +315,8 @@ func getNextTxFromChain(s *Suite) *types.Transaction {
 	return nil
 }
 
-func generateTxs(s *Suite, numTxs int) (map[common.Hash]common.Hash, []*types.Transaction, error) {
-	txHashMap := make(map[common.Hash]common.Hash, numTxs)
+func generateTxs(s *Suite, numTxs int) (map[util.Hash]util.Hash, []*types.Transaction, error) {
+	txHashMap := make(map[util.Hash]util.Hash, numTxs)
 	txs := make([]*types.Transaction, numTxs)
 
 	nextTx := getNextTxFromChain(s)
@@ -339,8 +339,8 @@ func generateTxs(s *Suite, numTxs int) (map[common.Hash]common.Hash, []*types.Tr
 	return txHashMap, txs, nil
 }
 
-func generateTx(chainConfig *params.ChainConfig, nonce uint64, gas uint64) *types.Transaction {
-	var to common.Address
+func generateTx(chainConfig *chainparams.ChainConfig, nonce uint64, gas uint64) *types.Transaction {
+	var to util.Address
 	tx := types.NewTransaction(nonce, to, big.NewInt(1), gas, big.NewInt(1), []byte{})
 	return signWithFaucet(chainConfig, tx)
 }
@@ -360,7 +360,7 @@ func invalidNonceTx(s *Suite) *types.Transaction {
 	if tx == nil {
 		return nil
 	}
-	var to common.Address
+	var to util.Address
 	if tx.To() != nil {
 		to = *tx.To()
 	}
@@ -374,7 +374,7 @@ func hugeAmount(s *Suite) *types.Transaction {
 		return nil
 	}
 	amount := largeNumber(2)
-	var to common.Address
+	var to util.Address
 	if tx.To() != nil {
 		to = *tx.To()
 	}
@@ -388,7 +388,7 @@ func hugeGasPrice(s *Suite) *types.Transaction {
 		return nil
 	}
 	gasPrice := largeNumber(2)
-	var to common.Address
+	var to util.Address
 	if tx.To() != nil {
 		to = *tx.To()
 	}
@@ -401,7 +401,7 @@ func hugeData(s *Suite) *types.Transaction {
 	if tx == nil {
 		return nil
 	}
-	var to common.Address
+	var to util.Address
 	if tx.To() != nil {
 		to = *tx.To()
 	}
@@ -409,7 +409,7 @@ func hugeData(s *Suite) *types.Transaction {
 	return signWithFaucet(s.chain.chainConfig, txNew)
 }
 
-func signWithFaucet(chainConfig *params.ChainConfig, tx *types.Transaction) *types.Transaction {
+func signWithFaucet(chainConfig *chainparams.ChainConfig, tx *types.Transaction) *types.Transaction {
 	signer := types.LatestSigner(chainConfig)
 	signedTx, err := types.SignTx(tx, signer, faucetKey)
 	if err != nil {

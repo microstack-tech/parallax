@@ -1,18 +1,18 @@
-// Copyright 2016 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package debug
 
@@ -24,9 +24,9 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
-	"github.com/ParallaxProtocol/parallax/metrics/exp"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/support/metrics/exp"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"gopkg.in/urfave/cli.v1"
@@ -105,33 +105,33 @@ var Flags = []cli.Flag{
 	traceFlag,
 }
 
-var glogger *log.GlogHandler
+var glogger *logging.GlogHandler
 
 func init() {
-	glogger = log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.LvlInfo)
-	log.Root().SetHandler(glogger)
+	glogger = logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.LvlInfo)
+	logging.Root().SetHandler(glogger)
 }
 
 // Setup initializes profiling and logging based on the CLI flags.
 // It should be called as early as possible in the program.
 func Setup(ctx *cli.Context) error {
-	var ostream log.Handler
+	var ostream logging.Handler
 	output := io.Writer(os.Stderr)
 	if ctx.GlobalBool(logjsonFlag.Name) {
-		ostream = log.StreamHandler(output, log.JSONFormat())
+		ostream = logging.StreamHandler(output, logging.JSONFormat())
 	} else {
 		usecolor := (isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())) && os.Getenv("TERM") != "dumb"
 		if usecolor {
 			output = colorable.NewColorableStderr()
 		}
-		ostream = log.StreamHandler(output, log.TerminalFormat(usecolor))
+		ostream = logging.StreamHandler(output, logging.TerminalFormat(usecolor))
 	}
 	glogger.SetHandler(ostream)
 
 	// logging
 	verbosity := ctx.GlobalInt(verbosityFlag.Name)
-	glogger.Verbosity(log.Lvl(verbosity))
+	glogger.Verbosity(logging.Lvl(verbosity))
 	vmodule := ctx.GlobalString(vmoduleFlag.Name)
 	glogger.Vmodule(vmodule)
 
@@ -139,12 +139,12 @@ func Setup(ctx *cli.Context) error {
 	if ctx.GlobalIsSet(debugFlag.Name) {
 		debug = ctx.GlobalBool(debugFlag.Name)
 	}
-	log.PrintOrigins(debug)
+	logging.PrintOrigins(debug)
 
 	backtrace := ctx.GlobalString(backtraceAtFlag.Name)
 	glogger.BacktraceAt(backtrace)
 
-	log.Root().SetHandler(glogger)
+	logging.Root().SetHandler(glogger)
 
 	// profiling, tracing
 	runtime.MemProfileRate = memprofilerateFlag.Value
@@ -187,10 +187,10 @@ func StartPProf(address string, withMetrics bool) {
 	if withMetrics {
 		exp.Exp(metrics.DefaultRegistry)
 	}
-	log.Info("Starting pprof server", "addr", fmt.Sprintf("http://%s/debug/pprof", address))
+	logging.Info("Starting pprof server", "addr", fmt.Sprintf("http://%s/debug/pprof", address))
 	go func() {
 		if err := http.ListenAndServe(address, nil); err != nil {
-			log.Error("Failure in running pprof server", "err", err)
+			logging.Error("Failure in running pprof server", "err", err)
 		}
 	}()
 }

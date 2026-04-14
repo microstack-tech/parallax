@@ -1,41 +1,41 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package shutdowncheck
 
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/prldb"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
 
 // ShutdownTracker is a service that reports previous unclean shutdowns
 // upon start. It needs to be started after a successful start-up and stopped
 // after a successful shutdown, just before the db is closed.
 type ShutdownTracker struct {
-	db     prldb.Database
+	db     dbstore.Database
 	stopCh chan struct{}
 }
 
 // NewShutdownTracker creates a new ShutdownTracker instance and has
 // no other side-effect.
-func NewShutdownTracker(db prldb.Database) *ShutdownTracker {
+func NewShutdownTracker(db dbstore.Database) *ShutdownTracker {
 	return &ShutdownTracker{
 		db:     db,
 		stopCh: make(chan struct{}),
@@ -47,15 +47,15 @@ func NewShutdownTracker(db prldb.Database) *ShutdownTracker {
 // - Report previous unclean shutdowns
 func (t *ShutdownTracker) MarkStartup() {
 	if uncleanShutdowns, discards, err := rawdb.PushUncleanShutdownMarker(t.db); err != nil {
-		log.Error("Could not update unclean-shutdown-marker list", "error", err)
+		logging.Error("Could not update unclean-shutdown-marker list", "error", err)
 	} else {
 		if discards > 0 {
-			log.Warn("Old unclean shutdowns found", "count", discards)
+			logging.Warn("Old unclean shutdowns found", "count", discards)
 		}
 		for _, tstamp := range uncleanShutdowns {
 			t := time.Unix(int64(tstamp), 0)
-			log.Warn("Unclean shutdown detected", "booted", t,
-				"age", common.PrettyAge(t))
+			logging.Warn("Unclean shutdown detected", "booted", t,
+				"age", util.PrettyAge(t))
 		}
 	}
 }

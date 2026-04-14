@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package trie
 
@@ -21,9 +21,9 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/prldb/memorydb"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 )
 
 // randTest performs random trie operations.
@@ -145,7 +145,7 @@ func Fuzz(input []byte) int {
 func runRandTest(rt randTest) error {
 	triedb := trie.NewDatabase(memorydb.New())
 
-	tr, _ := trie.New(common.Hash{}, triedb)
+	tr, _ := trie.New(util.Hash{}, triedb)
 	values := make(map[string]string) // tracks content of the trie
 
 	for i, step := range rt {
@@ -177,7 +177,7 @@ func runRandTest(rt randTest) error {
 			}
 			tr = newtr
 		case opItercheckhash:
-			checktr, _ := trie.New(common.Hash{}, triedb)
+			checktr, _ := trie.New(util.Hash{}, triedb)
 			it := trie.NewIterator(tr.NodeIterator(nil))
 			for it.Next() {
 				checktr.Update(it.Key, it.Value)

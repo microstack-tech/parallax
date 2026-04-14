@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package simulations
 
@@ -29,13 +29,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/event"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/adapters"
 	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/mattn/go-colorable"
 )
 
@@ -43,8 +43,8 @@ func TestMain(m *testing.M) {
 	loglevel := flag.Int("loglevel", 2, "verbosity of logs")
 
 	flag.Parse()
-	log.PrintOrigins(true)
-	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(*loglevel), log.StreamHandler(colorable.NewColorableStderr(), log.TerminalFormat(true))))
+	logging.PrintOrigins(true)
+	logging.Root().SetHandler(logging.LvlFilterHandler(logging.Lvl(*loglevel), logging.StreamHandler(colorable.NewColorableStderr(), logging.TerminalFormat(true))))
 	os.Exit(m.Run())
 }
 

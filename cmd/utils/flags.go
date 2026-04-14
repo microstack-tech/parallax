@@ -1,20 +1,20 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
-// Package utils contains internal helper functions for go-ethereum commands.
+// Package utils contains internal helper functions for parallax commands.
 package utils
 
 import (
@@ -32,40 +32,40 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/accounts"
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/fdlimit"
-	"github.com/ParallaxProtocol/parallax/consensus"
-	"github.com/ParallaxProtocol/parallax/consensus/xhash"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/vm"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/graphql"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/dbstore/remotedb"
+	"github.com/ParallaxProtocol/parallax/internal/api"
 	"github.com/ParallaxProtocol/parallax/internal/flags"
-	"github.com/ParallaxProtocol/parallax/internal/prlapi"
-	"github.com/ParallaxProtocol/parallax/les"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
-	"github.com/ParallaxProtocol/parallax/metrics/exp"
-	"github.com/ParallaxProtocol/parallax/metrics/influxdb"
-	"github.com/ParallaxProtocol/parallax/miner"
+	"github.com/ParallaxProtocol/parallax/kernel"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
+	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
+	"github.com/ParallaxProtocol/parallax/node/miner"
+	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
+	"github.com/ParallaxProtocol/parallax/node/stats"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
+	"github.com/ParallaxProtocol/parallax/p2p/netparams"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prl"
-	"github.com/ParallaxProtocol/parallax/prl/downloader"
-	"github.com/ParallaxProtocol/parallax/prl/gasprice"
-	"github.com/ParallaxProtocol/parallax/prl/prlconfig"
-	"github.com/ParallaxProtocol/parallax/prl/tracers"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/prldb/remotedb"
-	"github.com/ParallaxProtocol/parallax/prlstats"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/policy/fees"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/rpc/graphql"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/support/metrics/exp"
+	"github.com/ParallaxProtocol/parallax/support/metrics/influxdb"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/fdlimit"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/wallet"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
 	pcsclite "github.com/gballet/go-libpcsclite"
 	gopsutil "github.com/shirou/gopsutil/mem"
 	"gopkg.in/urfave/cli.v1"
@@ -141,7 +141,7 @@ var (
 	NetworkIdFlag = cli.Uint64Flag{
 		Name:  "networkid",
 		Usage: "Explicitly set network id (integer)(For testnet: use --testnet instead)",
-		Value: prlconfig.Defaults.NetworkId,
+		Value: nodeconfig.Defaults.NetworkId,
 	}
 	MainnetFlag = cli.BoolFlag{
 		Name:  "mainnet",
@@ -203,10 +203,10 @@ var (
 		Usage: "Max number of elements (0 = no limit)",
 		Value: 0,
 	}
-	defaultSyncMode = prlconfig.Defaults.SyncMode
+	defaultSyncMode = nodeconfig.Defaults.SyncMode
 	SyncModeFlag    = TextMarshalerFlag{
 		Name:  "syncmode",
-		Usage: `Blockchain sync mode ("snap", "full" or "light")`,
+		Usage: `Blockchain sync mode ("snap" or "full")`,
 		Value: &defaultSyncMode,
 	}
 	GCModeFlag = cli.StringFlag{
@@ -221,7 +221,7 @@ var (
 	TxLookupLimitFlag = cli.Uint64Flag{
 		Name:  "txlookuplimit",
 		Usage: "Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain)",
-		Value: prlconfig.Defaults.TxLookupLimit,
+		Value: nodeconfig.Defaults.TxLookupLimit,
 	}
 	LightKDFFlag = cli.BoolFlag{
 		Name:  "lightkdf",
@@ -241,48 +241,6 @@ var (
 		Value: 2048,
 	}
 	// Light server and client settings
-	LightServeFlag = cli.IntFlag{
-		Name:  "light.serve",
-		Usage: "Maximum percentage of time allowed for serving LPS requests (multi-threaded processing allows values over 100)",
-		Value: prlconfig.Defaults.LightServ,
-	}
-	LightIngressFlag = cli.IntFlag{
-		Name:  "light.ingress",
-		Usage: "Incoming bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited)",
-		Value: prlconfig.Defaults.LightIngress,
-	}
-	LightEgressFlag = cli.IntFlag{
-		Name:  "light.egress",
-		Usage: "Outgoing bandwidth limit for serving light clients (kilobytes/sec, 0 = unlimited)",
-		Value: prlconfig.Defaults.LightEgress,
-	}
-	LightMaxPeersFlag = cli.IntFlag{
-		Name:  "light.maxpeers",
-		Usage: "Maximum number of light clients to serve, or light servers to attach to",
-		Value: prlconfig.Defaults.LightPeers,
-	}
-	UltraLightServersFlag = cli.StringFlag{
-		Name:  "ulc.servers",
-		Usage: "List of trusted ultra-light servers",
-		Value: strings.Join(prlconfig.Defaults.UltraLightServers, ","),
-	}
-	UltraLightFractionFlag = cli.IntFlag{
-		Name:  "ulc.fraction",
-		Usage: "Minimum % of trusted ultra-light servers required to announce a new head",
-		Value: prlconfig.Defaults.UltraLightFraction,
-	}
-	UltraLightOnlyAnnounceFlag = cli.BoolFlag{
-		Name:  "ulc.onlyannounce",
-		Usage: "Ultra light server sends announcements only",
-	}
-	LightNoPruneFlag = cli.BoolFlag{
-		Name:  "light.nopruning",
-		Usage: "Disable ancient light chain data pruning",
-	}
-	LightNoSyncServeFlag = cli.BoolFlag{
-		Name:  "light.nosyncserve",
-		Usage: "Enables serving light clients before syncing",
-	}
 	// XHash settings
 	XHashCacheDirFlag = DirectoryFlag{
 		Name:  "xhash.cachedir",
@@ -291,12 +249,12 @@ var (
 	XHashCachesInMemoryFlag = cli.IntFlag{
 		Name:  "xhash.cachesinmem",
 		Usage: "Number of recent XHash caches to keep in memory (16MB each)",
-		Value: prlconfig.Defaults.XHash.CachesInMem,
+		Value: nodeconfig.Defaults.XHash.CachesInMem,
 	}
 	XHashCachesOnDiskFlag = cli.IntFlag{
 		Name:  "xhash.cachesondisk",
 		Usage: "Number of recent xhash caches to keep on disk (16MB each)",
-		Value: prlconfig.Defaults.XHash.CachesOnDisk,
+		Value: nodeconfig.Defaults.XHash.CachesOnDisk,
 	}
 	XHashCachesLockMmapFlag = cli.BoolFlag{
 		Name:  "xhash.cacheslockmmap",
@@ -305,17 +263,17 @@ var (
 	XHashDatasetDirFlag = DirectoryFlag{
 		Name:  "xhash.dagdir",
 		Usage: "Directory to store the XHash mining DAGs",
-		Value: DirectoryString(prlconfig.Defaults.XHash.DatasetDir),
+		Value: DirectoryString(nodeconfig.Defaults.XHash.DatasetDir),
 	}
 	XHashDatasetsInMemoryFlag = cli.IntFlag{
 		Name:  "xhash.dagsinmem",
 		Usage: "Number of recent XHash mining DAGs to keep in memory (1+GB each)",
-		Value: prlconfig.Defaults.XHash.DatasetsInMem,
+		Value: nodeconfig.Defaults.XHash.DatasetsInMem,
 	}
 	XHashDatasetsOnDiskFlag = cli.IntFlag{
 		Name:  "xhash.dagsondisk",
 		Usage: "Number of recent XHash mining DAGs to keep on disk (1+GB each)",
-		Value: prlconfig.Defaults.XHash.DatasetsOnDisk,
+		Value: nodeconfig.Defaults.XHash.DatasetsOnDisk,
 	}
 	XHashDatasetsLockMmapFlag = cli.BoolFlag{
 		Name:  "xhash.dagslockmmap",
@@ -333,47 +291,47 @@ var (
 	TxPoolJournalFlag = cli.StringFlag{
 		Name:  "txpool.journal",
 		Usage: "Disk journal for local transaction to survive node restarts",
-		Value: core.DefaultTxPoolConfig.Journal,
+		Value: validation.DefaultTxPoolConfig.Journal,
 	}
 	TxPoolRejournalFlag = cli.DurationFlag{
 		Name:  "txpool.rejournal",
 		Usage: "Time interval to regenerate the local transaction journal",
-		Value: core.DefaultTxPoolConfig.Rejournal,
+		Value: validation.DefaultTxPoolConfig.Rejournal,
 	}
 	TxPoolPriceLimitFlag = cli.Uint64Flag{
 		Name:  "txpool.pricelimit",
 		Usage: "Minimum gas price limit to enforce for acceptance into the pool",
-		Value: prlconfig.Defaults.TxPool.PriceLimit,
+		Value: nodeconfig.Defaults.TxPool.PriceLimit,
 	}
 	TxPoolPriceBumpFlag = cli.Uint64Flag{
 		Name:  "txpool.pricebump",
 		Usage: "Price bump percentage to replace an already existing transaction",
-		Value: prlconfig.Defaults.TxPool.PriceBump,
+		Value: nodeconfig.Defaults.TxPool.PriceBump,
 	}
 	TxPoolAccountSlotsFlag = cli.Uint64Flag{
 		Name:  "txpool.accountslots",
 		Usage: "Minimum number of executable transaction slots guaranteed per account",
-		Value: prlconfig.Defaults.TxPool.AccountSlots,
+		Value: nodeconfig.Defaults.TxPool.AccountSlots,
 	}
 	TxPoolGlobalSlotsFlag = cli.Uint64Flag{
 		Name:  "txpool.globalslots",
 		Usage: "Maximum number of executable transaction slots for all accounts",
-		Value: prlconfig.Defaults.TxPool.GlobalSlots,
+		Value: nodeconfig.Defaults.TxPool.GlobalSlots,
 	}
 	TxPoolAccountQueueFlag = cli.Uint64Flag{
 		Name:  "txpool.accountqueue",
 		Usage: "Maximum number of non-executable transaction slots permitted per account",
-		Value: prlconfig.Defaults.TxPool.AccountQueue,
+		Value: nodeconfig.Defaults.TxPool.AccountQueue,
 	}
 	TxPoolGlobalQueueFlag = cli.Uint64Flag{
 		Name:  "txpool.globalqueue",
 		Usage: "Maximum number of non-executable transaction slots for all accounts",
-		Value: prlconfig.Defaults.TxPool.GlobalQueue,
+		Value: nodeconfig.Defaults.TxPool.GlobalQueue,
 	}
 	TxPoolLifetimeFlag = cli.DurationFlag{
 		Name:  "txpool.lifetime",
 		Usage: "Maximum amount of time non-executable transaction are queued",
-		Value: prlconfig.Defaults.TxPool.Lifetime,
+		Value: nodeconfig.Defaults.TxPool.Lifetime,
 	}
 	// Performance tuning settings
 	CacheFlag = cli.IntFlag{
@@ -394,12 +352,12 @@ var (
 	CacheTrieJournalFlag = cli.StringFlag{
 		Name:  "cache.trie.journal",
 		Usage: "Disk journal directory for trie cache to survive node restarts",
-		Value: prlconfig.Defaults.TrieCleanCacheJournal,
+		Value: nodeconfig.Defaults.TrieCleanCacheJournal,
 	}
 	CacheTrieRejournalFlag = cli.DurationFlag{
 		Name:  "cache.trie.rejournal",
 		Usage: "Time interval to regenerate the trie cache journal",
-		Value: prlconfig.Defaults.TrieCleanCacheRejournal,
+		Value: nodeconfig.Defaults.TrieCleanCacheRejournal,
 	}
 	CacheGCFlag = cli.IntFlag{
 		Name:  "cache.gc",
@@ -444,12 +402,12 @@ var (
 	MinerGasLimitFlag = cli.Uint64Flag{
 		Name:  "miner.gaslimit",
 		Usage: "Target gas ceiling for mined blocks",
-		Value: prlconfig.Defaults.Miner.GasCeil,
+		Value: nodeconfig.Defaults.Miner.GasCeil,
 	}
 	MinerGasPriceFlag = BigFlag{
 		Name:  "miner.gasprice",
 		Usage: "Minimum gas price for mining a transaction",
-		Value: prlconfig.Defaults.Miner.GasPrice,
+		Value: nodeconfig.Defaults.Miner.GasPrice,
 	}
 	MinerCoinbaseFlag = cli.StringFlag{
 		Name:  "miner.coinbase",
@@ -463,7 +421,7 @@ var (
 	MinerRecommitIntervalFlag = cli.DurationFlag{
 		Name:  "miner.recommit",
 		Usage: "Time interval to recreate the block being mined",
-		Value: prlconfig.Defaults.Miner.Recommit,
+		Value: nodeconfig.Defaults.Miner.Recommit,
 	}
 	MinerNoVerifyFlag = cli.BoolFlag{
 		Name:  "miner.noverify",
@@ -496,17 +454,17 @@ var (
 	RPCGlobalGasCapFlag = cli.Uint64Flag{
 		Name:  "rpc.gascap",
 		Usage: "Sets a cap on gas that can be used in eth_call/estimateGas (0=infinite)",
-		Value: prlconfig.Defaults.RPCGasCap,
+		Value: nodeconfig.Defaults.RPCGasCap,
 	}
 	RPCGlobalPVMTimeoutFlag = cli.DurationFlag{
 		Name:  "rpc.pvmtimeout",
 		Usage: "Sets a timeout used for eth_call (0=infinite)",
-		Value: prlconfig.Defaults.RPCPVMTimeout,
+		Value: nodeconfig.Defaults.RPCPVMTimeout,
 	}
 	RPCGlobalTxFeeCapFlag = cli.Float64Flag{
 		Name:  "rpc.txfeecap",
 		Usage: "Sets a cap on transaction fee (in laxes) that can be sent via the RPC APIs (0 = no cap)",
-		Value: prlconfig.Defaults.RPCTxFeeCap,
+		Value: nodeconfig.Defaults.RPCTxFeeCap,
 	}
 	// Authenticated RPC HTTP settings
 	AuthListenFlag = cli.StringFlag{
@@ -702,22 +660,22 @@ var (
 	GpoBlocksFlag = cli.IntFlag{
 		Name:  "gpo.blocks",
 		Usage: "Number of recent blocks sampled by the legacy percentile gas price oracle (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.Blocks,
+		Value: nodeconfig.Defaults.GPO.Blocks,
 	}
 	GpoPercentileFlag = cli.IntFlag{
 		Name:  "gpo.percentile",
 		Usage: "Percentile of recent-block transaction gas prices used by the legacy oracle (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.Percentile,
+		Value: nodeconfig.Defaults.GPO.Percentile,
 	}
 	GpoMaxGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.maxprice",
 		Usage: "Maximum gas price (in wei) the oracle will ever recommend; caps both the legacy and smart-fee estimators",
-		Value: prlconfig.Defaults.GPO.MaxPrice.Int64(),
+		Value: nodeconfig.Defaults.GPO.MaxPrice.Int64(),
 	}
 	GpoIgnoreGasPriceFlag = cli.Int64Flag{
 		Name:  "gpo.ignoreprice",
 		Usage: "Gas price (in wei) below which the legacy oracle ignores sampled transactions (ignored when --gpo.smartfee is enabled)",
-		Value: prlconfig.Defaults.GPO.IgnorePrice.Int64(),
+		Value: nodeconfig.Defaults.GPO.IgnorePrice.Int64(),
 	}
 	GpoEnableSmartFeeFlag = cli.BoolTFlag{
 		Name:  "gpo.smartfee",
@@ -883,12 +841,12 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 // setBootstrapNodes creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.MainnetBootnodes
+	urls := netparams.MainnetBootnodes
 	switch {
 	case ctx.GlobalIsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name))
 	case ctx.GlobalBool(TestnetFlag.Name):
-		urls = params.TestnetBootnodes
+		urls = netparams.TestnetBootnodes
 	case cfg.BootstrapNodes != nil:
 		return // already set, don't apply defaults.
 	}
@@ -898,7 +856,7 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		if url != "" {
 			node, err := enode.Parse(enode.ValidSchemes, url)
 			if err != nil {
-				log.Crit("Bootstrap URL invalid", "enode", url, "err", err)
+				logging.Crit("Bootstrap URL invalid", "enode", url, "err", err)
 				continue
 			}
 			cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
@@ -909,7 +867,7 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.V5Bootnodes
+	urls := netparams.V5Bootnodes
 	switch {
 	case ctx.GlobalIsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name))
@@ -922,7 +880,7 @@ func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
 		if url != "" {
 			node, err := enode.Parse(enode.ValidSchemes, url)
 			if err != nil {
-				log.Error("Bootstrap URL invalid", "enode", url, "err", err)
+				logging.Error("Bootstrap URL invalid", "enode", url, "err", err)
 				continue
 			}
 			cfg.BootstrapNodesV5 = append(cfg.BootstrapNodesV5, node)
@@ -1056,41 +1014,6 @@ func setIPC(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-// setLes configures the les server and ultra light client settings from the command line flags.
-func setLes(ctx *cli.Context, cfg *prlconfig.Config) {
-	if ctx.GlobalIsSet(LightServeFlag.Name) {
-		cfg.LightServ = ctx.GlobalInt(LightServeFlag.Name)
-	}
-	if ctx.GlobalIsSet(LightIngressFlag.Name) {
-		cfg.LightIngress = ctx.GlobalInt(LightIngressFlag.Name)
-	}
-	if ctx.GlobalIsSet(LightEgressFlag.Name) {
-		cfg.LightEgress = ctx.GlobalInt(LightEgressFlag.Name)
-	}
-	if ctx.GlobalIsSet(LightMaxPeersFlag.Name) {
-		cfg.LightPeers = ctx.GlobalInt(LightMaxPeersFlag.Name)
-	}
-	if ctx.GlobalIsSet(UltraLightServersFlag.Name) {
-		cfg.UltraLightServers = strings.Split(ctx.GlobalString(UltraLightServersFlag.Name), ",")
-	}
-	if ctx.GlobalIsSet(UltraLightFractionFlag.Name) {
-		cfg.UltraLightFraction = ctx.GlobalInt(UltraLightFractionFlag.Name)
-	}
-	if cfg.UltraLightFraction <= 0 && cfg.UltraLightFraction > 100 {
-		log.Error("Ultra light fraction is invalid", "had", cfg.UltraLightFraction, "updated", prlconfig.Defaults.UltraLightFraction)
-		cfg.UltraLightFraction = prlconfig.Defaults.UltraLightFraction
-	}
-	if ctx.GlobalIsSet(UltraLightOnlyAnnounceFlag.Name) {
-		cfg.UltraLightOnlyAnnounce = ctx.GlobalBool(UltraLightOnlyAnnounceFlag.Name)
-	}
-	if ctx.GlobalIsSet(LightNoPruneFlag.Name) {
-		cfg.LightNoPrune = ctx.GlobalBool(LightNoPruneFlag.Name)
-	}
-	if ctx.GlobalIsSet(LightNoSyncServeFlag.Name) {
-		cfg.LightNoSyncServe = ctx.GlobalBool(LightNoSyncServeFlag.Name)
-	}
-}
-
 // MakeDatabaseHandles raises out the number of allowed file handles per process
 // for Prlx and returns half of the allowance to assign to the database.
 func MakeDatabaseHandles(max int) int {
@@ -1103,10 +1026,10 @@ func MakeDatabaseHandles(max int) int {
 		// User didn't specify a meaningful value, use system limits
 	case max < 128:
 		// User specified something unhealthy, just use system defaults
-		log.Error("File descriptor limit invalid (<128)", "had", max, "updated", limit)
+		logging.Error("File descriptor limit invalid (<128)", "had", max, "updated", limit)
 	case max > limit:
 		// User requested more than the OS allows, notify that we can't allocate it
-		log.Warn("Requested file descriptors denied by OS", "req", max, "limit", limit)
+		logging.Warn("Requested file descriptors denied by OS", "req", max, "limit", limit)
 	default:
 		// User limit is meaningful and within allowed range, use that
 		limit = max
@@ -1120,32 +1043,32 @@ func MakeDatabaseHandles(max int) int {
 
 // MakeAddress converts an account specified directly as a hex encoded string or
 // a key index in the key store to an internal account representation.
-func MakeAddress(ks *keystore.KeyStore, account string) (accounts.Account, error) {
+func MakeAddress(ks *keystore.KeyStore, account string) (wallet.Account, error) {
 	// If the specified account is a valid address, return it
-	if common.IsHexAddress(account) {
-		return accounts.Account{Address: common.HexToAddress(account)}, nil
+	if util.IsHexAddress(account) {
+		return wallet.Account{Address: util.HexToAddress(account)}, nil
 	}
 	// Otherwise try to interpret the account as a keystore index
 	index, err := strconv.Atoi(account)
 	if err != nil || index < 0 {
-		return accounts.Account{}, fmt.Errorf("invalid account address or index %q", account)
+		return wallet.Account{}, fmt.Errorf("invalid account address or index %q", account)
 	}
-	log.Warn("-------------------------------------------------------------------")
-	log.Warn("Referring to accounts by order in the keystore folder is dangerous!")
-	log.Warn("This functionality is deprecated and will be removed in the future!")
-	log.Warn("Please use explicit addresses! (can search via `prlx account list`)")
-	log.Warn("-------------------------------------------------------------------")
+	logging.Warn("-------------------------------------------------------------------")
+	logging.Warn("Referring to accounts by order in the keystore folder is dangerous!")
+	logging.Warn("This functionality is deprecated and will be removed in the future!")
+	logging.Warn("Please use explicit addresses! (can search via `parallax account list`)")
+	logging.Warn("-------------------------------------------------------------------")
 
 	accs := ks.Accounts()
 	if len(accs) <= index {
-		return accounts.Account{}, fmt.Errorf("index %d higher than number of accounts %d", index, len(accs))
+		return wallet.Account{}, fmt.Errorf("index %d higher than number of accounts %d", index, len(accs))
 	}
 	return accs[index], nil
 }
 
 // setCoinbase retrieves the address either from the directly specified
 // command line flags or from the keystore if CLI indexed.
-func setCoinbase(ctx *cli.Context, ks *keystore.KeyStore, cfg *prlconfig.Config) {
+func setCoinbase(ctx *cli.Context, ks *keystore.KeyStore, cfg *nodeconfig.Config) {
 	// Extract the current miner address
 	var coinbase string
 	if ctx.GlobalIsSet(MinerCoinbaseFlag.Name) {
@@ -1190,52 +1113,19 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setBootstrapNodes(ctx, cfg)
 	setBootstrapNodesV5(ctx, cfg)
 
-	lightClient := ctx.GlobalString(SyncModeFlag.Name) == "light"
-	lightServer := (ctx.GlobalInt(LightServeFlag.Name) != 0)
-
-	lightPeers := ctx.GlobalInt(LightMaxPeersFlag.Name)
-	if lightClient && !ctx.GlobalIsSet(LightMaxPeersFlag.Name) {
-		// dynamic default - for clients we use 1/10th of the default for servers
-		lightPeers /= 10
-	}
-
 	if ctx.GlobalIsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.GlobalInt(MaxPeersFlag.Name)
-		if lightServer && !ctx.GlobalIsSet(LightMaxPeersFlag.Name) {
-			cfg.MaxPeers += lightPeers
-		}
-	} else {
-		if lightServer {
-			cfg.MaxPeers += lightPeers
-		}
-		if lightClient && ctx.GlobalIsSet(LightMaxPeersFlag.Name) && cfg.MaxPeers < lightPeers {
-			cfg.MaxPeers = lightPeers
-		}
 	}
-	if !(lightClient || lightServer) {
-		lightPeers = 0
-	}
-	parallaxPeers := cfg.MaxPeers - lightPeers
-	if lightClient {
-		parallaxPeers = 0
-	}
-	log.Info("Maximum peer count", "Parallax", parallaxPeers, "LPS", lightPeers, "total", cfg.MaxPeers)
+	logging.Info("Maximum peer count", "total", cfg.MaxPeers)
 
 	if ctx.GlobalIsSet(MaxPendingPeersFlag.Name) {
 		cfg.MaxPendingPeers = ctx.GlobalInt(MaxPendingPeersFlag.Name)
 	}
-	if ctx.GlobalIsSet(NoDiscoverFlag.Name) || lightClient {
+	if ctx.GlobalIsSet(NoDiscoverFlag.Name) {
 		cfg.NoDiscovery = true
 	}
-
-	// if we're running a light client or server, force enable the v5 peer discovery
-	// unless it is explicitly disabled with --nodiscover note that explicitly specifying
-	// --v5disc overrides --nodiscover, in which case the later only disables v4 discovery
-	forceV5Discovery := (lightClient || lightServer) && !ctx.GlobalBool(NoDiscoverFlag.Name)
 	if ctx.GlobalIsSet(DiscoveryV5Flag.Name) {
 		cfg.DiscoveryV5 = ctx.GlobalBool(DiscoveryV5Flag.Name)
-	} else if forceV5Discovery {
-		cfg.DiscoveryV5 = true
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {
@@ -1302,7 +1192,7 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 		cfg.UseLightweightKDF = ctx.GlobalBool(LightKDFFlag.Name)
 	}
 	if ctx.GlobalIsSet(NoUSBFlag.Name) || cfg.NoUSB {
-		log.Warn("Option nousb is deprecated and USB is deactivated by default. Use --usb to enable")
+		logging.Warn("Option nousb is deprecated and USB is deactivated by default. Use --usb to enable")
 	}
 	if ctx.GlobalIsSet(USBFlag.Name) {
 		cfg.USB = ctx.GlobalBool(USBFlag.Name)
@@ -1321,11 +1211,11 @@ func setSmartCard(ctx *cli.Context, cfg *node.Config) {
 	// Sanity check that the smartcard path is valid
 	fi, err := os.Stat(path)
 	if err != nil {
-		log.Info("Smartcard socket not found, disabling", "err", err)
+		logging.Info("Smartcard socket not found, disabling", "err", err)
 		return
 	}
 	if fi.Mode()&os.ModeType != os.ModeSocket {
-		log.Error("Invalid smartcard daemon path", "path", path, "type", fi.Mode().String())
+		logging.Error("Invalid smartcard daemon path", "path", path, "type", fi.Mode().String())
 		return
 	}
 	// Smartcard daemon path exists and is a socket, enable it
@@ -1343,12 +1233,7 @@ func setDataDir(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-func setGPO(ctx *cli.Context, cfg *gasprice.Config, light bool) {
-	// If we are running the light client, apply another group
-	// settings for gas oracle.
-	if light {
-		*cfg = prlconfig.LightClientGPO
-	}
+func setGPO(ctx *cli.Context, cfg *fees.Config) {
 	if ctx.GlobalIsSet(GpoBlocksFlag.Name) {
 		cfg.Blocks = ctx.GlobalInt(GpoBlocksFlag.Name)
 	}
@@ -1366,14 +1251,14 @@ func setGPO(ctx *cli.Context, cfg *gasprice.Config, light bool) {
 	}
 }
 
-func setTxPool(ctx *cli.Context, cfg *core.TxPoolConfig) {
+func setTxPool(ctx *cli.Context, cfg *validation.TxPoolConfig) {
 	if ctx.GlobalIsSet(TxPoolLocalsFlag.Name) {
 		locals := strings.Split(ctx.GlobalString(TxPoolLocalsFlag.Name), ",")
 		for _, account := range locals {
-			if trimmed := strings.TrimSpace(account); !common.IsHexAddress(trimmed) {
+			if trimmed := strings.TrimSpace(account); !util.IsHexAddress(trimmed) {
 				Fatalf("Invalid account in --txpool.locals: %s", trimmed)
 			} else {
-				cfg.Locals = append(cfg.Locals, common.HexToAddress(account))
+				cfg.Locals = append(cfg.Locals, util.HexToAddress(account))
 			}
 		}
 	}
@@ -1409,7 +1294,7 @@ func setTxPool(ctx *cli.Context, cfg *core.TxPoolConfig) {
 	}
 }
 
-func setXHash(ctx *cli.Context, cfg *prlconfig.Config) {
+func setXHash(ctx *cli.Context, cfg *nodeconfig.Config) {
 	if ctx.GlobalIsSet(XHashCacheDirFlag.Name) {
 		cfg.XHash.CacheDir = ctx.GlobalString(XHashCacheDirFlag.Name)
 	}
@@ -1457,21 +1342,21 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Noverify = ctx.GlobalBool(MinerNoVerifyFlag.Name)
 	}
 	if ctx.GlobalIsSet(LegacyMinerGasTargetFlag.Name) {
-		log.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")
+		logging.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")
 	}
 }
 
-func setRequiredBlocks(ctx *cli.Context, cfg *prlconfig.Config) {
+func setRequiredBlocks(ctx *cli.Context, cfg *nodeconfig.Config) {
 	requiredBlocks := ctx.GlobalString(PrlRequiredBlocksFlag.Name)
 	if requiredBlocks == "" {
 		if ctx.GlobalIsSet(LegacyWhitelistFlag.Name) {
-			log.Warn("The flag --whitelist is deprecated and will be removed, please use --prl.requiredblocks")
+			logging.Warn("The flag --whitelist is deprecated and will be removed, please use --prl.requiredblocks")
 			requiredBlocks = ctx.GlobalString(LegacyWhitelistFlag.Name)
 		} else {
 			return
 		}
 	}
-	cfg.RequiredBlocks = make(map[uint64]common.Hash)
+	cfg.RequiredBlocks = make(map[uint64]util.Hash)
 	for _, entry := range strings.Split(requiredBlocks, ",") {
 		parts := strings.Split(entry, "=")
 		if len(parts) != 2 {
@@ -1481,7 +1366,7 @@ func setRequiredBlocks(ctx *cli.Context, cfg *prlconfig.Config) {
 		if err != nil {
 			Fatalf("Invalid required block number %s: %v", parts[0], err)
 		}
-		var hash common.Hash
+		var hash util.Hash
 		if err = hash.UnmarshalText([]byte(parts[1])); err != nil {
 			Fatalf("Invalid required block hash %s: %v", parts[1], err)
 		}
@@ -1531,40 +1416,35 @@ func CheckExclusive(ctx *cli.Context, args ...any) {
 }
 
 // SetPrlConfig applies prl-related command line flags to the config.
-func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
+func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *nodeconfig.Config) {
 	// Avoid conflicting network flags
 	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, TestnetFlag)
-	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	if ctx.GlobalString(GCModeFlag.Name) == "archive" && ctx.GlobalUint64(TxLookupLimitFlag.Name) != 0 {
 		ctx.GlobalSet(TxLookupLimitFlag.Name, "0")
-		log.Warn("Disable transaction unindexing for archive node")
-	}
-	if ctx.GlobalIsSet(LightServeFlag.Name) && ctx.GlobalUint64(TxLookupLimitFlag.Name) != 0 {
-		log.Warn("LPS server cannot serve old transaction status and cannot connect below les/4 protocol version if transaction lookup index is limited")
+		logging.Warn("Disable transaction unindexing for archive node")
 	}
 	var ks *keystore.KeyStore
 	if keystores := stack.AccountManager().Backends(keystore.KeyStoreType); len(keystores) > 0 {
 		ks = keystores[0].(*keystore.KeyStore)
 	}
 	setCoinbase(ctx, ks, cfg)
-	setGPO(ctx, &cfg.GPO, ctx.GlobalString(SyncModeFlag.Name) == "light")
+	setGPO(ctx, &cfg.GPO)
 	setTxPool(ctx, &cfg.TxPool)
 	setXHash(ctx, cfg)
 	setMiner(ctx, &cfg.Miner)
 	setRequiredBlocks(ctx, cfg)
-	setLes(ctx, cfg)
 
 	// Cap the cache allowance and tune the garbage collector
 	mem, err := gopsutil.VirtualMemory()
 	if err == nil {
 		if 32<<(^uintptr(0)>>63) == 32 && mem.Total > 2*1024*1024*1024 {
-			log.Warn("Lowering memory allowance on 32bit arch", "available", mem.Total/1024/1024, "addressable", 2*1024)
+			logging.Warn("Lowering memory allowance on 32bit arch", "available", mem.Total/1024/1024, "addressable", 2*1024)
 			mem.Total = 2 * 1024 * 1024 * 1024
 		}
 		allowance := int(mem.Total / 1024 / 1024 / 3)
 		if cache := ctx.GlobalInt(CacheFlag.Name); cache > allowance {
-			log.Warn("Sanitizing cache to Go's GC limits", "provided", cache, "updated", allowance)
+			logging.Warn("Sanitizing cache to Go's GC limits", "provided", cache, "updated", allowance)
 			ctx.GlobalSet(CacheFlag.Name, strconv.Itoa(allowance))
 		}
 	}
@@ -1572,7 +1452,7 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 	cache := ctx.GlobalInt(CacheFlag.Name)
 	gogc := math.Max(20, math.Min(100, 100/(float64(cache)/1024)))
 
-	log.Debug("Sanitizing Go's GC trigger", "percent", int(gogc))
+	logging.Debug("Sanitizing Go's GC trigger", "percent", int(gogc))
 	godebug.SetGCPercent(int(gogc))
 
 	if ctx.GlobalIsSet(SyncModeFlag.Name) {
@@ -1602,7 +1482,7 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 	cfg.Preimages = ctx.GlobalBool(CachePreimagesFlag.Name)
 	if cfg.NoPruning && !cfg.Preimages {
 		cfg.Preimages = true
-		log.Info("Enabling recording of key preimages since archive mode is used")
+		logging.Info("Enabling recording of key preimages since archive mode is used")
 	}
 	if ctx.GlobalIsSet(TxLookupLimitFlag.Name) {
 		cfg.TxLookupLimit = ctx.GlobalUint64(TxLookupLimitFlag.Name)
@@ -1625,7 +1505,7 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 	if !ctx.GlobalBool(SnapshotFlag.Name) {
 		// If snap-sync is requested, this flag is also required
 		if cfg.SyncMode == downloader.SnapSync {
-			log.Info("Snap sync requested, enabling --snapshot")
+			logging.Info("Snap sync requested, enabling --snapshot")
 		} else {
 			cfg.TrieCleanCache += cfg.SnapshotCache
 			cfg.SnapshotCache = 0 // Disabled
@@ -1643,9 +1523,9 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 		cfg.RPCGasCap = ctx.GlobalUint64(RPCGlobalGasCapFlag.Name)
 	}
 	if cfg.RPCGasCap != 0 {
-		log.Info("Set global gas cap", "cap", cfg.RPCGasCap)
+		logging.Info("Set global gas cap", "cap", cfg.RPCGasCap)
 	} else {
-		log.Info("Global gas cap disabled")
+		logging.Info("Global gas cap disabled")
 	}
 	if ctx.GlobalIsSet(RPCGlobalPVMTimeoutFlag.Name) {
 		cfg.RPCPVMTimeout = ctx.GlobalDuration(RPCGlobalPVMTimeoutFlag.Name)
@@ -1669,14 +1549,14 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 2110
 		}
-		cfg.Genesis = core.DefaultGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+		cfg.Genesis = validation.DefaultGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, chainparams.MainnetGenesisHash)
 	case ctx.GlobalBool(TestnetFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 2111
 		}
-		cfg.Genesis = core.DefaultTestnetGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.TestnetGenesisHash)
+		cfg.Genesis = validation.DefaultTestnetGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, chainparams.TestnetGenesisHash)
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -1684,7 +1564,7 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 		cfg.SyncMode = downloader.FullSync
 		// Create new developer account or reuse existing one
 		var (
-			developer  accounts.Account
+			developer  wallet.Account
 			passphrase string
 			err        error
 		)
@@ -1695,8 +1575,8 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 			passphrase = list[0]
 		}
 		// setCoinbase has been called above, configuring the miner address from command line flags.
-		if cfg.Miner.Coinbase != (common.Address{}) {
-			developer = accounts.Account{Address: cfg.Miner.Coinbase}
+		if cfg.Miner.Coinbase != (util.Address{}) {
+			developer = wallet.Account{Address: cfg.Miner.Coinbase}
 		} else if accs := ks.Accounts(); len(accs) > 0 {
 			developer = ks.Accounts()[0]
 		} else {
@@ -1708,21 +1588,21 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 		if err := ks.Unlock(developer, passphrase); err != nil {
 			Fatalf("Failed to unlock developer account: %v", err)
 		}
-		log.Info("Using developer account", "address", developer.Address)
+		logging.Info("Using developer account", "address", developer.Address)
 
 		// Create a new developer genesis block or reuse existing one
-		cfg.Genesis = core.DeveloperGenesisBlock(uint64(ctx.GlobalInt(DeveloperPeriodFlag.Name)), ctx.GlobalUint64(DeveloperGasLimitFlag.Name), developer.Address)
+		cfg.Genesis = validation.DeveloperGenesisBlock(uint64(ctx.GlobalInt(DeveloperPeriodFlag.Name)), ctx.GlobalUint64(DeveloperGasLimitFlag.Name), developer.Address)
 		if ctx.GlobalIsSet(DataDirFlag.Name) {
 			// If datadir doesn't exist we need to open db in write-mode
 			// so leveldb can create files.
 			readonly := true
-			if !common.FileExist(stack.ResolvePath("chaindata")) {
+			if !util.FileExist(stack.ResolvePath("chaindata")) {
 				readonly = false
 			}
 			// Check if we have an already initialized chain and fall back to
 			// that if so. Otherwise we need to generate a new genesis spec.
 			chaindb := MakeChainDatabase(ctx, stack, readonly)
-			if rawdb.ReadCanonicalHash(chaindb, 0) != (common.Hash{}) {
+			if rawdb.ReadCanonicalHash(chaindb, 0) != (util.Hash{}) {
 				cfg.Genesis = nil // fallback to db content
 			}
 			chaindb.Close()
@@ -1732,48 +1612,28 @@ func SetPrlConfig(ctx *cli.Context, stack *node.Node, cfg *prlconfig.Config) {
 		}
 	default:
 		if cfg.NetworkId == 2110 {
-			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+			SetDNSDiscoveryDefaults(cfg, chainparams.MainnetGenesisHash)
 		}
 	}
 }
 
 // SetDNSDiscoveryDefaults configures DNS discovery with the given URL if
 // no URLs are set.
-func SetDNSDiscoveryDefaults(cfg *prlconfig.Config, genesis common.Hash) {
+func SetDNSDiscoveryDefaults(cfg *nodeconfig.Config, genesis util.Hash) {
 	if cfg.ParallaxDiscoveryURLs != nil {
 		return // already set through flags/config
 	}
-	protocol := "all"
-	if cfg.SyncMode == downloader.LightSync {
-		protocol = "les"
-	}
-	if url := params.KnownDNSNetwork(genesis, protocol); url != "" {
+	if url := netparams.KnownDNSNetwork(genesis, "all"); url != "" {
 		cfg.ParallaxDiscoveryURLs = []string{url}
 		cfg.SnapDiscoveryURLs = cfg.ParallaxDiscoveryURLs
 	}
 }
 
-// RegisterParallaxService adds an Parallax client to the stack.
-// The second return value is the full node instance, which may be nil if the
-// node is running as a light client.
-func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (prlapi.Backend, *prl.Parallax) {
-	if cfg.SyncMode == downloader.LightSync {
-		backend, err := les.New(stack, cfg)
-		if err != nil {
-			Fatalf("Failed to register the Parallax service: %v", err)
-		}
-		stack.RegisterAPIs(tracers.APIs(backend.ApiBackend))
-		return backend.ApiBackend, nil
-	}
-	backend, err := prl.New(stack, cfg)
+// RegisterParallaxService adds a Parallax client to the stack.
+func RegisterParallaxService(stack *node.Node, cfg *nodeconfig.Config) (api.Backend, *protocol.Parallax) {
+	backend, err := protocol.New(stack, cfg)
 	if err != nil {
 		Fatalf("Failed to register the Parallax service: %v", err)
-	}
-	if cfg.LightServ > 0 {
-		_, err := les.NewLesServer(stack, backend, cfg)
-		if err != nil {
-			Fatalf("Failed to create the LPS server: %v", err)
-		}
 	}
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	return backend.APIBackend, backend
@@ -1781,14 +1641,14 @@ func RegisterParallaxService(stack *node.Node, cfg *prlconfig.Config) (prlapi.Ba
 
 // RegisterPrlStatsService configures the Parallax Stats daemon and adds it to
 // the given node.
-func RegisterPrlStatsService(stack *node.Node, backend prlapi.Backend, url string) {
-	if err := prlstats.New(stack, backend, backend.Engine(), url); err != nil {
+func RegisterPrlStatsService(stack *node.Node, backend api.Backend, url string) {
+	if err := stats.New(stack, backend, backend.Engine(), url); err != nil {
 		Fatalf("Failed to register the Parallax Stats service: %v", err)
 	}
 }
 
 // RegisterGraphQLService is a utility function to construct a new service and register it against a node.
-func RegisterGraphQLService(stack *node.Node, backend prlapi.Backend, cfg node.Config) {
+func RegisterGraphQLService(stack *node.Node, backend api.Backend, cfg node.Config) {
 	if err := graphql.New(stack, backend, cfg.GraphQLCors, cfg.GraphQLVirtualHosts); err != nil {
 		Fatalf("Failed to register the GraphQL service: %v", err)
 	}
@@ -1796,7 +1656,7 @@ func RegisterGraphQLService(stack *node.Node, backend prlapi.Backend, cfg node.C
 
 func SetupMetrics(ctx *cli.Context) {
 	if metrics.Enabled {
-		log.Info("Enabling metrics collection")
+		logging.Info("Enabling metrics collection")
 
 		var (
 			enableExport   = ctx.GlobalBool(MetricsEnableInfluxDBFlag.Name)
@@ -1834,20 +1694,20 @@ func SetupMetrics(ctx *cli.Context) {
 		if enableExport {
 			tagsMap := SplitTagsFlag(ctx.GlobalString(MetricsInfluxDBTagsFlag.Name))
 
-			log.Info("Enabling metrics export to InfluxDB")
+			logging.Info("Enabling metrics export to InfluxDB")
 
-			go influxdb.InfluxDBWithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, database, username, password, "prlx.", tagsMap)
+			go influxdb.InfluxDBWithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, database, username, password, "parallax.", tagsMap)
 		} else if enableExportV2 {
 			tagsMap := SplitTagsFlag(ctx.GlobalString(MetricsInfluxDBTagsFlag.Name))
 
-			log.Info("Enabling metrics export to InfluxDB (v2)")
+			logging.Info("Enabling metrics export to InfluxDB (v2)")
 
-			go influxdb.InfluxDBV2WithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, token, bucket, organization, "prlx.", tagsMap)
+			go influxdb.InfluxDBV2WithTags(metrics.DefaultRegistry, 10*time.Second, endpoint, token, bucket, organization, "parallax.", tagsMap)
 		}
 
 		if ctx.GlobalIsSet(MetricsHTTPFlag.Name) {
 			address := fmt.Sprintf("%s:%d", ctx.GlobalString(MetricsHTTPFlag.Name), ctx.GlobalInt(MetricsPortFlag.Name))
-			log.Info("Enabling stand-alone metrics HTTP endpoint", "address", address)
+			logging.Info("Enabling stand-alone metrics HTTP endpoint", "address", address)
 			exp.Setup(address)
 		}
 	}
@@ -1871,20 +1731,18 @@ func SplitTagsFlag(tagsFlag string) map[string]string {
 }
 
 // MakeChainDatabase open an LevelDB using the flags passed to the client and will hard crash if it fails.
-func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) prldb.Database {
+func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) dbstore.Database {
 	var (
 		cache   = ctx.GlobalInt(CacheFlag.Name) * ctx.GlobalInt(CacheDatabaseFlag.Name) / 100
 		handles = MakeDatabaseHandles(ctx.GlobalInt(FDLimitFlag.Name))
 
 		err     error
-		chainDb prldb.Database
+		chainDb dbstore.Database
 	)
 	switch {
 	case ctx.GlobalIsSet(RemoteDBFlag.Name):
-		log.Info("Using remote db", "url", ctx.GlobalString(RemoteDBFlag.Name))
+		logging.Info("Using remote db", "url", ctx.GlobalString(RemoteDBFlag.Name))
 		chainDb, err = remotedb.New(ctx.GlobalString(RemoteDBFlag.Name))
-	case ctx.GlobalString(SyncModeFlag.Name) == "light":
-		chainDb, err = stack.OpenDatabase("lightchaindata", cache, handles, "", readonly)
 	default:
 		chainDb, err = stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.GlobalString(AncientFlag.Name), "", readonly)
 	}
@@ -1894,13 +1752,13 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) prldb.
 	return chainDb
 }
 
-func MakeGenesis(ctx *cli.Context) *core.Genesis {
-	var genesis *core.Genesis
+func MakeGenesis(ctx *cli.Context) *validation.Genesis {
+	var genesis *validation.Genesis
 	switch {
 	case ctx.GlobalBool(MainnetFlag.Name):
-		genesis = core.DefaultGenesisBlock()
+		genesis = validation.DefaultGenesisBlock()
 	case ctx.GlobalBool(TestnetFlag.Name):
-		genesis = core.DefaultTestnetGenesisBlock()
+		genesis = validation.DefaultTestnetGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}
@@ -1908,35 +1766,35 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 }
 
 // MakeChain creates a chain manager from set command line flags.
-func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chainDb prldb.Database) {
+func MakeChain(ctx *cli.Context, stack *node.Node) (chain *validation.BlockChain, chainDb dbstore.Database) {
 	var err error
 	chainDb = MakeChainDatabase(ctx, stack, false) // TODO(rjl493456442) support read-only database
-	config, _, err := core.SetupGenesisBlock(chainDb, MakeGenesis(ctx))
+	config, _, err := validation.SetupGenesisBlock(chainDb, MakeGenesis(ctx))
 	if err != nil {
 		Fatalf("%v", err)
 	}
 
-	var engine consensus.Engine
-	xhashConf := prlconfig.Defaults.XHash
+	var engine kernel.Engine
+	xhashConf := nodeconfig.Defaults.XHash
 	if ctx.GlobalBool(FakePoWFlag.Name) {
 		xhashConf.PowMode = xhash.ModeFake
 	}
-	engine = prlconfig.CreateConsensusEngine(stack, config, &xhashConf, nil, false, chainDb)
+	engine = nodeconfig.CreateConsensusEngine(stack, config, &xhashConf, nil, false, chainDb)
 	if gcmode := ctx.GlobalString(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
-	cache := &core.CacheConfig{
-		TrieCleanLimit:      prlconfig.Defaults.TrieCleanCache,
+	cache := &validation.CacheConfig{
+		TrieCleanLimit:      nodeconfig.Defaults.TrieCleanCache,
 		TrieCleanNoPrefetch: ctx.GlobalBool(CacheNoPrefetchFlag.Name),
-		TrieDirtyLimit:      prlconfig.Defaults.TrieDirtyCache,
+		TrieDirtyLimit:      nodeconfig.Defaults.TrieDirtyCache,
 		TrieDirtyDisabled:   ctx.GlobalString(GCModeFlag.Name) == "archive",
-		TrieTimeLimit:       prlconfig.Defaults.TrieTimeout,
-		SnapshotLimit:       prlconfig.Defaults.SnapshotCache,
+		TrieTimeLimit:       nodeconfig.Defaults.TrieTimeout,
+		SnapshotLimit:       nodeconfig.Defaults.SnapshotCache,
 		Preimages:           ctx.GlobalBool(CachePreimagesFlag.Name),
 	}
 	if cache.TrieDirtyDisabled && !cache.Preimages {
 		cache.Preimages = true
-		log.Info("Enabling recording of key preimages since archive mode is used")
+		logging.Info("Enabling recording of key preimages since archive mode is used")
 	}
 	if !ctx.GlobalBool(SnapshotFlag.Name) {
 		cache.SnapshotLimit = 0 // Disabled
@@ -1947,11 +1805,11 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	if ctx.GlobalIsSet(CacheFlag.Name) || ctx.GlobalIsSet(CacheGCFlag.Name) {
 		cache.TrieDirtyLimit = ctx.GlobalInt(CacheFlag.Name) * ctx.GlobalInt(CacheGCFlag.Name) / 100
 	}
-	vmcfg := vm.Config{EnablePreimageRecording: ctx.GlobalBool(VMEnableDebugFlag.Name)}
+	vmcfg := script.Config{EnablePreimageRecording: ctx.GlobalBool(VMEnableDebugFlag.Name)}
 
 	// TODO(rjl493456442) disable snapshot generation/wiping if the chain is read only.
 	// Disable transaction indexing/unindexing by default.
-	chain, err = core.NewBlockChain(chainDb, cache, config, engine, vmcfg, nil, nil)
+	chain, err = validation.NewBlockChain(chainDb, cache, config, engine, vmcfg, nil, nil)
 	if err != nil {
 		Fatalf("Can't create BlockChain: %v", err)
 	}
@@ -1978,11 +1836,11 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 // This is a temporary function used for migrating old command/flags to the
 // new format.
 //
-// e.g. prlx account new --keystore /tmp/mykeystore --lightkdf
+// e.g. parallax account new --keystore /tmp/mykeystore --lightkdf
 //
 // is equivalent after calling this method with:
 //
-// prlx --keystore /tmp/mykeystore --lightkdf account new
+// parallax --keystore /tmp/mykeystore --lightkdf account new
 //
 // This allows the use of the existing configuration functionality.
 // When all flags are migrated this function can be removed and the existing

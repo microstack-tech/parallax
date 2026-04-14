@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package discover implements the Node Discovery Protocol.
 //
@@ -32,10 +32,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
 const (
@@ -45,7 +45,7 @@ const (
 
 	// We keep buckets for the upper 1/15 of distances because
 	// it's very unlikely we'll ever encounter a node that's closer.
-	hashBits          = len(common.Hash{}) * 8
+	hashBits          = len(util.Hash{}) * 8
 	nBuckets          = hashBits / 15       // Number of buckets
 	bucketMinDistance = hashBits - nBuckets // Log distance of closest bucket
 
@@ -71,7 +71,7 @@ type Table struct {
 	rand    *mrand.Rand       // source of randomness, periodically reseeded
 	ips     netutil.DistinctNetSet
 
-	log           log.Logger
+	log           logging.Logger
 	db            *enode.DB // database of known nodes
 	net           transport
 	refreshReq    chan chan struct{}
@@ -105,7 +105,7 @@ type bucket struct {
 	ips          netutil.DistinctNetSet
 }
 
-func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, nodeFilter func(*enode.Node) bool, log log.Logger) (*Table, error) {
+func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, nodeFilter func(*enode.Node) bool, log logging.Logger) (*Table, error) {
 	tab := &Table{
 		net:         t,
 		db:          db,
@@ -313,7 +313,7 @@ func (tab *Table) loadSeedNodes() {
 	// the node filter. This drops stale non-Parallax entries that may have
 	// been cached before the filter was introduced.
 	for _, seed := range wrapNodes(tab.db.QuerySeeds(seedCount, seedMaxAge)) {
-		age := log.Lazy{Fn: func() any { return time.Since(tab.db.LastPongReceived(seed.ID(), seed.IP())) }}
+		age := logging.Lazy{Fn: func() any { return time.Since(tab.db.LastPongReceived(seed.ID(), seed.IP())) }}
 		tab.log.Trace("Found seed node in database", "id", seed.ID(), "addr", seed.addr(), "age", age)
 		tab.addSeenNode(seed)
 	}

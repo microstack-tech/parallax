@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package node
 
@@ -83,15 +83,15 @@ func TestIPCPathResolution(t *testing.T) {
 	}{
 		{"", "", false, ""},
 		{"data", "", false, ""},
-		{"", "prlx.ipc", false, filepath.Join(os.TempDir(), "prlx.ipc")},
-		{"data", "prlx.ipc", false, "data/prlx.ipc"},
-		{"data", "./prlx.ipc", false, "./prlx.ipc"},
-		{"data", "/prlx.ipc", false, "/prlx.ipc"},
+		{"", "parallax.ipc", false, filepath.Join(os.TempDir(), "parallax.ipc")},
+		{"data", "parallax.ipc", false, "data/parallax.ipc"},
+		{"data", "./parallax.ipc", false, "./parallax.ipc"},
+		{"data", "/parallax.ipc", false, "/parallax.ipc"},
 		{"", "", true, ``},
 		{"data", "", true, ``},
-		{"", "prlx.ipc", true, `\\.\pipe\prlx.ipc`},
-		{"data", "prlx.ipc", true, `\\.\pipe\prlx.ipc`},
-		{"data", `\\.\pipe\prlx.ipc`, true, `\\.\pipe\prlx.ipc`},
+		{"", "parallax.ipc", true, `\\.\pipe\parallax.ipc`},
+		{"data", "parallax.ipc", true, `\\.\pipe\parallax.ipc`},
+		{"data", `\\.\pipe\parallax.ipc`, true, `\\.\pipe\parallax.ipc`},
 	}
 	for i, test := range tests {
 		// Only run when platform/test match

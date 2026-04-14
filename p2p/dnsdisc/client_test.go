@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package dnsdisc
 
@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/common/mclock"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -58,7 +58,7 @@ func TestClientSyncTree(t *testing.T) {
 		wantSeq   = uint(1)
 	)
 
-	c := NewClient(Config{Resolver: r, Logger: testlog.Logger(t, log.LvlTrace)})
+	c := NewClient(Config{Resolver: r, Logger: testlog.Logger(t, logging.LvlTrace)})
 	stree, err := c.SyncTree("enrtree://AKPYQIUQIL7PSIACI32J7FGZW56E5FKHEFCCOFHILBIMW3M6LWXS2@n")
 	if err != nil {
 		t.Fatal("sync error:", err)
@@ -92,7 +92,7 @@ func TestClientSyncTreeBadNode(t *testing.T) {
 		"C7HRFPF3BLGF3YR4DY5KX3SMBE.n": "enrtree://AM5FCQLWIZX2QFPNJAP7VUERCCRNGRHWZG3YYHIUV7BVDQ5FDPRT2@morenodes.example.org",
 		"INDMVBZEEQ4ESVYAKGIYU74EAA.n": "enr:-----",
 	}
-	c := NewClient(Config{Resolver: r, Logger: testlog.Logger(t, log.LvlTrace)})
+	c := NewClient(Config{Resolver: r, Logger: testlog.Logger(t, logging.LvlTrace)})
 	_, err := c.SyncTree("enrtree://AKPYQIUQIL7PSIACI32J7FGZW56E5FKHEFCCOFHILBIMW3M6LWXS2@n")
 	wantErr := nameError{name: "INDMVBZEEQ4ESVYAKGIYU74EAA.n", err: entryError{typ: "enr", err: errInvalidENR}}
 	if err != wantErr {
@@ -111,7 +111,7 @@ func TestIterator(t *testing.T) {
 
 	c := NewClient(Config{
 		Resolver:  r,
-		Logger:    testlog.Logger(t, log.LvlTrace),
+		Logger:    testlog.Logger(t, logging.LvlTrace),
 		RateLimit: 500,
 	})
 	it, err := c.NewIterator(url)
@@ -175,7 +175,7 @@ func TestIteratorLinks(t *testing.T) {
 
 	c := NewClient(Config{
 		Resolver:  newMapResolver(tree1.ToTXT("t1"), tree2.ToTXT("t2")),
-		Logger:    testlog.Logger(t, log.LvlTrace),
+		Logger:    testlog.Logger(t, logging.LvlTrace),
 		RateLimit: 500,
 	})
 	it, err := c.NewIterator(url2)
@@ -196,7 +196,7 @@ func TestIteratorNodeUpdates(t *testing.T) {
 		resolver = newMapResolver()
 		c        = NewClient(Config{
 			Resolver:        resolver,
-			Logger:          testlog.Logger(t, log.LvlTrace),
+			Logger:          testlog.Logger(t, logging.LvlTrace),
 			RecheckInterval: 20 * time.Minute,
 			RateLimit:       500,
 		})
@@ -234,7 +234,7 @@ func TestIteratorRootRecheckOnFail(t *testing.T) {
 		resolver = newMapResolver()
 		c        = NewClient(Config{
 			Resolver:        resolver,
-			Logger:          testlog.Logger(t, log.LvlTrace),
+			Logger:          testlog.Logger(t, logging.LvlTrace),
 			RecheckInterval: 20 * time.Minute,
 			RateLimit:       500,
 			// Disabling the cache is required for this test because the client doesn't
@@ -272,7 +272,7 @@ func TestIteratorEmptyTree(t *testing.T) {
 		resolver = newMapResolver()
 		c        = NewClient(Config{
 			Resolver:        resolver,
-			Logger:          testlog.Logger(t, log.LvlTrace),
+			Logger:          testlog.Logger(t, logging.LvlTrace),
 			RecheckInterval: 20 * time.Minute,
 			RateLimit:       500,
 		})
@@ -333,7 +333,7 @@ func TestIteratorLinkUpdates(t *testing.T) {
 		resolver = newMapResolver()
 		c        = NewClient(Config{
 			Resolver:        resolver,
-			Logger:          testlog.Logger(t, log.LvlTrace),
+			Logger:          testlog.Logger(t, logging.LvlTrace),
 			RecheckInterval: 20 * time.Minute,
 			RateLimit:       500,
 		})

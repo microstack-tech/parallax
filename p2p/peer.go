@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package p2p
 
@@ -25,13 +25,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common/mclock"
-	"github.com/ParallaxProtocol/parallax/event"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 var ErrShuttingDown = errors.New("shutting down")
@@ -104,7 +104,7 @@ type PeerEvent struct {
 type Peer struct {
 	rw      *conn
 	running map[string]*protoRW
-	log     log.Logger
+	log     logging.Logger
 	created mclock.AbsTime
 
 	wg       sync.WaitGroup
@@ -131,7 +131,7 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 	pipe, _ := net.Pipe()
 	node := enode.SignNull(new(enr.Record), id)
 	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
-	peer := newPeer(log.Root(), conn, protos)
+	peer := newPeer(logging.Root(), conn, protos)
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
 }
@@ -223,7 +223,7 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
-func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
+func newPeer(log logging.Logger, conn *conn, protocols []Protocol) *Peer {
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
 		rw:       conn,
@@ -233,12 +233,12 @@ func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
 		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
 		closed:   make(chan struct{}),
 		pingRecv: make(chan struct{}, 16),
-		log:      log.New("id", conn.node.ID(), "conn", conn.flags),
+		log:      logging.New("id", conn.node.ID(), "conn", conn.flags),
 	}
 	return p
 }
 
-func (p *Peer) Log() log.Logger {
+func (p *Peer) Log() logging.Logger {
 	return p.log
 }
 

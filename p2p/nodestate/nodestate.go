@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package nodestate
 
@@ -23,13 +23,13 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/ParallaxProtocol/parallax/common/mclock"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/prldb"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 var (
@@ -65,7 +65,7 @@ type (
 		started, closed     bool
 		lock                sync.Mutex
 		clock               mclock.Clock
-		db                  prldb.KeyValueStore
+		db                  dbstore.KeyValueStore
 		dbNodeKey           []byte
 		nodes               map[enode.ID]*nodeInfo
 		offlineCallbackList []offlineCallback
@@ -317,7 +317,7 @@ func (a Flags) String() string {
 // NewNodeStateMachine creates a new node state machine.
 // If db is not nil then the node states, fields and active timeouts are persisted.
 // Persistence can be enabled or disabled for each state flag and field.
-func NewNodeStateMachine(db prldb.KeyValueStore, dbKey []byte, clock mclock.Clock, setup *Setup) *NodeStateMachine {
+func NewNodeStateMachine(db dbstore.KeyValueStore, dbKey []byte, clock mclock.Clock, setup *Setup) *NodeStateMachine {
 	if setup.flags == nil {
 		panic("No state flags defined")
 	}
@@ -459,7 +459,7 @@ func (ns *NodeStateMachine) loadFromDb() {
 	for it.Next() {
 		var id enode.ID
 		if len(it.Key()) != len(ns.dbNodeKey)+len(id) {
-			log.Error("Node state db entry with invalid length", "found", len(it.Key()), "expected", len(ns.dbNodeKey)+len(id))
+			logging.Error("Node state db entry with invalid length", "found", len(it.Key()), "expected", len(ns.dbNodeKey)+len(id))
 			continue
 		}
 		copy(id[:], it.Key()[len(ns.dbNodeKey):])
@@ -476,7 +476,7 @@ func (id dummyIdentity) NodeAddr(r *enr.Record) []byte          { return id[:] }
 func (ns *NodeStateMachine) decodeNode(id enode.ID, data []byte) {
 	var enc nodeInfoEnc
 	if err := rlp.DecodeBytes(data, &enc); err != nil {
-		log.Error("Failed to decode node info", "id", id, "error", err)
+		logging.Error("Failed to decode node info", "id", id, "error", err)
 		return
 	}
 	n, _ := enode.New(dummyIdentity(id), &enc.Enr)
@@ -484,12 +484,12 @@ func (ns *NodeStateMachine) decodeNode(id enode.ID, data []byte) {
 	node.db = true
 
 	if enc.Version != ns.setup.Version {
-		log.Debug("Removing stored node with unknown version", "current", ns.setup.Version, "stored", enc.Version)
+		logging.Debug("Removing stored node with unknown version", "current", ns.setup.Version, "stored", enc.Version)
 		ns.deleteNode(id)
 		return
 	}
 	if len(enc.Fields) > len(ns.setup.fields) {
-		log.Error("Invalid node field count", "id", id, "stored", len(enc.Fields))
+		logging.Error("Invalid node field count", "id", id, "stored", len(enc.Fields))
 		return
 	}
 	// Resolve persisted node fields
@@ -502,11 +502,11 @@ func (ns *NodeStateMachine) decodeNode(id enode.ID, data []byte) {
 				node.fields[i] = field
 				node.fieldCount++
 			} else {
-				log.Error("Failed to decode node field", "id", id, "field name", ns.fields[i].name, "error", err)
+				logging.Error("Failed to decode node field", "id", id, "field name", ns.fields[i].name, "error", err)
 				return
 			}
 		} else {
-			log.Error("Cannot decode node field", "id", id, "field name", ns.fields[i].name)
+			logging.Error("Cannot decode node field", "id", id, "field name", ns.fields[i].name)
 			return
 		}
 	}
@@ -516,7 +516,7 @@ func (ns *NodeStateMachine) decodeNode(id enode.ID, data []byte) {
 	fields := make([]any, len(node.fields))
 	copy(fields, node.fields)
 	ns.offlineCallbackList = append(ns.offlineCallbackList, offlineCallback{node, node.state, fields})
-	log.Debug("Loaded node state", "id", id, "state", Flags{mask: enc.State, setup: ns.setup})
+	logging.Debug("Loaded node state", "id", id, "state", Flags{mask: enc.State, setup: ns.setup})
 }
 
 // saveNode saves the given node info to the database
@@ -535,7 +535,7 @@ func (ns *NodeStateMachine) saveNode(id enode.ID, node *nodeInfo) error {
 		State:   storedState,
 		Fields:  make([][]byte, len(ns.fields)),
 	}
-	log.Debug("Saved node state", "id", id, "state", Flags{mask: enc.State, setup: ns.setup})
+	logging.Debug("Saved node state", "id", id, "state", Flags{mask: enc.State, setup: ns.setup})
 	lastIndex := -1
 	for i, f := range node.fields {
 		if f == nil {
@@ -587,7 +587,7 @@ func (ns *NodeStateMachine) saveToDb() {
 		if node.dirty {
 			err := ns.saveNode(id, node)
 			if err != nil {
-				log.Error("Failed to save node", "id", id, "error", err)
+				logging.Error("Failed to save node", "id", id, "error", err)
 			}
 		}
 	}
@@ -613,7 +613,7 @@ func (ns *NodeStateMachine) Persist(n *enode.Node) error {
 	if id, node := ns.updateEnode(n); node != nil && node.dirty {
 		err := ns.saveNode(id, node)
 		if err != nil {
-			log.Error("Failed to save node", "id", id, "error", err)
+			logging.Error("Failed to save node", "id", id, "error", err)
 		}
 		return err
 	}
@@ -917,7 +917,7 @@ func (ns *NodeStateMachine) setField(n *enode.Node, field Field, value any) erro
 	fieldIndex := ns.fieldIndex(field)
 	f := ns.fields[fieldIndex]
 	if value != nil && reflect.TypeOf(value) != f.ftype {
-		log.Error("Invalid field type", "type", reflect.TypeOf(value), "required", f.ftype)
+		logging.Error("Invalid field type", "type", reflect.TypeOf(value), "required", f.ftype)
 		return ErrInvalidField
 	}
 	oldValue := node.fields[fieldIndex]
@@ -1001,7 +1001,7 @@ func (ns *NodeStateMachine) AddLogMetrics(requireFlags, disableFlags Flags, name
 		if newMatch {
 			count++
 			if name != "" {
-				log.Debug("Node entered", "set", name, "id", n.ID(), "count", count)
+				logging.Debug("Node entered", "set", name, "id", n.ID(), "count", count)
 			}
 			if inMeter != nil {
 				inMeter.Mark(1)
@@ -1009,7 +1009,7 @@ func (ns *NodeStateMachine) AddLogMetrics(requireFlags, disableFlags Flags, name
 		} else {
 			count--
 			if name != "" {
-				log.Debug("Node left", "set", name, "id", n.ID(), "count", count)
+				logging.Debug("Node left", "set", name, "id", n.ID(), "count", count)
 			}
 			if outMeter != nil {
 				outMeter.Mark(1)

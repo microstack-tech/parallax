@@ -1,18 +1,18 @@
-// Copyright 2022 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package prltest
 
@@ -22,12 +22,11 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/ParallaxProtocol/parallax/common"
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/light"
-	"github.com/ParallaxProtocol/parallax/prl/protocols/snap"
-	"github.com/ParallaxProtocol/parallax/trie"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/trie"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -44,52 +43,52 @@ func (s *Suite) TestSnapStatus(t *utesting.T) {
 
 type accRangeTest struct {
 	nBytes uint64
-	root   common.Hash
-	origin common.Hash
-	limit  common.Hash
+	root   util.Hash
+	origin util.Hash
+	limit  util.Hash
 
 	expAccounts int
-	expFirst    common.Hash
-	expLast     common.Hash
+	expFirst    util.Hash
+	expLast     util.Hash
 }
 
 // TestSnapGetAccountRange various forms of GetAccountRange requests.
 func (s *Suite) TestSnapGetAccountRange(t *utesting.T) {
 	var (
 		root           = s.chain.RootAt(999)
-		ffHash         = common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-		zero           = common.Hash{}
-		firstKeyMinus1 = common.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf29")
-		firstKey       = common.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
-		firstKeyPlus1  = common.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2b")
-		secondKey      = common.HexToHash("0x09e47cd5056a689e708f22fe1f932709a320518e444f5f7d8d46a3da523d6606")
-		storageRoot    = common.HexToHash("0xbe3d75a1729be157e79c3b77f00206db4d54e3ea14375a015451c88ec067c790")
+		ffHash         = util.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+		zero           = util.Hash{}
+		firstKeyMinus1 = util.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf29")
+		firstKey       = util.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
+		firstKeyPlus1  = util.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2b")
+		secondKey      = util.HexToHash("0x09e47cd5056a689e708f22fe1f932709a320518e444f5f7d8d46a3da523d6606")
+		storageRoot    = util.HexToHash("0xbe3d75a1729be157e79c3b77f00206db4d54e3ea14375a015451c88ec067c790")
 	)
 	for i, tc := range []accRangeTest{
 		// Tests decreasing the number of bytes
-		{4000, root, zero, ffHash, 76, firstKey, common.HexToHash("0xd2669dcf3858e7f1eecb8b5fedbf22fbea3e9433848a75035f79d68422c2dcda")},
-		{3000, root, zero, ffHash, 57, firstKey, common.HexToHash("0x9b63fa753ece5cb90657d02ecb15df4dc1508d8c1d187af1bf7f1a05e747d3c7")},
-		{2000, root, zero, ffHash, 38, firstKey, common.HexToHash("0x5e6140ecae4354a9e8f47559a8c6209c1e0e69cb077b067b528556c11698b91f")},
+		{4000, root, zero, ffHash, 76, firstKey, util.HexToHash("0xd2669dcf3858e7f1eecb8b5fedbf22fbea3e9433848a75035f79d68422c2dcda")},
+		{3000, root, zero, ffHash, 57, firstKey, util.HexToHash("0x9b63fa753ece5cb90657d02ecb15df4dc1508d8c1d187af1bf7f1a05e747d3c7")},
+		{2000, root, zero, ffHash, 38, firstKey, util.HexToHash("0x5e6140ecae4354a9e8f47559a8c6209c1e0e69cb077b067b528556c11698b91f")},
 		{1, root, zero, ffHash, 1, firstKey, firstKey},
 
 		// Tests variations of the range
 		//
 		// [00b to firstkey]: should return [firstkey, secondkey], where secondkey is out of bounds
-		{4000, root, common.HexToHash("0x00bf000000000000000000000000000000000000000000000000000000000000"), common.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2b"), 2, firstKey, secondKey},
+		{4000, root, util.HexToHash("0x00bf000000000000000000000000000000000000000000000000000000000000"), util.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2b"), 2, firstKey, secondKey},
 		// [00b0 to 0bf0]: where both are before firstkey. Should return firstKey (even though it's out of bounds)
-		{4000, root, common.HexToHash("0x00b0000000000000000000000000000000000000000000000000000000000000"), common.HexToHash("0x00bf100000000000000000000000000000000000000000000000000000000000"), 1, firstKey, firstKey},
+		{4000, root, util.HexToHash("0x00b0000000000000000000000000000000000000000000000000000000000000"), util.HexToHash("0x00bf100000000000000000000000000000000000000000000000000000000000"), 1, firstKey, firstKey},
 		{4000, root, zero, zero, 1, firstKey, firstKey},
-		{4000, root, firstKey, ffHash, 76, firstKey, common.HexToHash("0xd2669dcf3858e7f1eecb8b5fedbf22fbea3e9433848a75035f79d68422c2dcda")},
-		{4000, root, firstKeyPlus1, ffHash, 76, secondKey, common.HexToHash("0xd28f55d3b994f16389f36944ad685b48e0fc3f8fbe86c3ca92ebecadf16a783f")},
+		{4000, root, firstKey, ffHash, 76, firstKey, util.HexToHash("0xd2669dcf3858e7f1eecb8b5fedbf22fbea3e9433848a75035f79d68422c2dcda")},
+		{4000, root, firstKeyPlus1, ffHash, 76, secondKey, util.HexToHash("0xd28f55d3b994f16389f36944ad685b48e0fc3f8fbe86c3ca92ebecadf16a783f")},
 
 		// Test different root hashes
 		//
 		// A stateroot that does not exist
-		{4000, common.Hash{0x13, 37}, zero, ffHash, 0, zero, zero},
+		{4000, util.Hash{0x13, 37}, zero, ffHash, 0, zero, zero},
 		// The genesis stateroot (we expect it to not be served)
 		{4000, s.chain.RootAt(0), zero, ffHash, 0, zero, zero},
 		// A 127 block old stateroot, expected to be served
-		{4000, s.chain.RootAt(999 - 127), zero, ffHash, 77, firstKey, common.HexToHash("0xe4c6fdef5dd4e789a2612390806ee840b8ec0fe52548f8b4efe41abb20c37aac")},
+		{4000, s.chain.RootAt(999 - 127), zero, ffHash, 77, firstKey, util.HexToHash("0xe4c6fdef5dd4e789a2612390806ee840b8ec0fe52548f8b4efe41abb20c37aac")},
 		// A root which is not actually an account root, but a storage orot
 		{4000, storageRoot, zero, ffHash, 0, zero, zero},
 
@@ -111,8 +110,8 @@ func (s *Suite) TestSnapGetAccountRange(t *utesting.T) {
 }
 
 type stRangesTest struct {
-	root     common.Hash
-	accounts []common.Hash
+	root     util.Hash
+	accounts []util.Hash
 	origin   []byte
 	limit    []byte
 	nBytes   uint64
@@ -123,15 +122,15 @@ type stRangesTest struct {
 // TestSnapGetStorageRange various forms of GetStorageRanges requests.
 func (s *Suite) TestSnapGetStorageRanges(t *utesting.T) {
 	var (
-		ffHash    = common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-		zero      = common.Hash{}
-		firstKey  = common.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
-		secondKey = common.HexToHash("0x09e47cd5056a689e708f22fe1f932709a320518e444f5f7d8d46a3da523d6606")
+		ffHash    = util.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+		zero      = util.Hash{}
+		firstKey  = util.HexToHash("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
+		secondKey = util.HexToHash("0x09e47cd5056a689e708f22fe1f932709a320518e444f5f7d8d46a3da523d6606")
 	)
 	for i, tc := range []stRangesTest{
 		{
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{secondKey, firstKey},
+			accounts: []util.Hash{secondKey, firstKey},
 			origin:   zero[:],
 			limit:    ffHash[:],
 			nBytes:   500,
@@ -155,7 +154,7 @@ func (s *Suite) TestSnapGetStorageRanges(t *utesting.T) {
 		*/
 		{ // [:] -> [slot1, slot2, slot3]
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{common.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
+			accounts: []util.Hash{util.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
 			origin:   zero[:],
 			limit:    ffHash[:],
 			nBytes:   500,
@@ -163,33 +162,33 @@ func (s *Suite) TestSnapGetStorageRanges(t *utesting.T) {
 		},
 		{ // [slot1:] -> [slot1, slot2, slot3]
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{common.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
-			origin:   common.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"),
+			accounts: []util.Hash{util.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
+			origin:   util.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"),
 			limit:    ffHash[:],
 			nBytes:   500,
 			expSlots: 3,
 		},
 		{ // [slot1+ :] -> [slot2, slot3]
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{common.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
-			origin:   common.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5acf"),
+			accounts: []util.Hash{util.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
+			origin:   util.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5acf"),
 			limit:    ffHash[:],
 			nBytes:   500,
 			expSlots: 2,
 		},
 		{ // [slot1:slot2] -> [slot1, slot2]
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{common.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
-			origin:   common.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"),
-			limit:    common.FromHex("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"),
+			accounts: []util.Hash{util.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
+			origin:   util.FromHex("0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace"),
+			limit:    util.FromHex("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"),
 			nBytes:   500,
 			expSlots: 2,
 		},
 		{ // [slot1+:slot2+] -> [slot2, slot3]
 			root:     s.chain.RootAt(999),
-			accounts: []common.Hash{common.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
-			origin:   common.FromHex("0x4fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-			limit:    common.FromHex("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf7"),
+			accounts: []util.Hash{util.HexToHash("0xf493f79c43bd747129a226ad42529885a4b108aba6046b2d12071695a6627844")},
+			origin:   util.FromHex("0x4fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+			limit:    util.FromHex("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf7"),
 			nBytes:   500,
 			expSlots: 2,
 		},
@@ -203,22 +202,22 @@ func (s *Suite) TestSnapGetStorageRanges(t *utesting.T) {
 
 type byteCodesTest struct {
 	nBytes uint64
-	hashes []common.Hash
+	hashes []util.Hash
 
 	expHashes int
 }
 
 var (
 	// emptyRoot is the known root hash of an empty trie.
-	emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+	emptyRoot = util.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	// emptyCode is the known hash of the empty PVM bytecode.
-	emptyCode = common.HexToHash("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+	emptyCode = util.HexToHash("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
 )
 
 // TestSnapGetByteCodes various forms of GetByteCodes requests.
 func (s *Suite) TestSnapGetByteCodes(t *utesting.T) {
 	// The halfchain import should yield these bytecodes
-	var hcBytecodes []common.Hash
+	var hcBytecodes []util.Hash
 	for _, s := range []string{
 		"0x200c90460d8b0063210d5f5b9918e053c8f2c024485e0f1b48be8b1fc71b1317",
 		"0x20ba67ed4ac6aff626e0d1d4db623e2fada9593daeefc4a6eb4b70e6cff986f3",
@@ -246,30 +245,30 @@ func (s *Suite) TestSnapGetByteCodes(t *utesting.T) {
 		"0xe85d487abbbc83bf3423cf9731360cf4f5a37220e18e5add54e72ee20861196a",
 		"0xf195ea389a5eea28db0be93660014275b158963dec44af1dfa7d4743019a9a49",
 	} {
-		hcBytecodes = append(hcBytecodes, common.HexToHash(s))
+		hcBytecodes = append(hcBytecodes, util.HexToHash(s))
 	}
 
 	for i, tc := range []byteCodesTest{
 		// A few stateroots
 		{
-			nBytes: 10000, hashes: []common.Hash{s.chain.RootAt(0), s.chain.RootAt(999)},
+			nBytes: 10000, hashes: []util.Hash{s.chain.RootAt(0), s.chain.RootAt(999)},
 			expHashes: 0,
 		},
 		{
-			nBytes: 10000, hashes: []common.Hash{s.chain.RootAt(0), s.chain.RootAt(0)},
+			nBytes: 10000, hashes: []util.Hash{s.chain.RootAt(0), s.chain.RootAt(0)},
 			expHashes: 0,
 		},
 		// Empties
 		{
-			nBytes: 10000, hashes: []common.Hash{emptyRoot},
+			nBytes: 10000, hashes: []util.Hash{emptyRoot},
 			expHashes: 0,
 		},
 		{
-			nBytes: 10000, hashes: []common.Hash{emptyCode},
+			nBytes: 10000, hashes: []util.Hash{emptyCode},
 			expHashes: 1,
 		},
 		{
-			nBytes: 10000, hashes: []common.Hash{emptyCode, emptyCode, emptyCode},
+			nBytes: 10000, hashes: []util.Hash{emptyCode, emptyCode, emptyCode},
 			expHashes: 3,
 		},
 		// The existing bytecodes
@@ -287,7 +286,7 @@ func (s *Suite) TestSnapGetByteCodes(t *utesting.T) {
 			expHashes: 1,
 		},
 		{
-			nBytes: 1000, hashes: []common.Hash{hcBytecodes[0], hcBytecodes[0], hcBytecodes[0], hcBytecodes[0]},
+			nBytes: 1000, hashes: []util.Hash{hcBytecodes[0], hcBytecodes[0], hcBytecodes[0], hcBytecodes[0]},
 			expHashes: 4,
 		},
 	} {
@@ -298,11 +297,11 @@ func (s *Suite) TestSnapGetByteCodes(t *utesting.T) {
 }
 
 type trieNodesTest struct {
-	root   common.Hash
+	root   util.Hash
 	paths  []snap.TrieNodePathSet
 	nBytes uint64
 
-	expHashes []common.Hash
+	expHashes []util.Hash
 	expReject bool
 }
 
@@ -347,7 +346,7 @@ func hexToCompact(hex []byte) []byte {
 
 // TestSnapTrieNodes various forms of GetTrieNodes requests.
 func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
-	key := common.FromHex("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
+	key := util.FromHex("0x00bf49f440a1cd0527e4d06e2765654c0f56452257516d793a9b8d604dcfdf2a")
 	// helper function to iterate the key, and generate the compact-encoded
 	// trie paths along the way.
 	pathTo := func(length int) snap.TrieNodePathSet {
@@ -375,7 +374,7 @@ func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
 				{[]byte{0}},
 			},
 			nBytes:    5000,
-			expHashes: []common.Hash{},
+			expHashes: []util.Hash{},
 			expReject: true,
 		},
 		{
@@ -386,7 +385,7 @@ func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
 			},
 			nBytes: 5000,
 			// 0x6b3724a41b8c38b46d4d02fba2bb2074c47a507eb16a9a4b978f91d32e406faf
-			expHashes: []common.Hash{s.chain.RootAt(999)},
+			expHashes: []util.Hash{s.chain.RootAt(999)},
 		},
 		{ // nonsensically long path
 			root: s.chain.RootAt(999),
@@ -397,7 +396,7 @@ func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
 				}},
 			},
 			nBytes:    5000,
-			expHashes: []common.Hash{common.HexToHash("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")},
+			expHashes: []util.Hash{util.HexToHash("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")},
 		},
 		{
 			root: s.chain.RootAt(0),
@@ -406,16 +405,16 @@ func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
 				{[]byte{1}, []byte{0}},
 			},
 			nBytes:    5000,
-			expHashes: []common.Hash{},
+			expHashes: []util.Hash{},
 		},
 		{
 			// The leaf is only a couple of levels down, so the continued trie traversal causes lookup failures.
 			root:   s.chain.RootAt(999),
 			paths:  accPaths,
 			nBytes: 5000,
-			expHashes: []common.Hash{
-				common.HexToHash("0xbcefee69b37cca1f5bf3a48aebe08b35f2ea1864fa958bb0723d909a0e0d28d8"),
-				common.HexToHash("0x4fb1e4e2391e4b4da471d59641319b8fa25d76c973d4bec594d7b00a69ae5135"),
+			expHashes: []util.Hash{
+				util.HexToHash("0xbcefee69b37cca1f5bf3a48aebe08b35f2ea1864fa958bb0723d909a0e0d28d8"),
+				util.HexToHash("0x4fb1e4e2391e4b4da471d59641319b8fa25d76c973d4bec594d7b00a69ae5135"),
 				empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty,
 				empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty,
 				empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty,
@@ -431,10 +430,10 @@ func (s *Suite) TestSnapTrieNodes(t *utesting.T) {
 				accPaths[10], accPaths[1], accPaths[0],
 			},
 			nBytes: 5000,
-			expHashes: []common.Hash{
+			expHashes: []util.Hash{
 				empty,
-				common.HexToHash("0x4fb1e4e2391e4b4da471d59641319b8fa25d76c973d4bec594d7b00a69ae5135"),
-				common.HexToHash("0xbcefee69b37cca1f5bf3a48aebe08b35f2ea1864fa958bb0723d909a0e0d28d8"),
+				util.HexToHash("0x4fb1e4e2391e4b4da471d59641319b8fa25d76c973d4bec594d7b00a69ae5135"),
+				util.HexToHash("0xbcefee69b37cca1f5bf3a48aebe08b35f2ea1864fa958bb0723d909a0e0d28d8"),
 			},
 		},
 	} {
@@ -481,7 +480,7 @@ func (s *Suite) snapGetAccountRange(t *utesting.T, tc *accRangeTest) error {
 		}
 	}
 	var (
-		hashes   []common.Hash
+		hashes   []util.Hash
 		accounts [][]byte
 		proof    = res.Proof
 	)
@@ -503,9 +502,9 @@ func (s *Suite) snapGetAccountRange(t *utesting.T, tc *accRangeTest) error {
 	// Reconstruct a partial trie from the response and verify it
 	keys := make([][]byte, len(hashes))
 	for i, key := range hashes {
-		keys[i] = common.CopyBytes(key[:])
+		keys[i] = util.CopyBytes(key[:])
 	}
-	nodes := make(light.NodeList, len(proof))
+	nodes := make(trie.NodeList, len(proof))
 	for i, node := range proof {
 		nodes[i] = node
 	}

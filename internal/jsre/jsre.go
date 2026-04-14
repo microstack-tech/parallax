@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package jsre provides execution environment for JavaScript.
 package jsre
@@ -27,7 +27,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
+	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/dop251/goja"
 )
 
@@ -254,7 +254,7 @@ func (re *JSRE) Stop(waitForCallbacks bool) {
 // Exec(file) loads and runs the contents of a file
 // if a relative path is given, the jsre's assetPath is used
 func (re *JSRE) Exec(file string) error {
-	code, err := os.ReadFile(common.AbsolutePath(re.assetPath, file))
+	code, err := os.ReadFile(util.AbsolutePath(re.assetPath, file))
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func (re *JSRE) Compile(filename string, src string) (err error) {
 // loadScript loads and executes a JS file.
 func (re *JSRE) loadScript(call Call) (goja.Value, error) {
 	file := call.Argument(0).ToString().String()
-	file = common.AbsolutePath(re.assetPath, file)
+	file = util.AbsolutePath(re.assetPath, file)
 	source, err := os.ReadFile(file)
 	if err != nil {
 		return nil, fmt.Errorf("Could not read file %s: %v", file, err)

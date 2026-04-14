@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package discover
 
@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/discover/v4wire"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -71,7 +71,7 @@ func newUDPTest(t *testing.T) *udpTest {
 	ln := enode.NewLocalNode(test.db, test.localkey)
 	test.udp, _ = ListenV4(test.pipe, ln, Config{
 		PrivateKey: test.localkey,
-		Log:        testlog.Logger(t, log.LvlTrace),
+		Log:        testlog.Logger(t, logging.LvlTrace),
 	})
 	test.table = test.udp.tab
 	// Wait for initial refresh so the table doesn't send unexpected findnode.
@@ -562,9 +562,9 @@ func startLocalhostV4(t *testing.T, cfg Config) *UDPv4 {
 
 	// Prefix logs with node ID.
 	lprefix := fmt.Sprintf("(%s)", ln.ID().TerminalString())
-	lfmt := log.TerminalFormat(false)
-	cfg.Log = testlog.Logger(t, log.LvlTrace)
-	cfg.Log.SetHandler(log.FuncHandler(func(r *log.Record) error {
+	lfmt := logging.TerminalFormat(false)
+	cfg.Log = testlog.Logger(t, logging.LvlTrace)
+	cfg.Log.SetHandler(logging.FuncHandler(func(r *logging.Record) error {
 		t.Logf("%s %s", lprefix, lfmt.Format(r))
 		return nil
 	}))

@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package crypto
 
@@ -29,9 +29,9 @@ import (
 	"math/big"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/math"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/math"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -65,7 +65,7 @@ func NewKeccakState() KeccakState {
 }
 
 // HashData hashes the provided data using the KeccakState and returns a 32 byte hash
-func HashData(kh KeccakState, data []byte) (h common.Hash) {
+func HashData(kh KeccakState, data []byte) (h util.Hash) {
 	kh.Reset()
 	kh.Write(data)
 	kh.Read(h[:])
@@ -85,7 +85,7 @@ func Keccak256(data ...[]byte) []byte {
 
 // Keccak256Hash calculates and returns the Keccak256 hash of the input data,
 // converting it to an internal Hash data structure.
-func Keccak256Hash(data ...[]byte) (h common.Hash) {
+func Keccak256Hash(data ...[]byte) (h util.Hash) {
 	d := NewKeccakState()
 	for _, b := range data {
 		d.Write(b)
@@ -104,15 +104,15 @@ func Keccak512(data ...[]byte) []byte {
 }
 
 // CreateAddress creates a parallax address given the bytes and the nonce
-func CreateAddress(b common.Address, nonce uint64) common.Address {
+func CreateAddress(b util.Address, nonce uint64) util.Address {
 	data, _ := rlp.EncodeToBytes([]any{b, nonce})
-	return common.BytesToAddress(Keccak256(data)[12:])
+	return util.BytesToAddress(Keccak256(data)[12:])
 }
 
 // CreateAddress2 creates a parallax address given the address bytes, initial
 // contract code hash and a salt.
-func CreateAddress2(b common.Address, salt [32]byte, inithash []byte) common.Address {
-	return common.BytesToAddress(Keccak256([]byte{0xff}, b.Bytes(), salt[:], inithash)[12:])
+func CreateAddress2(b util.Address, salt [32]byte, inithash []byte) util.Address {
+	return util.BytesToAddress(Keccak256([]byte{0xff}, b.Bytes(), salt[:], inithash)[12:])
 }
 
 // ToECDSA creates a private key with the given D value.
@@ -260,7 +260,7 @@ func GenerateKey() (*ecdsa.PrivateKey, error) {
 // ValidateSignatureValues verifies whether the signature values are valid with
 // the given chain rules. The v value is assumed to be either 0 or 1.
 func ValidateSignatureValues(v byte, r, s *big.Int, homestead bool) bool {
-	if r.Cmp(common.Big1) < 0 || s.Cmp(common.Big1) < 0 {
+	if r.Cmp(util.Big1) < 0 || s.Cmp(util.Big1) < 0 {
 		return false
 	}
 	// reject upper range of s values (ECDSA malleability)
@@ -272,9 +272,9 @@ func ValidateSignatureValues(v byte, r, s *big.Int, homestead bool) bool {
 	return r.Cmp(secp256k1N) < 0 && s.Cmp(secp256k1N) < 0 && (v == 0 || v == 1)
 }
 
-func PubkeyToAddress(p ecdsa.PublicKey) common.Address {
+func PubkeyToAddress(p ecdsa.PublicKey) util.Address {
 	pubBytes := FromECDSAPub(&p)
-	return common.BytesToAddress(Keccak256(pubBytes[1:])[12:])
+	return util.BytesToAddress(Keccak256(pubBytes[1:])[12:])
 }
 
 func zeroBytes(bytes []byte) {

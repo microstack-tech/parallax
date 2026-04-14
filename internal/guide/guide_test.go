@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // This file contains the code snippets from the developer's guide embedded into
 // Go tests. This ensures that any code published in out guides will not break
@@ -28,9 +28,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/accounts/keystore"
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/core/types"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/wallet/keystore"
 )
 
 // Tests that the account management snippets work correctly.
@@ -70,7 +70,7 @@ func TestAccountManagement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create signer account: %v", err)
 	}
-	tx := types.NewTransaction(0, common.Address{}, big.NewInt(0), 0, big.NewInt(0), nil)
+	tx := types.NewTransaction(0, util.Address{}, big.NewInt(0), 0, big.NewInt(0), nil)
 	chain := big.NewInt(1)
 
 	// Sign a transaction with a single authorization

@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package prltest
 
@@ -20,9 +20,9 @@ import (
 	"crypto/rand"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core/types"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
 )
 
 // largeNumber returns a very large big.Int.
@@ -53,8 +53,8 @@ func largeBlock() *types.Block {
 }
 
 // Returns a random hash
-func randHash() common.Hash {
-	var h common.Hash
+func randHash() util.Hash {
+	var h util.Hash
 	rand.Read(h[:])
 	return h
 }
@@ -68,7 +68,7 @@ func largeHeader() *types.Header {
 		Extra:       []byte{},
 		Bloom:       types.Bloom{},
 		GasUsed:     0,
-		Coinbase:    common.Address{},
+		Coinbase:    util.Address{},
 		GasLimit:    0,
 		Time:        1337,
 		ParentHash:  randHash(),

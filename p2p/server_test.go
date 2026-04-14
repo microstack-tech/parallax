@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package p2p
 
@@ -29,7 +29,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
@@ -73,7 +73,7 @@ func startTestServer(t *testing.T, remoteKey *ecdsa.PublicKey, pf func(*Peer)) *
 		ListenAddr:  "127.0.0.1:0",
 		NoDiscovery: true,
 		PrivateKey:  newkey(),
-		Logger:      testlog.Logger(t, log.LvlTrace),
+		Logger:      testlog.Logger(t, logging.LvlTrace),
 	}
 	server := &Server{
 		Config:      config,
@@ -209,7 +209,7 @@ func TestServerRemovePeerDisconnect(t *testing.T) {
 		PrivateKey:  newkey(),
 		MaxPeers:    1,
 		NoDiscovery: true,
-		Logger:      testlog.Logger(t, log.LvlTrace).New("server", "1"),
+		Logger:      testlog.Logger(t, logging.LvlTrace).New("server", "1"),
 	}}
 	srv2 := &Server{Config: Config{
 		PrivateKey:  newkey(),
@@ -217,7 +217,7 @@ func TestServerRemovePeerDisconnect(t *testing.T) {
 		NoDiscovery: true,
 		NoDial:      true,
 		ListenAddr:  "127.0.0.1:0",
-		Logger:      testlog.Logger(t, log.LvlTrace).New("server", "2"),
+		Logger:      testlog.Logger(t, logging.LvlTrace).New("server", "2"),
 	}}
 	srv1.Start()
 	defer srv1.Stop()
@@ -245,7 +245,7 @@ func TestServerAtCap(t *testing.T) {
 			NoDial:       true,
 			NoDiscovery:  true,
 			TrustedNodes: []*enode.Node{newNode(trustedID, "")},
-			Logger:       testlog.Logger(t, log.LvlTrace),
+			Logger:       testlog.Logger(t, logging.LvlTrace),
 		},
 	}
 	if err := srv.Start(); err != nil {
@@ -321,7 +321,7 @@ func TestServerPeerLimits(t *testing.T) {
 			NoDial:      true,
 			NoDiscovery: true,
 			Protocols:   []Protocol{discard},
-			Logger:      testlog.Logger(t, log.LvlTrace),
+			Logger:      testlog.Logger(t, logging.LvlTrace),
 		},
 		newTransport: func(fd net.Conn, dialDest *ecdsa.PublicKey) transport { return tp },
 	}
@@ -430,7 +430,7 @@ func TestServerSetupConn(t *testing.T) {
 				NoDial:      true,
 				NoDiscovery: true,
 				Protocols:   []Protocol{discard},
-				Logger:      testlog.Logger(t, log.LvlTrace),
+				Logger:      testlog.Logger(t, logging.LvlTrace),
 			}
 			srv := &Server{
 				Config:       cfg,
@@ -517,7 +517,7 @@ func TestServerInboundThrottle(t *testing.T) {
 			NoDial:      true,
 			NoDiscovery: true,
 			Protocols:   []Protocol{discard},
-			Logger:      testlog.Logger(t, log.LvlTrace),
+			Logger:      testlog.Logger(t, logging.LvlTrace),
 		},
 		newTransport: func(fd net.Conn, dialDest *ecdsa.PublicKey) transport {
 			newTransportCalled <- struct{}{}

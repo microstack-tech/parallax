@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package t8ntool
 
@@ -24,40 +24,40 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/tests"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation"
 	"gopkg.in/urfave/cli.v1"
 )
 
 type result struct {
 	Error        error
-	Address      common.Address
-	Hash         common.Hash
+	Address      util.Address
+	Hash         util.Hash
 	IntrinsicGas uint64
 }
 
 // MarshalJSON marshals as JSON with a hash.
 func (r *result) MarshalJSON() ([]byte, error) {
 	type xx struct {
-		Error        string          `json:"error,omitempty"`
-		Address      *common.Address `json:"address,omitempty"`
-		Hash         *common.Hash    `json:"hash,omitempty"`
-		IntrinsicGas hexutil.Uint64  `json:"intrinsicGas,omitempty"`
+		Error        string         `json:"error,omitempty"`
+		Address      *util.Address  `json:"address,omitempty"`
+		Hash         *util.Hash     `json:"hash,omitempty"`
+		IntrinsicGas hexutil.Uint64 `json:"intrinsicGas,omitempty"`
 	}
 	var out xx
 	if r.Error != nil {
 		out.Error = r.Error.Error()
 	}
-	if r.Address != (common.Address{}) {
+	if r.Address != (util.Address{}) {
 		out.Address = &r.Address
 	}
-	if r.Hash != (common.Hash{}) {
+	if r.Hash != (util.Hash{}) {
 		out.Hash = &r.Hash
 	}
 	out.IntrinsicGas = hexutil.Uint64(r.IntrinsicGas)
@@ -65,10 +65,10 @@ func (r *result) MarshalJSON() ([]byte, error) {
 }
 
 func Transaction(ctx *cli.Context) error {
-	// Configure the go-ethereum logger
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(ctx.Int(VerbosityFlag.Name)))
-	log.Root().SetHandler(glogger)
+	// Configure the parallax logger
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.Lvl(ctx.Int(VerbosityFlag.Name)))
+	logging.Root().SetHandler(glogger)
 
 	var (
 		err error
@@ -78,7 +78,7 @@ func Transaction(ctx *cli.Context) error {
 	var (
 		txStr       = ctx.String(InputTxsFlag.Name)
 		inputData   = &input{}
-		chainConfig *params.ChainConfig
+		chainConfig *chainparams.ChainConfig
 	)
 	// Construct the chainconfig
 	if cConf, _, err := tests.GetChainConfig(ctx.String(ForknameFlag.Name)); err != nil {
@@ -95,7 +95,7 @@ func Transaction(ctx *cli.Context) error {
 			return NewError(ErrorJson, fmt.Errorf("failed unmarshaling stdin: %v", err))
 		}
 		// Decode the body of already signed transactions
-		body = common.FromHex(inputData.TxRlp)
+		body = util.FromHex(inputData.TxRlp)
 	} else {
 		// Read input from file
 		inFile, err := os.Open(txStr)
@@ -139,7 +139,7 @@ func Transaction(ctx *cli.Context) error {
 			r.Address = sender
 		}
 		// Check intrinsic gas
-		if gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil,
+		if gas, err := validation.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil,
 			chainConfig.IsHomestead(new(big.Int)), chainConfig.IsIstanbul(new(big.Int))); err != nil {
 			r.Error = err
 			results = append(results, r)
@@ -147,7 +147,7 @@ func Transaction(ctx *cli.Context) error {
 		} else {
 			r.IntrinsicGas = gas
 			if tx.Gas() < gas {
-				r.Error = fmt.Errorf("%w: have %d, want %d", core.ErrIntrinsicGas, tx.Gas(), gas)
+				r.Error = fmt.Errorf("%w: have %d, want %d", validation.ErrIntrinsicGas, tx.Gas(), gas)
 				results = append(results, r)
 				continue
 			}

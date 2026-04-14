@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package simulations simulates p2p networks.
 // A mocker simulates starting and stopping real nodes in a network.
@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/adapters"
 )
@@ -70,26 +70,26 @@ func startStop(net *Network, quit chan struct{}, nodeCount int) {
 	for {
 		select {
 		case <-quit:
-			log.Info("Terminating simulation loop")
+			logging.Info("Terminating simulation loop")
 			return
 		case <-tick.C:
 			id := nodes[rand.Intn(len(nodes))]
-			log.Info("stopping node", "id", id)
+			logging.Info("stopping node", "id", id)
 			if err := net.Stop(id); err != nil {
-				log.Error("error stopping node", "id", id, "err", err)
+				logging.Error("error stopping node", "id", id, "err", err)
 				return
 			}
 
 			select {
 			case <-quit:
-				log.Info("Terminating simulation loop")
+				logging.Info("Terminating simulation loop")
 				return
 			case <-time.After(3 * time.Second):
 			}
 
-			log.Debug("starting node", "id", id)
+			logging.Debug("starting node", "id", id)
 			if err := net.Start(id); err != nil {
-				log.Error("error starting node", "id", id, "err", err)
+				logging.Error("error starting node", "id", id, "err", err)
 				return
 			}
 		}
@@ -114,7 +114,7 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 	for {
 		select {
 		case <-quit:
-			log.Info("Terminating simulation loop")
+			logging.Info("Terminating simulation loop")
 			return
 		default:
 		}
@@ -135,14 +135,14 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 		for i := lowid; i < highid; i++ {
 			select {
 			case <-quit:
-				log.Info("Terminating simulation loop")
+				logging.Info("Terminating simulation loop")
 				return
 			case <-time.After(randWait):
 			}
-			log.Debug(fmt.Sprintf("node %v shutting down", nodes[i]))
+			logging.Debug(fmt.Sprintf("node %v shutting down", nodes[i]))
 			err := net.Stop(nodes[i])
 			if err != nil {
-				log.Error("Error stopping node", "node", nodes[i])
+				logging.Error("Error stopping node", "node", nodes[i])
 				wg.Done()
 				continue
 			}
@@ -150,7 +150,7 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 				time.Sleep(randWait)
 				err := net.Start(id)
 				if err != nil {
-					log.Error("Error starting node", "node", id)
+					logging.Error("Error starting node", "node", id)
 				}
 				wg.Done()
 			}(nodes[i])
@@ -166,7 +166,7 @@ func connectNodesInRing(net *Network, nodeCount int) ([]enode.ID, error) {
 		conf := adapters.RandomNodeConfig()
 		node, err := net.NewNodeWithConfig(conf)
 		if err != nil {
-			log.Error("Error creating a node!", "err", err)
+			logging.Error("Error creating a node!", "err", err)
 			return nil, err
 		}
 		ids[i] = node.ID()
@@ -174,15 +174,15 @@ func connectNodesInRing(net *Network, nodeCount int) ([]enode.ID, error) {
 
 	for _, id := range ids {
 		if err := net.Start(id); err != nil {
-			log.Error("Error starting a node!", "err", err)
+			logging.Error("Error starting a node!", "err", err)
 			return nil, err
 		}
-		log.Debug(fmt.Sprintf("node %v starting up", id))
+		logging.Debug(fmt.Sprintf("node %v starting up", id))
 	}
 	for i, id := range ids {
 		peerID := ids[(i+1)%len(ids)]
 		if err := net.Connect(id, peerID); err != nil {
-			log.Error("Error connecting a node to a peer!", "err", err)
+			logging.Error("Error connecting a node to a peer!", "err", err)
 			return nil, err
 		}
 	}

@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 )
 
 // parallaxENREntry is used to check for the "parallax" key in ENR records.
@@ -137,7 +137,7 @@ loop:
 		case it := <-doneCh:
 			if it == c.inputIter {
 				// Enable timeout when we're done revalidating the input nodes.
-				log.Info("Revalidation of input set is done", "len", len(c.input))
+				logging.Info("Revalidation of input set is done", "len", len(c.input))
 				if timeout > 0 {
 					timeoutCh = timeoutTimer.C
 				}
@@ -148,7 +148,7 @@ loop:
 		case <-timeoutCh:
 			break loop
 		case <-statusTicker.C:
-			log.Info("Crawling in progress",
+			logging.Info("Crawling in progress",
 				"added", atomic.LoadUint64(&added),
 				"updated", atomic.LoadUint64(&updated),
 				"removed", atomic.LoadUint64(&removed),
@@ -196,7 +196,7 @@ func (c *crawler) updateNode(n *enode.Node) int {
 	if nn, err := c.disc.RequestENR(n); err != nil {
 		if node.Score == 0 {
 			// Node doesn't implement EIP-868.
-			log.Debug("Skipping node", "id", n.ID())
+			logging.Debug("Skipping node", "id", n.ID())
 			return nodeSkipIncompat
 		}
 		node.Score /= 2
@@ -204,10 +204,10 @@ func (c *crawler) updateNode(n *enode.Node) int {
 		// Filter out nodes that don't advertise the "parallax" protocol.
 		var prlEntry parallaxENREntry
 		if nn.Load(&prlEntry) != nil {
-			log.Debug("Skipping non-Parallax node", "id", n.ID(), "ip", n.IP())
+			logging.Debug("Skipping non-Parallax node", "id", n.ID(), "ip", n.IP())
 			return nodeSkipIncompat
 		}
-		log.Info("Found Parallax node", "id", n.ID(), "ip", n.IP())
+		logging.Info("Found Parallax node", "id", n.ID(), "ip", n.IP())
 		node.N = nn
 		node.Seq = nn.Seq()
 		node.Score++
@@ -222,11 +222,11 @@ func (c *crawler) updateNode(n *enode.Node) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if node.Score <= 0 {
-		log.Debug("Removing node", "id", n.ID())
+		logging.Debug("Removing node", "id", n.ID())
 		delete(c.output, n.ID())
 		return nodeRemoved
 	}
-	log.Debug("Updating node", "id", n.ID(), "seq", n.Seq(), "score", node.Score)
+	logging.Debug("Updating node", "id", n.ID(), "seq", n.Seq(), "score", node.Score)
 	c.output[n.ID()] = node
 	return status
 }
@@ -355,12 +355,12 @@ func (it *parallaxBFSIterator) run() {
 		// entries and against the seed bootnodes lacking an ENR record.
 		nn, err := it.disc.RequestENR(next)
 		if err != nil {
-			log.Debug("BFS: RequestENR failed", "id", next.ID(), "ip", next.IP(), "err", err)
+			logging.Debug("BFS: RequestENR failed", "id", next.ID(), "ip", next.IP(), "err", err)
 			continue
 		}
 		var entry parallaxENREntry
 		if nn.Load(&entry) != nil {
-			log.Debug("BFS: skipping non-Parallax candidate", "id", nn.ID(), "ip", nn.IP())
+			logging.Debug("BFS: skipping non-Parallax candidate", "id", nn.ID(), "ip", nn.IP())
 			continue
 		}
 
@@ -395,7 +395,7 @@ func (it *parallaxBFSIterator) run() {
 			}
 			results, err := it.disc.FindNeighbors(nn, &key.PublicKey)
 			if err != nil {
-				log.Debug("BFS: FindNeighbors failed", "id", nn.ID(), "ip", nn.IP(), "err", err)
+				logging.Debug("BFS: FindNeighbors failed", "id", nn.ID(), "ip", nn.IP(), "err", err)
 				continue
 			}
 			for _, r := range results {

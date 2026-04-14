@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package discover
 
@@ -20,11 +20,11 @@ import (
 	"crypto/ecdsa"
 	"net"
 
-	"github.com/ParallaxProtocol/parallax/common/mclock"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 // UDPConn is a network connection on which discovery can operate.
@@ -44,7 +44,7 @@ type Config struct {
 	NetRestrict  *netutil.Netlist   // list of allowed IP networks
 	Bootnodes    []*enode.Node      // list of bootstrap nodes
 	Unhandled    chan<- ReadPacket  // unhandled packets are sent on this channel
-	Log          log.Logger         // if set, log messages go here
+	Log          logging.Logger     // if set, log messages go here
 	ValidSchemes enr.IdentityScheme // allowed identity schemes
 	Clock        mclock.Clock
 	NodeFilter   func(*enode.Node) bool // if set, nodes failing this check are evicted during revalidation
@@ -52,7 +52,7 @@ type Config struct {
 
 func (cfg Config) withDefaults() Config {
 	if cfg.Log == nil {
-		cfg.Log = log.Root()
+		cfg.Log = logging.Root()
 	}
 	if cfg.ValidSchemes == nil {
 		cfg.ValidSchemes = enode.ValidSchemes

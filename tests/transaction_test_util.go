@@ -1,30 +1,30 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package tests
 
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation"
 )
 
 // TransactionTest checks RLP decoding and sender derivation of transactions.
@@ -40,12 +40,12 @@ type TransactionTest struct {
 }
 
 type ttFork struct {
-	Sender common.UnprefixedAddress `json:"sender"`
-	Hash   common.UnprefixedHash    `json:"hash"`
+	Sender util.UnprefixedAddress `json:"sender"`
+	Hash   util.UnprefixedHash    `json:"hash"`
 }
 
-func (tt *TransactionTest) Run(config *params.ChainConfig) error {
-	validateTx := func(rlpData hexutil.Bytes, signer types.Signer, isHomestead bool, isIstanbul bool) (*common.Address, *common.Hash, error) {
+func (tt *TransactionTest) Run(config *chainparams.ChainConfig) error {
+	validateTx := func(rlpData hexutil.Bytes, signer types.Signer, isHomestead bool, isIstanbul bool) (*util.Address, *util.Hash, error) {
 		tx := new(types.Transaction)
 		if err := rlp.DecodeBytes(rlpData, tx); err != nil {
 			return nil, nil, err
@@ -55,7 +55,7 @@ func (tt *TransactionTest) Run(config *params.ChainConfig) error {
 			return nil, nil, err
 		}
 		// Intrinsic gas
-		requiredGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, isHomestead, isIstanbul)
+		requiredGas, err := validation.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, isHomestead, isIstanbul)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -83,7 +83,7 @@ func (tt *TransactionTest) Run(config *params.ChainConfig) error {
 	} {
 		sender, txhash, err := validateTx(tt.RLP, testcase.signer, testcase.isHomestead, testcase.isIstanbul)
 
-		if testcase.fork.Sender == (common.UnprefixedAddress{}) {
+		if testcase.fork.Sender == (util.UnprefixedAddress{}) {
 			if err == nil {
 				return fmt.Errorf("expected error, got none (address %v)[%v]", sender.String(), testcase.name)
 			}
@@ -94,15 +94,15 @@ func (tt *TransactionTest) Run(config *params.ChainConfig) error {
 			return fmt.Errorf("got error, expected none: %v", err)
 		}
 		if sender == nil {
-			return fmt.Errorf("sender was nil, should be %x", common.Address(testcase.fork.Sender))
+			return fmt.Errorf("sender was nil, should be %x", util.Address(testcase.fork.Sender))
 		}
-		if *sender != common.Address(testcase.fork.Sender) {
+		if *sender != util.Address(testcase.fork.Sender) {
 			return fmt.Errorf("sender mismatch: got %x, want %x", sender, testcase.fork.Sender)
 		}
 		if txhash == nil {
-			return fmt.Errorf("txhash was nil, should be %x", common.Hash(testcase.fork.Hash))
+			return fmt.Errorf("txhash was nil, should be %x", util.Hash(testcase.fork.Hash))
 		}
-		if *txhash != common.Hash(testcase.fork.Hash) {
+		if *txhash != util.Hash(testcase.fork.Hash) {
 			return fmt.Errorf("hash mismatch: got %x, want %x", *txhash, testcase.fork.Hash)
 		}
 	}

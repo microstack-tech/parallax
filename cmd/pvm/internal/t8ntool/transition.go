@@ -1,18 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of go-ethereum.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of parallax.
 //
-// go-ethereum is free software: you can redistribute it and/or modify
+// parallax is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// go-ethereum is distributed in the hope that it will be useful,
+// parallax is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
+// along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 package t8ntool
 
@@ -26,18 +26,18 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/hexutil"
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/state"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/params"
-	"github.com/ParallaxProtocol/parallax/prl/tracers/logger"
-	"github.com/ParallaxProtocol/parallax/rlp"
+	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
 	"github.com/ParallaxProtocol/parallax/tests"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/state"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -76,23 +76,23 @@ var (
 )
 
 type input struct {
-	Alloc core.GenesisAlloc `json:"alloc,omitempty"`
-	Env   *stEnv            `json:"env,omitempty"`
-	Txs   []*txWithKey      `json:"txs,omitempty"`
-	TxRlp string            `json:"txsRlp,omitempty"`
+	Alloc validation.GenesisAlloc `json:"alloc,omitempty"`
+	Env   *stEnv                  `json:"env,omitempty"`
+	Txs   []*txWithKey            `json:"txs,omitempty"`
+	TxRlp string                  `json:"txsRlp,omitempty"`
 }
 
 func Transition(ctx *cli.Context) error {
-	// Configure the go-ethereum logger
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(ctx.Int(VerbosityFlag.Name)))
-	log.Root().SetHandler(glogger)
+	// Configure the parallax logger
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.TerminalFormat(false)))
+	glogger.Verbosity(logging.Lvl(ctx.Int(VerbosityFlag.Name)))
+	logging.Root().SetHandler(glogger)
 
 	var (
 		err    error
-		tracer vm.PVMLogger
+		tracer script.PVMLogger
 	)
-	var getTracer func(txIndex int, txHash common.Hash) (vm.PVMLogger, error)
+	var getTracer func(txIndex int, txHash util.Hash) (script.PVMLogger, error)
 
 	baseDir, err := createBasedir(ctx)
 	if err != nil {
@@ -106,10 +106,10 @@ func Transition(ctx *cli.Context) error {
 			return NewError(ErrorConfig, fmt.Errorf("can't use both flags --%s and --%s", TraceDisableReturnDataFlag.Name, TraceEnableReturnDataFlag.Name))
 		}
 		if ctx.IsSet(TraceDisableMemoryFlag.Name) {
-			log.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableMemoryFlag.Name, TraceEnableMemoryFlag.Name))
+			logging.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableMemoryFlag.Name, TraceEnableMemoryFlag.Name))
 		}
 		if ctx.IsSet(TraceDisableReturnDataFlag.Name) {
-			log.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableReturnDataFlag.Name, TraceEnableReturnDataFlag.Name))
+			logging.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableReturnDataFlag.Name, TraceEnableReturnDataFlag.Name))
 		}
 		// Configure the PVM logger
 		logConfig := &logger.Config{
@@ -125,7 +125,7 @@ func Transition(ctx *cli.Context) error {
 				prevFile.Close()
 			}
 		}()
-		getTracer = func(txIndex int, txHash common.Hash) (vm.PVMLogger, error) {
+		getTracer = func(txIndex int, txHash util.Hash) (script.PVMLogger, error) {
 			if prevFile != nil {
 				prevFile.Close()
 			}
@@ -137,7 +137,7 @@ func Transition(ctx *cli.Context) error {
 			return logger.NewJSONLogger(logConfig, traceFile), nil
 		}
 	} else {
-		getTracer = func(txIndex int, txHash common.Hash) (tracer vm.PVMLogger, err error) {
+		getTracer = func(txIndex int, txHash util.Hash) (tracer script.PVMLogger, err error) {
 			return nil, nil
 		}
 	}
@@ -177,12 +177,12 @@ func Transition(ctx *cli.Context) error {
 	}
 	prestate.Env = *inputData.Env
 
-	vmConfig := vm.Config{
+	vmConfig := script.Config{
 		Tracer: tracer,
 		Debug:  (tracer != nil),
 	}
 	// Construct the chainconfig
-	var chainConfig *params.ChainConfig
+	var chainConfig *chainparams.ChainConfig
 	if cConf, extraEips, err := tests.GetChainConfig(ctx.String(ForknameFlag.Name)); err != nil {
 		return NewError(ErrorConfig, fmt.Errorf("failed constructing chain configuration: %v", err))
 	} else {
@@ -223,7 +223,7 @@ func Transition(ctx *cli.Context) error {
 	} else {
 		if len(inputData.TxRlp) > 0 {
 			// Decode the body of already signed transactions
-			body := common.FromHex(inputData.TxRlp)
+			body := util.FromHex(inputData.TxRlp)
 			var txs types.Transactions
 			if err := rlp.DecodeBytes(body, &txs); err != nil {
 				return err
@@ -289,8 +289,8 @@ type txWithKey struct {
 func (t *txWithKey) UnmarshalJSON(input []byte) error {
 	// Read the metadata, if present
 	type txMetadata struct {
-		Key       *common.Hash `json:"secretKey"`
-		Protected *bool        `json:"protected"`
+		Key       *util.Hash `json:"secretKey"`
+		Protected *bool      `json:"protected"`
 	}
 	var data txMetadata
 	if err := json.Unmarshal(input, &data); err != nil {
@@ -359,20 +359,20 @@ func signUnsignedTransactions(txs []*txWithKey, signer types.Signer) (types.Tran
 	return signedTxs, nil
 }
 
-type Alloc map[common.Address]core.GenesisAccount
+type Alloc map[util.Address]validation.GenesisAccount
 
-func (g Alloc) OnRoot(common.Hash) {}
+func (g Alloc) OnRoot(util.Hash) {}
 
-func (g Alloc) OnAccount(addr common.Address, dumpAccount state.DumpAccount) {
+func (g Alloc) OnAccount(addr util.Address, dumpAccount state.DumpAccount) {
 	balance, _ := new(big.Int).SetString(dumpAccount.Balance, 10)
-	var storage map[common.Hash]common.Hash
+	var storage map[util.Hash]util.Hash
 	if dumpAccount.Storage != nil {
-		storage = make(map[common.Hash]common.Hash)
+		storage = make(map[util.Hash]util.Hash)
 		for k, v := range dumpAccount.Storage {
-			storage[k] = common.HexToHash(v)
+			storage[k] = util.HexToHash(v)
 		}
 	}
-	genesisAccount := core.GenesisAccount{
+	genesisAccount := validation.GenesisAccount{
 		Code:    dumpAccount.Code,
 		Storage: storage,
 		Balance: balance,
@@ -391,7 +391,7 @@ func saveFile(baseDir, filename string, data any) error {
 	if err = os.WriteFile(location, b, 0644); err != nil {
 		return NewError(ErrorIO, fmt.Errorf("failed writing output: %v", err))
 	}
-	log.Info("Wrote file", "file", location)
+	logging.Info("Wrote file", "file", location)
 	return nil
 }
 

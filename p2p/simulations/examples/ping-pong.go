@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
@@ -25,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
@@ -41,7 +41,7 @@ func main() {
 	flag.Parse()
 
 	// set the log level to Trace
-	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(false))))
+	logging.Root().SetHandler(logging.LvlFilterHandler(logging.LvlTrace, logging.StreamHandler(os.Stderr, logging.TerminalFormat(false))))
 
 	// register a single ping-pong service
 	services := map[string]adapters.LifecycleConstructor{
@@ -58,29 +58,29 @@ func main() {
 
 	switch *adapterType {
 	case "sim":
-		log.Info("using sim adapter")
+		logging.Info("using sim adapter")
 		adapter = adapters.NewSimAdapter(services)
 
 	case "exec":
 		tmpdir, err := os.MkdirTemp("", "p2p-example")
 		if err != nil {
-			log.Crit("error creating temp dir", "err", err)
+			logging.Crit("error creating temp dir", "err", err)
 		}
 		defer os.RemoveAll(tmpdir)
-		log.Info("using exec adapter", "tmpdir", tmpdir)
+		logging.Info("using exec adapter", "tmpdir", tmpdir)
 		adapter = adapters.NewExecAdapter(tmpdir)
 
 	default:
-		log.Crit(fmt.Sprintf("unknown node adapter %q", *adapterType))
+		logging.Crit(fmt.Sprintf("unknown node adapter %q", *adapterType))
 	}
 
 	// start the HTTP API
-	log.Info("starting simulation server on 0.0.0.0:8888...")
+	logging.Info("starting simulation server on 0.0.0.0:8888...")
 	network := simulations.NewNetwork(adapter, &simulations.NetworkConfig{
 		DefaultService: "ping-pong",
 	})
 	if err := http.ListenAndServe(":8888", simulations.NewServer(network)); err != nil {
-		log.Crit("error starting simulation server", "err", err)
+		logging.Crit("error starting simulation server", "err", err)
 	}
 }
 
@@ -89,14 +89,14 @@ func main() {
 // return
 type pingPongService struct {
 	id       enode.ID
-	log      log.Logger
+	log      logging.Logger
 	received int64
 }
 
 func newPingPongService(id enode.ID) *pingPongService {
 	return &pingPongService{
 		id:  id,
-		log: log.New("node.id", id),
+		log: logging.New("node.id", id),
 	}
 }
 
@@ -136,12 +136,12 @@ const (
 // Run implements the ping-pong protocol which sends ping messages to the peer
 // at 10s intervals, and responds to pings with pong messages.
 func (p *pingPongService) Run(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
-	log := p.log.New("peer.id", peer.ID())
+	logger := p.log.New("peer.id", peer.ID())
 
 	errC := make(chan error)
 	go func() {
 		for range time.Tick(10 * time.Second) {
-			log.Info("sending ping")
+			logger.Info("sending ping")
 			if err := p2p.Send(rw, pingMsgCode, "PING"); err != nil {
 				errC <- err
 				return
@@ -160,10 +160,10 @@ func (p *pingPongService) Run(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 				errC <- err
 				return
 			}
-			log.Info("received message", "msg.code", msg.Code, "msg.payload", string(payload))
+			logger.Info("received message", "msg.code", msg.Code, "msg.payload", string(payload))
 			atomic.AddInt64(&p.received, 1)
 			if msg.Code == pingMsgCode {
-				log.Info("sending pong")
+				logger.Info("sending pong")
 				go p2p.Send(rw, pongMsgCode, "PONG")
 			}
 		}

@@ -1,18 +1,18 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package tests
 
@@ -27,11 +27,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/core"
-	"github.com/ParallaxProtocol/parallax/core/rawdb"
-	"github.com/ParallaxProtocol/parallax/core/types"
-	"github.com/ParallaxProtocol/parallax/core/vm"
-	"github.com/ParallaxProtocol/parallax/prl/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
 
 func TestState(t *testing.T) {
@@ -75,7 +75,7 @@ func TestState(t *testing.T) {
 				key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
 				t.Run(key+"/trie", func(t *testing.T) {
-					withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+					withTrace(t, test.gasLimit(subtest), func(vmconfig script.Config) error {
 						_, _, err := test.Run(subtest, vmconfig, false)
 						if err != nil && len(test.json.Post[subtest.Fork][subtest.Index].ExpectException) > 0 {
 							// Ignore expected errors (TODO MariusVanDerWijden check error string)
@@ -85,7 +85,7 @@ func TestState(t *testing.T) {
 					})
 				})
 				t.Run(key+"/snap", func(t *testing.T) {
-					withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+					withTrace(t, test.gasLimit(subtest), func(vmconfig script.Config) error {
 						snaps, statedb, err := test.Run(subtest, vmconfig, true)
 						if snaps != nil && statedb != nil {
 							if _, err := snaps.Journal(statedb.IntermediateRoot(false)); err != nil {
@@ -107,9 +107,9 @@ func TestState(t *testing.T) {
 // Transactions with gasLimit above this value will not get a VM trace on failure.
 const traceErrorLimit = 400000
 
-func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
+func withTrace(t *testing.T, gasLimit uint64, test func(script.Config) error) {
 	// Use config from command line arguments.
-	config := vm.Config{}
+	config := script.Config{}
 	err := test(config)
 	if err == nil {
 		return
@@ -182,7 +182,7 @@ func runBenchmark(b *testing.B, t *StateTest) {
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
 		b.Run(key, func(b *testing.B) {
-			vmconfig := vm.Config{}
+			vmconfig := script.Config{}
 
 			config, eips, err := GetChainConfig(subtest.Fork)
 			if err != nil {
@@ -225,14 +225,14 @@ func runBenchmark(b *testing.B, t *StateTest) {
 			}
 
 			// Prepare the PVM.
-			txContext := core.NewPVMTxContext(msg)
-			context := core.NewPVMBlockContext(block.Header(), nil, &t.json.Env.Coinbase)
+			txContext := validation.NewPVMTxContext(msg)
+			context := validation.NewPVMBlockContext(block.Header(), nil, &t.json.Env.Coinbase)
 			context.GetHash = vmTestBlockHash
 			context.BaseFee = baseFee
-			pvm := vm.NewPVM(context, txContext, statedb, config, vmconfig)
+			pvm := script.NewPVM(context, txContext, statedb, config, vmconfig)
 
 			// Create "contract" for sender to cache code analysis.
-			sender := vm.NewContract(vm.AccountRef(msg.From()), vm.AccountRef(msg.From()),
+			sender := script.NewContract(script.AccountRef(msg.From()), script.AccountRef(msg.From()),
 				nil, 0)
 
 			b.ResetTimer()

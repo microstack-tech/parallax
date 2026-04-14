@@ -4,7 +4,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/common"
+	"github.com/ParallaxProtocol/parallax/util"
 )
 
 func TestPairingExpected(t *testing.T) {
@@ -12,7 +12,7 @@ func TestPairingExpected(t *testing.T) {
 	G1, G2 := bls.G1, bls.G2
 	GT := bls.GT()
 	expected, err := GT.FromBytes(
-		common.FromHex("" +
+		util.FromHex("" +
 			"0f41e58663bf08cf068672cbd01a7ec73baca4d72ca93544deff686bfd6df543d48eaa24afe47e1efde449383b676631" +
 			"04c581234d086a9902249b64728ffd21a189e87935a954051c7cdba7b3872629a4fafc05066245cb9108f0242d0fe3ef" +
 			"03350f55a7aefcd3c31b4fcb6ce5771cc6a0e9786ab5973320c806ad360829107ba810c5a09ffdd9be2291a0c25a99a2" +
@@ -89,7 +89,7 @@ func TestPairingNonDegeneracy(t *testing.T) {
 	bls.Reset()
 	{
 		expected, err := GT.FromBytes(
-			common.FromHex("" +
+			util.FromHex("" +
 				"0f41e58663bf08cf068672cbd01a7ec73baca4d72ca93544deff686bfd6df543d48eaa24afe47e1efde449383b676631" +
 				"04c581234d086a9902249b64728ffd21a189e87935a954051c7cdba7b3872629a4fafc05066245cb9108f0242d0fe3ef" +
 				"03350f55a7aefcd3c31b4fcb6ce5771cc6a0e9786ab5973320c806ad360829107ba810c5a09ffdd9be2291a0c25a99a2" +

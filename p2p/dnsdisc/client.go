@@ -1,18 +1,18 @@
-// Copyright 2019 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package dnsdisc
 
@@ -26,11 +26,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common/mclock"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 	lru "github.com/hashicorp/golang-lru"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
@@ -53,7 +53,7 @@ type Config struct {
 	RateLimit       float64            // maximum DNS requests / second (default 3)
 	ValidSchemes    enr.IdentityScheme // acceptable ENR identity schemes (default enode.ValidSchemes)
 	Resolver        Resolver           // the DNS resolver to use (defaults to system DNS)
-	Logger          log.Logger         // destination of client log messages (defaults to root logger)
+	Logger          logging.Logger     // destination of client log messages (defaults to root logger)
 }
 
 // Resolver is a DNS resolver that can query TXT records.
@@ -87,7 +87,7 @@ func (cfg Config) withDefaults() Config {
 		cfg.Resolver = new(net.Resolver)
 	}
 	if cfg.Logger == nil {
-		cfg.Logger = log.Root()
+		cfg.Logger = logging.Root()
 	}
 	return cfg
 }

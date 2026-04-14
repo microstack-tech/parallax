@@ -1,18 +1,18 @@
-// Copyright 2014 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package p2p implements the Parallax p2p network protocols.
 package p2p
@@ -29,16 +29,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/common"
-	"github.com/ParallaxProtocol/parallax/common/mclock"
 	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/event"
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 const (
@@ -94,7 +94,7 @@ type Config struct {
 	DiscoveryV5 bool `toml:",omitempty"`
 
 	// Name sets the node name of this server.
-	// Use common.MakeName to create a name that follows existing conventions.
+	// Use util.MakeName to create a name that follows existing conventions.
 	Name string `toml:"-"`
 
 	// BootstrapNodes are used to establish connectivity
@@ -158,7 +158,7 @@ type Config struct {
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
 	// Logger is a custom logger to use with the p2p.Server.
-	Logger log.Logger `toml:",omitempty"`
+	Logger logging.Logger `toml:",omitempty"`
 
 	clock mclock.Clock
 }
@@ -181,7 +181,7 @@ type Server struct {
 	ourHandshake *protoHandshake
 	loopWG       sync.WaitGroup // loop, listenLoop
 	peerFeed     event.Feed
-	log          log.Logger
+	log          logging.Logger
 
 	nodedb    *enode.DB
 	localnode *enode.LocalNode
@@ -447,7 +447,7 @@ func (srv *Server) Start() (err error) {
 	srv.running = true
 	srv.log = srv.Config.Logger
 	if srv.log == nil {
-		srv.log = log.Root()
+		srv.log = logging.Root()
 	}
 	if srv.clock == nil {
 		srv.clock = mclock.System{}
@@ -803,7 +803,7 @@ running:
 
 		case pd := <-srv.delpeer:
 			// A peer disconnected.
-			d := common.PrettyDuration(mclock.Now() - pd.created)
+			d := util.PrettyDuration(mclock.Now() - pd.created)
 			delete(peers, pd.ID())
 			srv.log.Debug("Removing p2p peer", "peercount", len(peers), "id", pd.ID(), "duration", d, "req", pd.requested, "err", pd.err)
 			srv.dialsched.peerRemoved(pd.rw)

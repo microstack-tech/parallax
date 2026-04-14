@@ -1,18 +1,18 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package adapters
 
@@ -34,7 +34,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
@@ -375,9 +375,9 @@ type execNodeConfig struct {
 
 func initLogging() {
 	// Initialize the logging by default first.
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.LogfmtFormat()))
-	glogger.Verbosity(log.LvlInfo)
-	log.Root().SetHandler(glogger)
+	glogger := logging.NewGlogHandler(logging.StreamHandler(os.Stderr, logging.LogfmtFormat()))
+	glogger.Verbosity(logging.LvlInfo)
+	logging.Root().SetHandler(glogger)
 
 	confEnv := os.Getenv(envNodeConfig)
 	if confEnv == "" {
@@ -395,14 +395,14 @@ func initLogging() {
 		}
 		writer = logWriter
 	}
-	verbosity := log.LvlInfo
-	if conf.Node.LogVerbosity <= log.LvlTrace && conf.Node.LogVerbosity >= log.LvlCrit {
+	verbosity := logging.LvlInfo
+	if conf.Node.LogVerbosity <= logging.LvlTrace && conf.Node.LogVerbosity >= logging.LvlCrit {
 		verbosity = conf.Node.LogVerbosity
 	}
 	// Reinitialize the logger
-	glogger = log.NewGlogHandler(log.StreamHandler(writer, log.TerminalFormat(true)))
+	glogger = logging.NewGlogHandler(logging.StreamHandler(writer, logging.TerminalFormat(true)))
 	glogger.Verbosity(verbosity)
-	log.Root().SetHandler(glogger)
+	logging.Root().SetHandler(glogger)
 }
 
 // execP2PNode starts a simulation node when the current binary is executed with
@@ -413,7 +413,7 @@ func execP2PNode() {
 
 	statusURL := os.Getenv(envStatusURL)
 	if statusURL == "" {
-		log.Crit("missing " + envStatusURL)
+		logging.Crit("missing " + envStatusURL)
 	}
 
 	// Start the node and gather startup report.
@@ -429,7 +429,7 @@ func execP2PNode() {
 	// Send status to the host.
 	statusJSON, _ := json.Marshal(status)
 	if _, err := http.Post(statusURL, "application/json", bytes.NewReader(statusJSON)); err != nil {
-		log.Crit("Can't post startup info", "url", statusURL, "err", err)
+		logging.Crit("Can't post startup info", "url", statusURL, "err", err)
 	}
 	if stackErr != nil {
 		os.Exit(1)
@@ -441,7 +441,7 @@ func execP2PNode() {
 		signal.Notify(sigc, syscall.SIGTERM)
 		defer signal.Stop(sigc)
 		<-sigc
-		log.Info("Received SIGTERM, shutting down...")
+		logging.Info("Received SIGTERM, shutting down...")
 		stack.Close()
 	}()
 	stack.Wait() // Wait for the stack to exit.
@@ -468,7 +468,7 @@ func startExecNodeStack() (*node.Node, error) {
 	}
 	conf.Node.initEnode(nodeTcpConn.IP, nodeTcpConn.Port, nodeTcpConn.Port)
 	conf.Stack.P2P.PrivateKey = conf.Node.PrivateKey
-	conf.Stack.Logger = log.New("node.id", conf.Node.ID.String())
+	conf.Stack.Logger = logging.New("node.id", conf.Node.ID.String())
 
 	// initialize the devp2p stack
 	stack, err := node.New(&conf.Stack)

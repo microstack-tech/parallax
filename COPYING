@@ -672,3 +672,10 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+---
+
+ATTRIBUTION
+
+Parallax CLI is a derivative work of go-ethereum (https://github.com/ethereum/go-ethereum),
+originally developed by the go-ethereum authors and licensed under LGPL-3.0.

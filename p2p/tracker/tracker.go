@@ -1,18 +1,18 @@
-// Copyright 2021 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
 //
-// The go-ethereum library is free software: you can redistribute it and/or modify
+// The parallax library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
+// The parallax library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
 package tracker
 
@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/log"
-	"github.com/ParallaxProtocol/parallax/metrics"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/support/metrics"
 )
 
 const (
@@ -94,12 +94,12 @@ func (t *Tracker) Track(peer string, version uint, reqCode uint64, resCode uint6
 	// we have a bug), report it. We could also add a metric, but we're not really
 	// expecting ourselves to be buggy, so a noisy warning should be enough.
 	if _, ok := t.pending[id]; ok {
-		log.Error("Network request id collision", "protocol", t.protocol, "version", version, "code", reqCode, "id", id)
+		logging.Error("Network request id collision", "protocol", t.protocol, "version", version, "code", reqCode, "id", id)
 		return
 	}
 	// If we have too many pending requests, bail out instead of leaking memory
 	if pending := len(t.pending); pending >= maxTrackedPackets {
-		log.Error("Request tracker exceeded allowance", "pending", pending, "peer", peer, "protocol", t.protocol, "version", version, "code", reqCode)
+		logging.Error("Request tracker exceeded allowance", "pending", pending, "peer", peer, "protocol", t.protocol, "version", version, "code", reqCode)
 		return
 	}
 	// Id doesn't exist yet, start tracking it
@@ -178,7 +178,7 @@ func (t *Tracker) Fulfil(peer string, version uint, code uint64, id uint64) {
 	}
 	// If the response is funky, it might be some active attack
 	if req.peer != peer || req.version != version || req.resCode != code {
-		log.Warn("Network response id collision",
+		logging.Warn("Network response id collision",
 			"have", fmt.Sprintf("%s:%s/%d:%d", peer, t.protocol, version, code),
 			"want", fmt.Sprintf("%s:%s/%d:%d", peer, t.protocol, req.version, req.resCode),
 		)
