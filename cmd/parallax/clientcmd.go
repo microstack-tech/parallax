@@ -32,6 +32,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/cmd/utils"
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/internal/nodepaths"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -697,17 +698,10 @@ func clientEndpoint(ctx *cli.Context) string {
 	if ep := ctx.String(clientRPCFlag.Name); ep != "" {
 		return ep
 	}
-	datadir := ctx.GlobalString(utils.DataDirFlag.Name)
-	if datadir == "" {
-		datadir = ctx.String(utils.DataDirFlag.Name)
+	if ep := nodepaths.IPCPath(ctx); ep != "" {
+		return ep
 	}
-	if datadir == "" {
-		datadir = "."
-	}
-	if ctx.Bool(utils.TestnetFlag.Name) || ctx.GlobalBool(utils.TestnetFlag.Name) {
-		datadir = filepath.Join(datadir, "testnet")
-	}
-	return filepath.Join(datadir, "parallax.ipc")
+	return filepath.Join(".", nodepaths.IPCFileName)
 }
 
 // dialClient opens an RPC connection to the endpoint chosen by

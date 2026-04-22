@@ -17,7 +17,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,14 +25,9 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/internal/nodepaths"
 	"gopkg.in/urfave/cli.v1"
 )
-
-// daemonEnvSentinel is set in the environment of the child process after
-// daemonization so it can distinguish itself from the parent and skip the
-// re-exec step.
-const daemonEnvSentinel = "PARALLAX_DAEMONIZED"
 
 var (
 	DaemonFlag = cli.BoolFlag{
@@ -52,46 +46,10 @@ var daemonFlags = []cli.Flag{
 	PIDFileFlag,
 }
 
-// resolveDataDir returns the effective data directory honoring --datadir and
-// the --testnet subdirectory convention used throughout the codebase.
-func resolveDataDir(ctx *cli.Context) string {
-	path := ctx.GlobalString(utils.DataDirFlag.Name)
-	if path == "" {
-		return ""
-	}
-	if ctx.GlobalBool(utils.TestnetFlag.Name) {
-		path = filepath.Join(path, "testnet")
-	}
-	return path
-}
-
-// resolvePIDPath returns the PID file path, honoring --pid if set, else
-// <datadir>/parallax.pid. Returns an error if no path can be determined.
-func resolvePIDPath(ctx *cli.Context) (string, error) {
-	if p := ctx.GlobalString(PIDFileFlag.Name); p != "" {
-		return p, nil
-	}
-	datadir := resolveDataDir(ctx)
-	if datadir == "" {
-		return "", errors.New("cannot determine PID file location: set --pid or --datadir")
-	}
-	return filepath.Join(datadir, "parallax.pid"), nil
-}
-
-// resolveLogPath returns the log file path for daemon-mode stdout/stderr
-// redirection: <datadir>/parallax.log.
-func resolveLogPath(ctx *cli.Context) (string, error) {
-	datadir := resolveDataDir(ctx)
-	if datadir == "" {
-		return "", errors.New("cannot determine log file location: set --datadir")
-	}
-	return filepath.Join(datadir, "parallax.log"), nil
-}
-
 // isDaemonChild reports whether the current process is the forked daemon
 // child (i.e., it has the sentinel env var set by its parent).
 func isDaemonChild() bool {
-	return os.Getenv(daemonEnvSentinel) == "1"
+	return os.Getenv(nodepaths.DaemonEnvSentinel) == "1"
 }
 
 // pidAlive reports whether the given PID corresponds to a running process.
@@ -161,11 +119,11 @@ func trim(b []byte) []byte {
 func daemonize(ctx *cli.Context) error {
 	// Resolve log + PID paths before forking so we can surface errors to the
 	// user's terminal while we still have one.
-	logPath, err := resolveLogPath(ctx)
+	logPath, err := nodepaths.LogPath(ctx)
 	if err != nil {
 		return err
 	}
-	pidPath, err := resolvePIDPath(ctx)
+	pidPath, err := nodepaths.PIDPath(ctx)
 	if err != nil {
 		return err
 	}
@@ -195,7 +153,7 @@ func daemonize(ctx *cli.Context) error {
 		return fmt.Errorf("resolve executable path: %v", err)
 	}
 	cmd := exec.Command(exe, os.Args[1:]...)
-	cmd.Env = append(os.Environ(), daemonEnvSentinel+"=1")
+	cmd.Env = append(os.Environ(), nodepaths.DaemonEnvSentinel+"=1")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if devnull, err := os.Open(os.DevNull); err == nil {
@@ -228,7 +186,7 @@ func daemonize(ctx *cli.Context) error {
 // started so that the PID file reflects a running daemon. It returns a
 // cleanup function that removes the PID file; callers should defer it.
 func writeDaemonPIDFile(ctx *cli.Context) (func(), error) {
-	pidPath, err := resolvePIDPath(ctx)
+	pidPath, err := nodepaths.PIDPath(ctx)
 	if err != nil {
 		return func() {}, err
 	}
