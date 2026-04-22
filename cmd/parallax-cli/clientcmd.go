@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -831,15 +832,15 @@ func requireArg(ctx *cli.Context, name string) (string, error) {
 // Commands
 // ----------------------------------------------------------------------------
 
-// clientStart is syntactic sugar for `parallax --daemon [--config <path>]`.
-// It re-executes the current binary, preserving every argv token that
+// clientStart is syntactic sugar for `parallaxd --daemon [--config <path>]`.
+// It execs the sibling parallaxd binary, preserving every argv token that
 // preceded "start" on the command line (so global flags like --datadir
 // carry through) and injecting --daemon (+ --config if a positional
 // config path was supplied).
 //
 // syscall.Exec replaces the running process, so the daemonization flow
 // that --daemon triggers sees the exact invocation a user who typed
-// `parallax --daemon` directly would have used.
+// `parallaxd --daemon` directly would have used.
 func clientStart(ctx *cli.Context) error {
 	configPath := ctx.Args().First()
 
@@ -868,14 +869,35 @@ func clientStart(ctx *cli.Context) error {
 		newArgs = append(newArgs, "--config", configPath)
 	}
 
-	exe, err := os.Executable()
+	daemonExe, err := findSiblingBinary("parallaxd")
 	if err != nil {
-		return fmt.Errorf("resolve executable path: %v", err)
+		return err
 	}
 	// syscall.Exec returns only on error. On success the current
-	// process image is replaced and the daemonize() flow in main
-	// takes over.
-	return syscall.Exec(exe, append([]string{exe}, newArgs...), os.Environ())
+	// process image is replaced by parallaxd, which handles the
+	// daemonize() flow itself.
+	return syscall.Exec(daemonExe, append([]string{daemonExe}, newArgs...), os.Environ())
+}
+
+// findSiblingBinary locates a companion binary installed next to the current
+// executable, falling back to $PATH. Symlinks are resolved so `go run` and
+// symlink-based installs both land in the right directory.
+func findSiblingBinary(name string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve executable path: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	candidate := filepath.Join(filepath.Dir(self), name)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("cannot locate %s (tried %s and $PATH)", name, candidate)
 }
 
 func clientStop(ctx *cli.Context) error {

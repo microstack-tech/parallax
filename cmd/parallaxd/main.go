@@ -230,8 +230,6 @@ func init() {
 		// See snapshot.go
 		snapshotCommand,
 	}
-	// See clientcmd.go — RPC-client sugar subcommands (stop, status, peers, ...)
-	app.Commands = append(app.Commands, clientSugarCommands...)
 	sort.Sort(cli.CommandsByName(app.Commands))
 
 	app.Flags = utils.GroupFlags(nodeFlags,

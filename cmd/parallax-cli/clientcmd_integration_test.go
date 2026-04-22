@@ -30,17 +30,56 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/docker/docker/pkg/reexec"
 )
 
-// These integration tests spin up a real parallax dev daemon in the
-// background and exercise each sugar command as a short-lived child
-// process, validating stdout, stderr, and exit code. They're slower
+// These integration tests spin up a real parallaxd dev daemon in the
+// background and exercise each sugar command as a short-lived parallax-cli
+// child process, validating stdout, stderr, and exit code. They're slower
 // than the unit tests but catch any drift between the client-side
 // argument shaping and the server-side RPC shapes.
 //
 // Daemons are started with --dev --port 0 --nodiscover so they're
 // completely isolated from any host networking.
+
+// Binary paths populated by TestMain. Both parallaxd and parallax-cli are
+// built once into a shared temp directory so every test subprocess uses
+// the same freshly compiled artefacts.
+var (
+	parallaxdBin   string
+	parallaxCliBin string
+)
+
+// TestMain builds parallaxd and parallax-cli into a throwaway directory
+// before any test runs. parallax-cli's `start` subcommand (and anything
+// else that looks up sibling binaries) relies on parallaxd being next to
+// the parallax-cli binary, so both are installed into the same directory.
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "parallax-cli-integration-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir tempdir: %v\n", err)
+		os.Exit(2)
+	}
+	code := func() int {
+		defer os.RemoveAll(tmp)
+
+		parallaxdBin = filepath.Join(tmp, "parallaxd")
+		parallaxCliBin = filepath.Join(tmp, "parallax-cli")
+		for _, b := range []struct{ path, pkg string }{
+			{parallaxdBin, "github.com/ParallaxProtocol/parallax/cmd/parallaxd"},
+			{parallaxCliBin, "github.com/ParallaxProtocol/parallax/cmd/parallax-cli"},
+		} {
+			build := exec.Command("go", "build", "-o", b.path, b.pkg)
+			build.Stdout = os.Stdout
+			build.Stderr = os.Stderr
+			if err := build.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "build %s: %v\n", b.pkg, err)
+				return 2
+			}
+		}
+		return m.Run()
+	}()
+	os.Exit(code)
+}
 
 // devDaemon is a handle to a running dev-mode parallax node that tests
 // can issue sugar commands against. Always stop it with cleanup().
@@ -67,8 +106,8 @@ func startDevDaemon(t *testing.T) *devDaemon {
 		"--verbosity", "1", // quiet so stderr doesn't swamp test logs
 	}
 	cmd := &exec.Cmd{
-		Path:   reexec.Self(),
-		Args:   append([]string{"prlx-test"}, args...),
+		Path:   parallaxdBin,
+		Args:   append([]string{parallaxdBin}, args...),
 		Stderr: &prefixWriter{t: t, prefix: "daemon-stderr: "},
 		Stdout: &prefixWriter{t: t, prefix: "daemon-stdout: "},
 	}
@@ -127,8 +166,8 @@ func (d *devDaemon) runSugar(args ...string) (stdout, stderr string, exitCode in
 	d.t.Helper()
 	full := append([]string{"--datadir", d.datadir}, args...)
 	cmd := &exec.Cmd{
-		Path: reexec.Self(),
-		Args: append([]string{"prlx-test"}, full...),
+		Path: parallaxCliBin,
+		Args: append([]string{parallaxCliBin}, full...),
 	}
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -759,8 +798,8 @@ func TestSugarOfflineUtilities(t *testing.T) {
 // directory.
 func runOffline(args ...string) (stdout, stderr string, exitCode int) {
 	cmd := &exec.Cmd{
-		Path: reexec.Self(),
-		Args: append([]string{"prlx-test"}, args...),
+		Path: parallaxCliBin,
+		Args: append([]string{parallaxCliBin}, args...),
 	}
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
