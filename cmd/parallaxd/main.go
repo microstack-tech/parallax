@@ -199,6 +199,7 @@ func init() {
 	app.Action = geth
 	app.HideVersion = true // we have a command to print the version
 	app.Copyright = "Copyright 2025-2026 The Parallax Protocol Authors"
+	app.EnableBashCompletion = true
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,
