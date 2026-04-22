@@ -1,7 +1,7 @@
 name: Release
 
-# Builds CLI binaries (parallax, clef, parallaxkey) for every supported
-# OS / arch and attaches them to a draft GitHub Release.
+# Builds CLI binaries (parallaxd, parallax-cli, parallax, clef, parallaxkey)
+# for every supported OS / arch and attaches them to a draft GitHub Release.
 #
 # CLI bundles use the same `make package` path as the local release,
 # so the resulting parallax-<os>-<arch>.{tar.gz,zip} files are byte
@@ -35,7 +35,7 @@ env:
 
 jobs:
   # ------------------------------------------------------------------ #
-  # CLI: parallax / clef / parallaxkey                                 #
+  # CLI: parallaxd / parallax-cli / parallax / clef / parallaxkey       #
   # One runner per target so each platform produces its own artifact   #
   # instead of being lumped together. The CLI is CGO-disabled so every #
   # target cross-compiles cleanly from a single ubuntu host.           #
@@ -105,7 +105,7 @@ jobs:
         env:
           # Same default set as `release: export CMDS := $(CMDS_RELEASE)`
           # in the Makefile. Keep these two in sync.
-          CMDS: "clef parallaxkey prlx"
+          CMDS: "clef parallaxkey parallaxd parallax-cli parallax"
         run: |
           make package TARGETS="${{ matrix.target }}"
           ls -lh build/package/

@@ -67,6 +67,8 @@ var (
 	// Files that end up in the parallax*.zip archive.
 	parallaxArchiveFiles = []string{
 		"COPYING",
+		executablePath("parallaxd"),
+		executablePath("parallax-cli"),
 		executablePath("parallax"),
 	}
 
@@ -76,6 +78,8 @@ var (
 		executablePath("abigen"),
 		executablePath("bootnode"),
 		executablePath("pvm"),
+		executablePath("parallaxd"),
+		executablePath("parallax-cli"),
 		executablePath("parallax"),
 		executablePath("rlpdump"),
 		executablePath("clef"),
@@ -96,8 +100,16 @@ var (
 			Description: "Developer utility version of the PVM (Parallax Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode.",
 		},
 		{
+			BinaryName:  "parallaxd",
+			Description: "Parallax full node daemon.",
+		},
+		{
+			BinaryName:  "parallax-cli",
+			Description: "Parallax JSON-RPC command-line client.",
+		},
+		{
 			BinaryName:  "parallax",
-			Description: "Parallax CLI client.",
+			Description: "Parallax multi-call wrapper dispatching to parallaxd and parallax-cli.",
 		},
 		{
 			BinaryName:  "rlpdump",

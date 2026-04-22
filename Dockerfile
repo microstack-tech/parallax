@@ -14,15 +14,19 @@ COPY go.sum /parallax/
 RUN cd /parallax && go mod download
 
 ADD . /parallax
-RUN cd /parallax && go run build/ci.go install ./cmd/parallax
+RUN cd /parallax && go run build/ci.go install ./cmd/parallaxd ./cmd/parallax-cli ./cmd/parallax
 
 # Pull Prlx into a second stage deploy alpine container
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates
+COPY --from=builder /parallax/build/bin/parallaxd /usr/local/bin/
+COPY --from=builder /parallax/build/bin/parallax-cli /usr/local/bin/
 COPY --from=builder /parallax/build/bin/parallax /usr/local/bin/
 
 EXPOSE 8545 8546 32110 32110/udp
+# Default to the multi-call wrapper so `docker run <image> node ...`
+# and `docker run <image> rpc ...` both work out of the box.
 ENTRYPOINT ["parallax"]
 
 # Add some metadata labels to help programatic image consumption
