@@ -41,8 +41,6 @@ For detailed build instructions including cross-compilation, Docker builds, and 
 | `pvm` | Execute and debug PVM bytecode in isolation. |
 | `rlpdump` | Decode RLP-encoded data into human-readable form. |
 
-> **Migration note:** before v2.1, a single `parallax` binary did both jobs. The split mirrors Bitcoin Core's `bitcoind` / `bitcoin-cli` / `bitcoin` layout. Any script that invoked `./build/bin/parallax <node-flags>` should switch to `./build/bin/parallaxd <node-flags>` (or `./build/bin/parallax node <node-flags>`); anything that called `parallax info`, `parallax stop`, etc. should use `parallax-cli` (or `parallax rpc`).
-
 ## Running a Node
 
 ```bash
@@ -71,7 +69,7 @@ Invoking `parallaxd --daemon --datadir ~/.parallax` directly has the same effect
 
 ### Managing a running node
 
-`parallax-cli` is the JSON-RPC client, in the spirit of `bitcoin-cli`. Common operations have short subcommands that auto-discover the IPC socket in `<datadir>`:
+`parallax-cli` is the JSON-RPC client. Common operations have short subcommands that auto-discover the IPC socket in `<datadir>`:
 
 ```bash
 parallax-cli info           # chain, network, mempool, mining overview
@@ -113,7 +111,7 @@ Or install under `~/.local/share/bash-completion/completions/` (bash) or any dir
 
 ## Architecture
 
-Parallax CLI uses a layered architecture modeled after Bitcoin Core's `libbitcoin_kernel` separation:
+Parallax CLI uses a layered architecture:
 
 ```
 kernel/         Consensus rules — no RPC, no networking, no I/O
