@@ -13,7 +13,7 @@ It is useful to have basic knowledge of private networks and Clef. These topics 
 First of all, set up a rudimentary testnet to have something to sign. Create a new keystore (password `testtesttest`)
 
 ```
-$ parallax account new --datadir ./ddir
+$ parallaxd account new --datadir ./ddir
 INFO [06-16|11:10:39.600] Maximum peer count                       total=50
 Your new account is locked with a password. Please give a password. Do not forget this password.
 Password:
@@ -62,7 +62,7 @@ Create a genesis with that account as a sealer:
 Initiate the Parallax client:
 
 ```sh
-parallax  --datadir ./ddir init genesis.json
+parallaxd  --datadir ./ddir init genesis.json
 ```
 
 ```
@@ -138,7 +138,7 @@ clef --keystore ./ddir/keystore --configdir ./clef --chainid 15 --suppress-bootw
 then start the Parallax client:
 
 ```sh
-parallax  --datadir ./ddir --signer ./clef/clef.ipc --mine
+parallaxd  --datadir ./ddir --signer ./clef/clef.ipc --mine
 ```
 
 The Parallax client will ask what accounts are present - enter `y` to approve:
@@ -323,7 +323,7 @@ clef --keystore ./ddir/keystore --configdir ./clef --chainid 15  --suppress-boot
 Run the Parallax client:
 
 ```sh
-parallax  --datadir ./ddir --signer ./clef/clef.ipc --mine
+parallaxd  --datadir ./ddir --signer ./clef/clef.ipc --mine
 ```
 
 And `clef` should now happily sign blocks:

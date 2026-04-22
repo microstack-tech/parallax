@@ -24,13 +24,13 @@ There are three transport protocols available in the Parallax client: IPC, HTTP 
 HTTP is supported in every browser as well as almost all programming toolchains. Due to its ubiquity it has become the most widely used transport for interacting with the Parallax client. To start a HTTP server in Parallax client, include the `--http` flag:
 
 ```sh
-./parallax --http
+./parallaxd --http
 ```
 
 If no other commands are provided, the Parallax client falls back to its default behaviour of accepting connections from the local loopback interface (127.0.0.1). The default listening port is 8545. The ip address and listening port can be customized using the `--http.addr` and `--http.port` flags:
 
 ```sh
-./parallax --http --http.port 3334
+./parallaxd --http --http.port 3334
 ```
 
 Not all of the JSON-RPC method namespaces are enabled for HTTP requests by default. Instead, they have to be whitelisted explicitly when the Parallax client is started. Calling non-whitelisted RPC namespaces returns an RPC error with code -32602.
@@ -38,13 +38,13 @@ Not all of the JSON-RPC method namespaces are enabled for HTTP requests by defau
 The default whitelist allows access to the `eth`, `net` and `web3` namespaces. To enable access to other APIs like debugging (`debug`), they must be configured using the `--http.api` flag. Enabling these APIs over HTTP is **not recommended** because access to these methods increases the attack surface.
 
 ```sh
-./parallax --http --http.api eth,net,web3
+./parallaxd --http --http.api eth,net,web3
 ```
 
 Since the HTTP server is reachable from any local application, additional protection is built into the server to prevent misuse of the API from web pages. To enable access to the API from a web page (for example to use the online IDE, [Remix](https://remix.ethereum.org/)), the server needs to be configured to accept Cross-Origin requests. This is achieved using the `--http.corsdomain` flag.
 
 ```sh
-./parallax --http --http.corsdomain https://remix.ethereum.org
+./parallaxd --http --http.corsdomain https://remix.ethereum.org
 ```
 
 The `--http.corsdomain` command also accepts wildcards that enable access to the RPC from any origin:
@@ -62,13 +62,13 @@ Because Websocket is bidirectional, servers can push events to clients. That mak
 Configuration of the WebSocket endpoint in the Parallax client follows the same pattern as the HTTP transport. WebSocket access can be enabled using the `--ws` flag. If no additional information is provided, the Parallax client falls back to its default behaviour which is to establish the Websocket on port `8546`. The `--ws.addr`, `--ws.port` and `--ws.api` flags can be used to customize settings for the WebSocket server. For example, to start the Parallax client with a Websocket connection for RPC using the custom port `3334` and whitelisting the `eth`, `net` and `web3` namespaces:
 
 ```sh
-./parallax --ws --ws.port 3334 --ws.api eth,net,web3
+./parallaxd --ws --ws.port 3334 --ws.api eth,net,web3
 ```
 
 Cross-Origin request protection also applies to the WebSocket server. The `--ws.origins` flag can be used to allow access to the server from web pages:
 
 ```sh
-./parallax --ws --ws.origins http://myapp.example.com
+./parallaxd --ws --ws.origins http://myapp.example.com
 ```
 
 As with `--http.corsdomain`, using the wildcard `--ws.origins '*'` allows access from any origin.

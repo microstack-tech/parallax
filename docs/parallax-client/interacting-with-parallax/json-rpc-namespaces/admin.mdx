@@ -257,7 +257,7 @@ true
 
 ### admin\_uptime
 
-Returns the number of seconds the node has been running since its most recent `Start`. Returns 0 if the node is not yet fully started. Mirrors Bitcoin Core's `uptime` command and backs the `parallax uptime` command-line helper.
+Returns the number of seconds the node has been running since its most recent `Start`. Returns 0 if the node is not yet fully started. Mirrors Bitcoin Core's `uptime` command and backs the `parallax-cli uptime` command-line helper.
 
 | CLIENT  | METHOD INVOCATION             |
 | ------- | ----------------------------- |
@@ -276,7 +276,7 @@ Returns the number of seconds the node has been running since its most recent `S
 
 Gracefully shuts down the running node. The method schedules the shutdown on a short delay (about 100 ms) and returns immediately so the RPC response can be delivered before the RPC server itself tears down. Client callers should therefore tolerate the RPC connection being closed without a final response — that outcome still indicates a successful shutdown.
 
-This is the underlying method used by the `parallax stop` command-line helper, analogous to `bitcoin-cli stop` in Bitcoin Core.
+This is the underlying method used by the `parallax-cli stop` command-line helper, analogous to `bitcoin-cli stop` in Bitcoin Core.
 
 | CLIENT  | METHOD INVOCATION          |
 | ------- | -------------------------- |

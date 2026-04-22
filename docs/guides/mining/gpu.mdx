@@ -50,7 +50,7 @@ If you’re interested in contributing or extending Hashwarp, visit the [officia
     Run your Parallax node with mining RPC enabled:
 
     ```bash
-    ./parallax --http --http.api "eth,net,web3,miner" --mine --miner.coinbase <YOUR_ADDRESS>
+    ./parallaxd --http --http.api "eth,net,web3,miner" --mine --miner.coinbase <YOUR_ADDRESS>
     ```
 
     Replace `<YOUR_ADDRESS>` with the account that should receive mining rewards.
@@ -90,7 +90,7 @@ If you’re interested in contributing or extending Hashwarp, visit the [officia
 - You can check your balance with:
 
 ```bash
-./parallax attach --exec "eth.getBalance('<YOUR_ADDRESS>')"
+./parallaxd attach --exec "eth.getBalance('<YOUR_ADDRESS>')"
 ```
 
 ---

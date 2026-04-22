@@ -7,13 +7,13 @@ In addition to the [JSON-RPC APIs](./json-rpc-server/overview), the Parallax cli
 The GraphQL endpoint piggybacks on the HTTP transport used by JSON-RPC. Hence the relevant `--http` flags and the `--graphql` flag should be passed to the Parallax client:
 
 ```sh
-parallax --http --graphql
+parallaxd --http --graphql
 ```
 
 Now queries can be raised against `http://localhost:8545/graphql`. To change the port, provide a custom port number to `--http.port`, e.g.:
 
 ```sh
-parallax --http --http.port 9545 --graphql
+parallaxd --http --http.port 9545 --graphql
 ```
 
 ## GraphiQL

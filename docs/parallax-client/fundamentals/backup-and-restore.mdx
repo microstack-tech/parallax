@@ -19,7 +19,7 @@ It is important to backup the files in the keystore securely. These files are en
 The Parallax's blockchain and state databases can be removed with:
 
 ```sh
-parallax removedb
+parallaxd removedb
 ```
 
 This is useful for deleting an old chain and sync'ing to a new one. It only affects data directories that can be re-created on synchronisation and does not touch the keystore. Specifically, passing the `removedb` command with no arguments removes the full node state database, ancient database.
@@ -29,13 +29,13 @@ This is useful for deleting an old chain and sync'ing to a new one. It only affe
 Export the blockchain in binary format with:
 
 ```sh
-parallax export <filename>
+parallaxd export <filename>
 ```
 
 Or if you want to back up portions of the chain over time, a first and last block can be specified. For example, to back up the first epoch:
 
 ```sh
-parallax export <filename> 0 29999
+parallaxd export <filename> 0 29999
 ```
 
 Note that when backing up a partial chain, the file will be appended rather than truncated.
@@ -43,7 +43,7 @@ Note that when backing up a partial chain, the file will be appended rather than
 Import binary-format blockchain exports with:
 
 ```sh
-parallax import <filename>
+parallaxd import <filename>
 ```
 
 And finally: **REMEMBER YOUR PASSWORD** and **BACKUP YOUR KEYSTORE**!

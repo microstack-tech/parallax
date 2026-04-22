@@ -120,13 +120,13 @@ Apart from listing accounts, a *request* can be submitted to create a new accoun
 The example above used Clef completely independently of the Parallax client. However, by defining Clef as the signer when the Parallax client is started imposes Clef's `request` - `confirm` - `result` pattern to any interaction with the local Parallax node that touches accounts, including requests made using RPC or an attached Javascript console. To demonstrate this, the Parallax client can be started, with Clef as the signer:
 
 ```sh
-parallax --testnet --datadir testnet --signer=testnet/clef/clef.ipc
+parallaxd --testnet --datadir testnet --signer=testnet/clef/clef.ipc
 ```
 
 With the Parallax client running, open a new terminal and attach a Javascript console:
 
 ```sh
-parallax attach testnet/parallax.ipc
+parallaxd attach testnet/parallax.ipc
 ```
 
 A simple request to list the accounts in the keystore will cause the Javascript console to hang.

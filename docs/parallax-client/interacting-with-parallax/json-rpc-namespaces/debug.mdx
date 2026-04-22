@@ -61,7 +61,7 @@ Returns leveldb properties of the key-value database.
 
 ### debug\_dbStats
 
-Returns a summary of on-disk database sizes. The `ancients` object lists per-category frozen-chain sizes in bytes; `leveldb` carries the same human-readable compaction-stats table that `debug_chaindbProperty("leveldb.stats")` returns. Intended for quick storage-use checks and backs the `parallax dbstats` command-line helper.
+Returns a summary of on-disk database sizes. The `ancients` object lists per-category frozen-chain sizes in bytes; `leveldb` carries the same human-readable compaction-stats table that `debug_chaindbProperty("leveldb.stats")` returns. Intended for quick storage-use checks and backs the `parallax-cli dbstats` command-line helper.
 
 | CLIENT  | METHOD INVOCATION                                           |
 | ------- | ----------------------------------------------------------- |

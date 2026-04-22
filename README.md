@@ -14,7 +14,13 @@ Parallax CLI requires **Go 1.26+** and a C compiler.
 make parallax
 ```
 
-This builds the `parallax` binary into `build/bin/`. To build the full suite of tools:
+This builds the three binaries of the Parallax suite into `build/bin/`:
+
+- **`parallaxd`** — the full-node daemon.
+- **`parallax-cli`** — the JSON-RPC command-line client.
+- **`parallax`** — a multi-call wrapper that dispatches to either companion.
+
+To build the full suite of tools (adds `clef`, `abigen`, `pvm`, `rlpdump`, `devp2p`):
 
 ```bash
 make all
@@ -26,23 +32,27 @@ For detailed build instructions including cross-compilation, Docker builds, and 
 
 | Command | Description |
 |---------|-------------|
-| **`parallax`** | Main node client. Runs full or archive nodes; serves JSON-RPC over HTTP, WebSocket, and IPC. |
+| **`parallaxd`** | Full-node daemon. Runs full or archive nodes; serves JSON-RPC over HTTP, WebSocket, and IPC. |
+| **`parallax-cli`** | JSON-RPC client with ergonomic sugar subcommands (`info`, `peers`, `balance`, `sendraw`, …). |
+| **`parallax`** | Multi-call wrapper. `parallax node …` dispatches to `parallaxd`; `parallax rpc …` to `parallax-cli`. |
 | `clef` | Standalone transaction signer for secure account operations. |
 | `devp2p` | Networking utilities to inspect and interact at the P2P layer. |
 | `abigen` | Generates type-safe Go bindings from contract ABIs. |
 | `pvm` | Execute and debug PVM bytecode in isolation. |
 | `rlpdump` | Decode RLP-encoded data into human-readable form. |
 
+> **Migration note:** before v2.1, a single `parallax` binary did both jobs. The split mirrors Bitcoin Core's `bitcoind` / `bitcoin-cli` / `bitcoin` layout. Any script that invoked `./build/bin/parallax <node-flags>` should switch to `./build/bin/parallaxd <node-flags>` (or `./build/bin/parallax node <node-flags>`); anything that called `parallax info`, `parallax stop`, etc. should use `parallax-cli` (or `parallax rpc`).
+
 ## Running a Node
 
 ```bash
-./build/bin/parallax
+./build/bin/parallaxd
 ```
 
 Start with an interactive JavaScript console:
 
 ```bash
-./build/bin/parallax console
+./build/bin/parallaxd console
 ```
 
 See the [getting started guide](https://docs.parallaxprotocol.org/parallax-client/getting-started/introduction) for connecting to the network, creating accounts, and sending transactions.
@@ -52,24 +62,45 @@ See the [getting started guide](https://docs.parallaxprotocol.org/parallax-clien
 Run the node in the background, detached from the terminal:
 
 ```bash
-./build/bin/parallax --datadir ~/.parallax start
+./build/bin/parallax-cli --datadir ~/.parallax start
 ```
 
-Logs redirect to `<datadir>/parallax.log`, a PID file is written, and the process survives terminal exit. See [Daemon mode](https://docs.parallaxprotocol.org/parallax-client/fundamentals/daemon-mode) for systemd integration and flag details.
+Under the hood, `parallax-cli start` execs the sibling `parallaxd` binary with `--daemon`. `parallaxd` installed next to `parallax-cli` is the default location; `$PATH` is the fallback. Logs redirect to `<datadir>/parallax.log`, a PID file is written, and the process survives terminal exit. See [Daemon mode](https://docs.parallaxprotocol.org/parallax-client/fundamentals/daemon-mode) for systemd integration and flag details.
+
+Invoking `parallaxd --daemon --datadir ~/.parallax` directly has the same effect.
 
 ### Managing a running node
 
-The `parallax` binary doubles as a JSON-RPC client, in the spirit of `bitcoin-cli`. Common operations have short subcommands that auto-discover the IPC socket in `<datadir>`:
+`parallax-cli` is the JSON-RPC client, in the spirit of `bitcoin-cli`. Common operations have short subcommands that auto-discover the IPC socket in `<datadir>`:
 
 ```bash
-parallax info           # chain, network, mempool, mining overview
-parallax tip            # latest block summary
-parallax blockcount     # bare integer, pipeable in shell scripts
-parallax balance <addr> # decimal LAX (or --wei for integer)
-parallax stop           # graceful shutdown
+parallax-cli info           # chain, network, mempool, mining overview
+parallax-cli tip            # latest block summary
+parallax-cli blockcount     # bare integer, pipeable in shell scripts
+parallax-cli balance <addr> # decimal LAX (or --wei for integer)
+parallax-cli stop           # graceful shutdown
 ```
 
-Object responses are pretty-printed JSON; scalar responses are bare values (safe for `$(parallax blockcount)`). Full reference: [Command-line RPC](https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/command-line-rpc).
+Equivalent invocations through the wrapper:
+
+```bash
+parallax rpc info
+parallax rpc balance <addr>
+```
+
+Object responses are pretty-printed JSON; scalar responses are bare values (safe for `$(parallax-cli blockcount)`). Full reference: [Command-line RPC](https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/command-line-rpc).
+
+### Shell completion
+
+Runtime-driven bash and zsh completion scripts ship under `build/completion/`:
+
+```bash
+source build/completion/parallaxd.bash
+source build/completion/parallax-cli.bash
+source build/completion/parallax.bash
+```
+
+Or install under `~/.local/share/bash-completion/completions/` (bash) or any directory on `$fpath` (zsh) for persistence.
 
 ### Hardware Requirements
 

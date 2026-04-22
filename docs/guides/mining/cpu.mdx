@@ -25,7 +25,7 @@ Mining is how new coins are created and how transactions are secured on the Para
     - To quickly generate a new account with the client, run:  
 
     ```bash
-    ./parallax account new
+    ./parallaxd account new
     ```
 
     You’ll be asked to create a password. **Keep this safe!**
@@ -37,7 +37,7 @@ Mining is how new coins are created and how transactions are secured on the Para
     Run the Parallax client with the `--mine` flag and point it to your account:
 
     ```bash
-    ./parallax --mine --miner.coinbase <YOUR_ADDRESS>
+    ./parallaxd --mine --miner.coinbase <YOUR_ADDRESS>
     ```
 
     Replace `<YOUR_ADDRESS>` with the account you created in the previous step.  
@@ -45,7 +45,7 @@ Mining is how new coins are created and how transactions are secured on the Para
     Example:
 
     ```bash
-    ./parallax --mine --miner.coinbase 0x1234abcd...
+    ./parallaxd --mine --miner.coinbase 0x1234abcd...
     ```
 
     <Note>
@@ -79,7 +79,7 @@ Mining is how new coins are created and how transactions are secured on the Para
 - You can view your balance in MetaMask (if using the same account) or with:
 
 ```bash
-./parallax attach --exec "eth.getBalance('<YOUR_ADDRESS>')"
+./parallaxd attach --exec "eth.getBalance('<YOUR_ADDRESS>')"
 ```
 
 ---

@@ -15,7 +15,7 @@ In order to get the most value from the tutorials on this page, the following sk
 
 Users that need to revisit these fundamentals can find helpful resources relating to the command line [here](https://developer.mozilla.org/en-US/docs/Learn/Tools_and_testing/Understanding_client-side_tools/Command_line), http [here](https://developer.mozilla.org/en-US/docs/Web/HTTP) and Javascript [here](https://www.javascript.com/learn).
 
-If the Parallax client was installed from source on Linux, make saves the binaries for the Parallax client and the associated tools in /build/bin. To run these programs it is convenient to move them to the top level project directory (e.g. running mv ./build/bin/\* ./) from /parallax. Then ./ must be prepended to the commands in the code snippets in order to execute a particular program, e.g. ./parallax instead of simply parallax. If the executables are not moved then either navigate to the bin directory to run them (e.g. cd ./build/bin and ./parallax) or provide their path (e.g. ./build/bin/parallax). These instructions can be ignored for other installations.
+If the Parallax client was installed from source on Linux, `make parallax` drops the three suite binaries — `parallaxd` (the full-node daemon), `parallax-cli` (the JSON-RPC client) and `parallax` (a multi-call wrapper that dispatches `parallax node …` → `parallaxd` and `parallax rpc …` → `parallax-cli`) — into `./build/bin/`. Either move them to somewhere on `$PATH`, add `./build/bin` to `$PATH`, or prefix each invocation with `./build/bin/` in the snippets below.
 
 ## Background
 
@@ -109,7 +109,7 @@ The Parallax client will connect the computer to the Parallax network. In this t
 The following command should be run in a new terminal, separate to the one running Clef:
 
 ```sh
-parallax --testnet --datadir parallax-tutorial --http --http.api eth,net --signer=parallax-tutorial/clef/clef.ipc --http
+parallaxd --testnet --datadir parallax-tutorial --http --http.api eth,net --signer=parallax-tutorial/clef/clef.ipc --http
 ```
 
 Running the above command starts the Parallax client.
@@ -136,7 +136,7 @@ Sending an empty Curl request to the http server provides a quick way to confirm
 curl http://localhost:8545
 ```
 
-If there is no error message reported to the terminal, everything is OK. The Parallax client must be running and synced in order for a user to interact with the Parallax network. If the terminal running the Parallax client is closed down then the Parallax client must be restarted again in a new terminal. The Parallax client can be started and stopped easily, but it must be running for any interaction with Parallax to take place. To shut down the Parallax client, simply press CTRL+C in the Parallax client terminal. To start it again, run the previous command parallax --datadir \<other commands>.
+If there is no error message reported to the terminal, everything is OK. The Parallax client must be running and synced in order for a user to interact with the Parallax network. If the terminal running the Parallax client is closed down then the Parallax client must be restarted again in a new terminal. The Parallax client can be started and stopped easily, but it must be running for any interaction with Parallax to take place. To shut down the Parallax client, simply press CTRL+C in the Parallax client terminal. To start it again, run the previous command `parallaxd --datadir <other commands>`.
 
 ### Step 4: Get Testnet LAX
 
@@ -161,7 +161,7 @@ The Parallax client provides a Javascript console that exposes the Web3.js API. 
 This tutorial will use the HTTP option. Note that the terminals running the Parallax client and Clef should both still be active. In a new (third) terminal, the following command can be run to start the console and connect it to the Parallax client using the exposed http port:
 
 ```sh
-parallax attach http://127.0.0.1:8545
+parallaxd attach http://127.0.0.1:8545
 ```
 
 This command causes the terminal to hang because it is waiting for approval from Clef. Approving the request in the terminal running Clef will lead to the following welcome message being displayed in the Javascript console:

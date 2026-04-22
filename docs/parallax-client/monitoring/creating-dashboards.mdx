@@ -110,10 +110,10 @@ Meanwhile, [Recording rules](https://prometheus.io/docs/prometheus/latest/config
 
 ## Preparing the Parallax client
 
-After setting up database, metrics need to be enabled in the Parallax client. Various options are available, as documented in the `METRICS AND STATS OPTIONS` in `parallax --help` and in our [metrics page](../monitoring/metrics). In this case the Parallax client will be configured to push data into InfluxDB. Basic setup specifies the endpoint where InfluxDB is reachable and authenticates the database.
+After setting up database, metrics need to be enabled in the Parallax client. Various options are available, as documented in the `METRICS AND STATS OPTIONS` in `parallaxd --help` and in our [metrics page](../monitoring/metrics). In this case the Parallax client will be configured to push data into InfluxDB. Basic setup specifies the endpoint where InfluxDB is reachable and authenticates the database.
 
 ```sh
-parallax --metrics --metrics.influxdb --metrics.influxdb.endpoint "http://0.0.0.0:8086" --metrics.influxdb.username "parallax" --metrics.influxdb.password "chosenpassword"
+parallaxd --metrics --metrics.influxdb --metrics.influxdb.endpoint "http://0.0.0.0:8086" --metrics.influxdb.username "parallax" --metrics.influxdb.password "chosenpassword"
 ```
 
 These flags can be provided when the Parallax client is started or saved to the configuration file.

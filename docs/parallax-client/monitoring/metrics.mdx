@@ -37,7 +37,7 @@ A gauge is a single int64 value. Its value can increment and decrement - as with
 The Parallax client collects metrics if the `--metrics` flag is provided at startup. Those metrics are available via an HTTP server if the `--metrics.addr` flag is also provided. By default the metrics are served at `127.0.0.1:6060/debug/metrics` but a custom IP address can be provided. A custom port can also be provided to the `--metrics.port` flag. More computationally expensive metrics are toggled on or off by providing or omitting the `--metrics.expensive` flag. For example, to serve all metrics at the default address and port:
 
 ```sh
-parallax <other commands> --metrics --metrics.addr 127.0.0.1 --metrics.expensive
+parallaxd <other commands> --metrics --metrics.addr 127.0.0.1 --metrics.expensive
 ```
 
 Navigating the browser to the given metrics address displays all the available metrics in the form of JSON data that looks similar to:

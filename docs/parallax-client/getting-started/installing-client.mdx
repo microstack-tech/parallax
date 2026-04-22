@@ -23,7 +23,7 @@ The following standalone bundles are available:
 * 64bit archives (.tar.gz) on macOS
 * 32bit and 64bit archives (.zip) and installers (.exe) on Windows
 
-Some archives contain only the Parallax client, while other archives containing the Parallax client and the various developer tools (clef, devp2p, abigen, bootnode, evm and rlpdump).
+Some archives contain only the Parallax suite — `parallaxd` (full-node daemon), `parallax-cli` (JSON-RPC client) and `parallax` (multi-call wrapper) — while other archives bundle the suite together with the developer tools (clef, devp2p, abigen, bootnode, evm, rlpdump).
 
 The standalone bundles can be downloaded from the [Parallax client Releases](https://github.com/ParallaxProtocol/parallax/releases) page. To update an existing installation, download and manually install the latest version.
 
@@ -43,7 +43,7 @@ cd parallax
 make parallax
 ```
 
-These commands create a Parallax executable file in the `parallax/build/bin` folder that can be moved and run from another directory if required. The binary is standalone and doesn't require any additional files.
+These commands create three executable files under `parallax/build/bin/`: `parallaxd` (the full-node daemon), `parallax-cli` (the JSON-RPC client) and `parallax` (a thin wrapper that dispatches `parallax node …` → `parallaxd` and `parallax rpc …` → `parallax-cli`). All three are statically linked and can be moved or copied independently; the wrapper resolves `parallaxd` / `parallax-cli` as siblings in its own install directory or via `$PATH`.
 
 To update an existing Parallax client installation simply stop the node, navigate to the project root directory and pull the latest version from the Parallax GitHub repository. Then rebuild and restart the node.
 
@@ -104,7 +104,7 @@ CC=clang make parallax
 To start the node, the following command can be run:
 
 ```sh
-build/bin/parallax
+build/bin/parallaxd
 ```
 
 Additionally all the developer tools provided with Parallax (clef, devp2p, abigen, bootnode, evm and rlpdump) can be compiled by running `make all`.

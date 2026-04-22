@@ -85,5 +85,5 @@ Note that this command uses the domain name specified during signing. Any existi
 Once a tree is available through a DNS name, the Parallax client can use it with the `--discovery.dns` command line flag. Node trees are referenced using the `enrtree://` URL scheme. The URL of the tree can be found in the `enrtree-info.json` file created by `devp2p dns sign`. Pass the URL as an argument to the flag in order to make use of the published tree.
 
 ```sh
-parallax --discovery.dns "enrtree://AMBMWDM3J6UY3M32TMMROUNLX6Y3YTLVC3DC6HN2AVG5NHNSAXDW6@mainnet.nodes.example.org"
+parallaxd --discovery.dns "enrtree://AMBMWDM3J6UY3M32TMMROUNLX6Y3YTLVC3DC6HN2AVG5NHNSAXDW6@mainnet.nodes.example.org"
 ```

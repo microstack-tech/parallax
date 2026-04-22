@@ -2,12 +2,12 @@
 title: 'Command-line RPC'
 ---
 
-The `parallax` binary doubles as a JSON-RPC client for talking to a running node, in the same spirit as Bitcoin Core's `bitcoin-cli`. Rather than curling the RPC endpoint directly or entering the [JavaScript console](./js-console) for a quick status check, you invoke short subcommands:
+The `parallax-cli` binary is Parallax's JSON-RPC client for talking to a running node, in the same spirit as Bitcoin Core's `bitcoin-cli`. Rather than curling the RPC endpoint directly or entering the [JavaScript console](./js-console) for a quick status check, you invoke short subcommands:
 
 ```sh
-parallax info         # → JSON node overview
-parallax blockcount   # → 12345
-parallax stop         # → graceful shutdown
+parallax-cli info         # → JSON node overview
+parallax-cli blockcount   # → 12345
+parallax-cli stop         # → graceful shutdown
 ```
 
 Each subcommand opens an RPC connection, issues a single request, prints the result, and exits.
@@ -17,9 +17,9 @@ Each subcommand opens an RPC connection, issues a single request, prints the res
 By default every command connects to `<datadir>/parallax.ipc`, picking the data directory from `--datadir` (honoring `--testnet` as `<datadir>/testnet/parallax.ipc`). You can override the endpoint with `--rpc`, which accepts a filesystem path (IPC) or a `http://`, `https://`, or `ws://` URL:
 
 ```sh
-parallax --datadir ~/.parallax info
-parallax --rpc http://127.0.0.1:8545 info
-parallax --rpc /tmp/parallax.ipc info
+parallax-cli --datadir ~/.parallax info
+parallax-cli --rpc http://127.0.0.1:8545 info
+parallax-cli --rpc /tmp/parallax.ipc info
 ```
 
 If the node cannot be reached the command exits non-zero with a short hint.
@@ -29,7 +29,7 @@ If the node cannot be reached the command exits non-zero with a short hint.
 The command output mirrors `bitcoin-cli`:
 
 - **Object or array responses** are pretty-printed JSON (2-space indent), safe to pipe into `jq`.
-- **Scalar responses** (numbers, hashes, decimal amounts) are printed as a bare value plus a newline, so `$(parallax blockcount)` works in shell scripts.
+- **Scalar responses** (numbers, hashes, decimal amounts) are printed as a bare value plus a newline, so `$(parallax-cli blockcount)` works in shell scripts.
 - **Mutating commands** (`stop`, `addpeer`, `removepeer`) print nothing on success and return exit code 0. Errors are written to stderr and produce exit code 1.
 
 ## Command reference
@@ -38,18 +38,18 @@ All commands below accept `--datadir`, `--testnet`, and `--rpc`.
 
 ### `start [config]`
 
-Convenience wrapper for `parallax --daemon`. Starts the node in the background, detached from the controlling terminal, with logs redirected to `<datadir>/parallax.log`. An optional positional argument points at a TOML configuration file to pass through as `--config`.
+Convenience wrapper for `parallaxd --daemon`. Starts the node in the background, detached from the controlling terminal, with logs redirected to `<datadir>/parallax.log`. An optional positional argument points at a TOML configuration file to pass through as `--config`.
 
 Every global flag placed before `start` on the command line is preserved, so:
 
 ```sh
-parallax --datadir /var/lib/parallax start /etc/parallax.toml
+parallax-cli --datadir /var/lib/parallax start /etc/parallax.toml
 ```
 
 is exactly equivalent to:
 
 ```sh
-parallax --datadir /var/lib/parallax --daemon --config /etc/parallax.toml
+parallaxd --datadir /var/lib/parallax --daemon --config /etc/parallax.toml
 ```
 
 See [Daemon mode](../fundamentals/daemon-mode) for the detachment mechanics, log rotation, and PID-file conventions.
@@ -59,7 +59,7 @@ See [Daemon mode](../fundamentals/daemon-mode) for the detachment mechanics, log
 Gracefully shuts down the running daemon. Equivalent to `bitcoin-cli stop`. Prints `Parallax server stopping` on success. Uses the [`admin_stop`](./json-rpc-namespaces/admin#admin_stop) RPC.
 
 ```sh
-parallax --datadir ~/.parallax stop
+parallax-cli --datadir ~/.parallax stop
 ```
 
 ### `info`
@@ -67,7 +67,7 @@ parallax --datadir ~/.parallax stop
 Combined overview of chain, network, and mempool state. Merges the fields you would get from `getblockchaininfo`, `getnetworkinfo`, and `getmempoolinfo` in Bitcoin Core into a single JSON object.
 
 ```sh
-$ parallax info
+$ parallax-cli info
 {
   "blocks": 1234567,
   "chainid": 2110,
@@ -93,7 +93,7 @@ $ parallax info
 Chain state only (no network or mempool). Equivalent to `bitcoin-cli getblockchaininfo`.
 
 ```sh
-$ parallax chaininfo
+$ parallax-cli chaininfo
 {
   "bestblockhash": "0x2e9f...0150",
   "blocks": 1234567,
@@ -113,7 +113,7 @@ $ parallax chaininfo
 Network state only. Equivalent to `bitcoin-cli getnetworkinfo`. Uses `admin_nodeInfo` + `net_peerCount` + `net_listening`.
 
 ```sh
-$ parallax netinfo
+$ parallax-cli netinfo
 {
   "connections": 8,
   "enode": "enode://...",
@@ -132,7 +132,7 @@ $ parallax netinfo
 Seconds since the running node started. Equivalent to `bitcoin-cli uptime`. Backed by a new `admin_uptime` RPC.
 
 ```sh
-$ parallax uptime
+$ parallax-cli uptime
 86400
 ```
 
@@ -141,7 +141,7 @@ $ parallax uptime
 Prints the latest block number as a bare integer. Equivalent to `bitcoin-cli getblockcount`. Uses `eth_blockNumber`.
 
 ```sh
-$ parallax blockcount
+$ parallax-cli blockcount
 1234567
 ```
 
@@ -150,7 +150,7 @@ $ parallax blockcount
 Prints `false` if the node is caught up, otherwise a JSON object with sync progress. Uses `eth_syncing`.
 
 ```sh
-$ parallax syncing
+$ parallax-cli syncing
 false
 ```
 
@@ -159,7 +159,7 @@ false
 Summary of the node's transaction pool. Uses `txpool_status`.
 
 ```sh
-$ parallax mempool
+$ parallax-cli mempool
 {
   "pending": 42,
   "queued": 5
@@ -173,9 +173,9 @@ Dump the full transaction pool as JSON, or narrow it with `--address <sender>` (
 Uses `txpool_content`, `txpool_contentFrom`, or `txpool_inspect` depending on the flags.
 
 ```sh
-parallax mempool-content
-parallax mempool-content --address 0xabc...123
-parallax mempool-content --inspect
+parallax-cli mempool-content
+parallax-cli mempool-content --address 0xabc...123
+parallax-cli mempool-content --inspect
 ```
 
 Output shape (both variants):
@@ -193,10 +193,10 @@ Estimates the gas required to execute a transaction. Prints a bare integer, matc
 
 ```sh
 # Simple transfer (always 21000 on basic accounts)
-parallax estimategas 0x1111...2222
+parallax-cli estimategas 0x1111...2222
 
 # With value and calldata
-parallax estimategas 0xcontract... --from 0xsender... --value 1000000000000000000 --data 0xa9059cbb...
+parallax-cli estimategas 0xcontract... --from 0xsender... --value 1000000000000000000 --data 0xa9059cbb...
 ```
 
 `--value` accepts decimal wei or 0x-prefixed hex. Uses `eth_estimateGas`.
@@ -206,7 +206,7 @@ parallax estimategas 0xcontract... --from 0xsender... --value 100000000000000000
 JSON array of connected peers. Equivalent to `bitcoin-cli getpeerinfo`. Uses `admin_peers`.
 
 ```sh
-$ parallax peers
+$ parallax-cli peers
 [
   {
     "enode": "enode://...",
@@ -230,13 +230,13 @@ $ parallax peers
 Prints the balance of an account. Equivalent to `bitcoin-cli getbalance` (applied to a specific address, since the daemon has no wallet of its own). By default prints a decimal LAX value; pass `--wei` for the exact integer. Supports `--block` for historical queries.
 
 ```sh
-$ parallax balance 0xabc...123
+$ parallax-cli balance 0xabc...123
 1.234567890123456789
 
-$ parallax balance 0xabc...123 --wei
+$ parallax-cli balance 0xabc...123 --wei
 1234567890123456789
 
-$ parallax balance 0xabc...123 --block 1000000
+$ parallax-cli balance 0xabc...123 --block 1000000
 0.5
 ```
 
@@ -247,10 +247,10 @@ Uses `eth_getBalance`.
 Prints the transaction count (nonce) of an account as a bare integer. Essential when crafting raw transactions. Supports `--block` for historical queries. Uses `eth_getTransactionCount`.
 
 ```sh
-$ parallax nonce 0xabc...123
+$ parallax-cli nonce 0xabc...123
 42
 
-$ parallax nonce 0xabc...123 --block 1000000
+$ parallax-cli nonce 0xabc...123 --block 1000000
 37
 ```
 
@@ -259,24 +259,24 @@ $ parallax nonce 0xabc...123 --block 1000000
 Prints the deployed bytecode at an address as a 0x-prefixed hex string, or `0x` if the address is an externally owned account. Uses `eth_getCode`.
 
 ```sh
-$ parallax code 0xcontract...
+$ parallax-cli code 0xcontract...
 0x608060405234801561001057600080fd5b50...
 
-$ parallax code 0xeoa...
+$ parallax-cli code 0xeoa...
 0x
 ```
 
-Combine with `[ "$(parallax code $addr)" = "0x" ]` to branch on contract vs EOA in shell scripts.
+Combine with `[ "$(parallax-cli code $addr)" = "0x" ]` to branch on contract vs EOA in shell scripts.
 
 ### `storage <address> <slot>`
 
 Reads a 32-byte storage slot from a contract and prints it as a 0x-prefixed hex string. `<slot>` accepts a decimal index or a 0x-prefixed hex key. Uses `eth_getStorageAt`.
 
 ```sh
-$ parallax storage 0xcontract... 0
+$ parallax-cli storage 0xcontract... 0
 0x000000000000000000000000000000000000000000000000000000000000002a
 
-$ parallax storage 0xcontract... 0x1
+$ parallax-cli storage 0xcontract... 0x1
 0x0000000000000000000000000000000000000000000000000000000000000000
 ```
 
@@ -287,7 +287,7 @@ Supports `--block` for historical reads.
 Fetches a transaction by hash and prints it as JSON. Equivalent to `bitcoin-cli getrawtransaction <txid> 1`. Uses `eth_getTransactionByHash`.
 
 ```sh
-parallax gettx 0xabc...
+parallax-cli gettx 0xabc...
 ```
 
 Exits non-zero with `transaction ... not found` if the node does not know the hash.
@@ -297,7 +297,7 @@ Exits non-zero with `transaction ... not found` if the node does not know the ha
 Fetches the receipt of a mined transaction as JSON. Uses `eth_getTransactionReceipt`. Exits non-zero if the transaction is not mined yet or unknown.
 
 ```sh
-parallax getreceipt 0xabc...
+parallax-cli getreceipt 0xabc...
 ```
 
 ### `getblock <number|hash> [--full]`
@@ -305,9 +305,9 @@ parallax getreceipt 0xabc...
 Fetches a block as JSON. Accepts a decimal block number, a hex block hash, or one of the tags `latest`, `earliest`, `pending`, `safe`, `finalized`. Pass `--full` to include full transaction objects instead of only hashes.
 
 ```sh
-parallax getblock 1234567
-parallax getblock latest --full
-parallax getblock 0xabc...def
+parallax-cli getblock 1234567
+parallax-cli getblock latest --full
+parallax-cli getblock 0xabc...def
 ```
 
 Uses `eth_getBlockByNumber` or `eth_getBlockByHash` depending on the argument shape.
@@ -317,7 +317,7 @@ Uses `eth_getBlockByNumber` or `eth_getBlockByHash` depending on the argument sh
 Prints the canonical hash of the block at a given height. Equivalent to `bitcoin-cli getblockhash`. Refuses hash input (use `getheader` for the hash → header direction).
 
 ```sh
-$ parallax getblockhash 0
+$ parallax-cli getblockhash 0
 0xb3a45e5033f0a0a4ccfa8a82cbe2fbf93bbc26c50fc3340fa749e5a5678d4391
 ```
 
@@ -328,9 +328,9 @@ Backed by `eth_getBlockByNumber(n, false)` since there is no dedicated `eth_getB
 Fetches a block header as JSON — same shape as `getblock` but without the `transactions` list, so it's smaller and faster when you only need metadata. Equivalent to `bitcoin-cli getblockheader`.
 
 ```sh
-parallax getheader 1234567
-parallax getheader 0xabc...def
-parallax getheader latest
+parallax-cli getheader 1234567
+parallax-cli getheader 0xabc...def
+parallax-cli getheader latest
 ```
 
 Uses `eth_getHeaderByNumber` or `eth_getHeaderByHash` depending on the argument shape.
@@ -340,7 +340,7 @@ Uses `eth_getHeaderByNumber` or `eth_getHeaderByHash` depending on the argument 
 Condensed JSON view of the chain tip: number, hash, parent, timestamp, miner, gas used and limit, transaction count, size, difficulty. Useful at the top of operational scripts or in health checks.
 
 ```sh
-$ parallax tip
+$ parallax-cli tip
 {
   "difficulty": "0x2",
   "gaslimit": 11556255,
@@ -362,7 +362,7 @@ Derived from a single `eth_getBlockByNumber("latest", false)` call.
 Prints the current suggested gas price as a bare wei integer. Uses `eth_gasPrice`.
 
 ```sh
-$ parallax gasprice
+$ parallax-cli gasprice
 1000000000
 ```
 
@@ -371,7 +371,7 @@ $ parallax gasprice
 Submits a signed, hex-encoded transaction and prints the resulting hash on a single line. Equivalent to `bitcoin-cli sendrawtransaction`. The `0x` prefix is optional. Uses `eth_sendRawTransaction`.
 
 ```sh
-$ parallax sendraw 0xf86c...
+$ parallax-cli sendraw 0xf86c...
 0xabc...def
 ```
 
@@ -390,8 +390,8 @@ The host-based forms only work when the target peer is **currently connected** (
 Adds a static peer. Equivalent to `bitcoin-cli addnode <node> add`. Silent on success, non-zero exit on failure. Uses `admin_addPeer`.
 
 ```sh
-parallax addpeer enode://a979...@1.2.3.4:32110
-parallax addpeer 1.2.3.4:32110   # resolves via connected peers
+parallax-cli addpeer enode://a979...@1.2.3.4:32110
+parallax-cli addpeer 1.2.3.4:32110   # resolves via connected peers
 ```
 
 ### `removepeer <enode|host[:port]>`
@@ -399,8 +399,8 @@ parallax addpeer 1.2.3.4:32110   # resolves via connected peers
 Removes a static peer. Silent on success. Uses `admin_removePeer`.
 
 ```sh
-parallax removepeer enode://a979...@1.2.3.4:32110
-parallax removepeer 1.2.3.4:32110
+parallax-cli removepeer enode://a979...@1.2.3.4:32110
+parallax-cli removepeer 1.2.3.4:32110
 ```
 
 ### `addtrusted <enode|host[:port]>`
@@ -408,8 +408,8 @@ parallax removepeer 1.2.3.4:32110
 Marks a peer as trusted, so it is always allowed to connect even when the node has hit its `--maxpeers` limit. Silent on success. Uses `admin_addTrustedPeer`.
 
 ```sh
-parallax addtrusted enode://a979...@1.2.3.4:32110
-parallax addtrusted 1.2.3.4:32110
+parallax-cli addtrusted enode://a979...@1.2.3.4:32110
+parallax-cli addtrusted 1.2.3.4:32110
 ```
 
 ### `removetrusted <enode|host[:port]>`
@@ -417,8 +417,8 @@ parallax addtrusted 1.2.3.4:32110
 Removes a peer from the trusted list. The peer is not disconnected automatically — run `removepeer` afterwards if you also want to drop the connection. Uses `admin_removeTrustedPeer`.
 
 ```sh
-parallax removetrusted enode://a979...@1.2.3.4:32110
-parallax removetrusted 1.2.3.4:32110
+parallax-cli removetrusted enode://a979...@1.2.3.4:32110
+parallax-cli removetrusted 1.2.3.4:32110
 ```
 
 ### `mining`
@@ -426,7 +426,7 @@ parallax removetrusted 1.2.3.4:32110
 Shows the miner's current state as JSON: whether mining is enabled, current hashrate, configured coinbase, and a snippet of chain-tip context. Equivalent to `bitcoin-cli getmininginfo`.
 
 ```sh
-$ parallax mining
+$ parallax-cli mining
 {
   "bestblockhash": "0xc73d...5f8f",
   "bestblocktime": 1700000000,
@@ -444,8 +444,8 @@ $ parallax mining
 Starts the built-in miner, optionally pinned to the given number of CPU threads. Silent on success. Uses `miner_start`.
 
 ```sh
-parallax startmining          # one worker per logical CPU
-parallax startmining 2        # two workers
+parallax-cli startmining          # one worker per logical CPU
+parallax-cli startmining 2        # two workers
 ```
 
 ### `stopmining`
@@ -453,7 +453,7 @@ parallax startmining 2        # two workers
 Stops the miner. Silent on success. Uses `miner_stop`.
 
 ```sh
-parallax stopmining
+parallax-cli stopmining
 ```
 
 ### `setcoinbase <address>`
@@ -461,7 +461,7 @@ parallax stopmining
 Updates the coinbase — the address credited with block rewards — without restarting the node. Silent on success. Uses `miner_setCoinbase`.
 
 ```sh
-parallax setcoinbase 0xabc...123
+parallax-cli setcoinbase 0xabc...123
 ```
 
 ### `setextra <data>`
@@ -469,8 +469,8 @@ parallax setcoinbase 0xabc...123
 Updates the extra-data bytes embedded in blocks this node mines. Accepts a plain string or a 0x-prefixed hex blob (auto-detected). Must fit the 32-byte extradata limit; longer values are rejected by the miner with a clear error. Uses `miner_setExtra`.
 
 ```sh
-parallax setextra "my-pool-v1"
-parallax setextra 0xdeadbeef
+parallax-cli setextra "my-pool-v1"
+parallax-cli setextra 0xdeadbeef
 ```
 
 ### `loglevel <level|pattern>`
@@ -481,9 +481,9 @@ Adjusts log verbosity at runtime, without restarting the node. Equivalent to `bi
 - Anything else is treated as a vmodule pattern like `eth/*=5,p2p=4` → `debug_vmodule`.
 
 ```sh
-parallax loglevel 4                   # bump everything to debug
-parallax loglevel 3                   # back to info
-parallax loglevel "eth/*=5,p2p=4"     # per-package overrides
+parallax-cli loglevel 4                   # bump everything to debug
+parallax-cli loglevel 3                   # back to info
+parallax-cli loglevel "eth/*=5,p2p=4"     # per-package overrides
 ```
 
 Silent on success; bad patterns exit non-zero with the server's validation message.
@@ -496,9 +496,9 @@ Traces the execution of a mined transaction. Equivalent to geth's `debug.traceTr
 - With `--tracer <name>`: runs a named tracer and returns its condensed output. Common values: `callTracer` (call tree), `prestateTracer` (pre-execution state), `4byteTracer` (function-selector histogram).
 
 ```sh
-parallax trace 0xabc...
-parallax trace 0xabc... --tracer callTracer
-parallax trace 0xabc... --tracer callTracer --timeout 2m
+parallax-cli trace 0xabc...
+parallax-cli trace 0xabc... --tracer callTracer
+parallax-cli trace 0xabc... --tracer callTracer --timeout 2m
 ```
 
 `--timeout` accepts any Go duration (`30s`, `2m`, `10m`). Default is 5 minutes because non-tracer runs can take a while on large transactions. Uses `debug_traceTransaction`.
@@ -508,7 +508,7 @@ parallax trace 0xabc... --tracer callTracer --timeout 2m
 Summary of on-disk database state: per-category ancient-freezer sizes in bytes plus the raw LevelDB compaction stats. Uses a new `debug_dbStats` RPC.
 
 ```sh
-$ parallax dbstats
+$ parallax-cli dbstats
 {
   "ancients": {
     "bodies": 123456789,
@@ -521,7 +521,7 @@ $ parallax dbstats
 }
 ```
 
-Intended for quick "am I running out of disk?" checks. For a full per-prefix chaindata walk, use `parallax db inspect` (offline, reads the database directly).
+Intended for quick "am I running out of disk?" checks. For a full per-prefix chaindata walk, use `parallaxd db inspect` (offline, reads the database directly).
 
 ## Wallet / accounts
 
@@ -531,10 +531,10 @@ All commands below hit the running node's `personal_*` namespace. By default `pe
 
 ### `listaccounts`
 
-JSON array of addresses the running node can see. Equivalent to the offline `parallax account list`, but works without stopping the daemon. Uses `personal_listAccounts`.
+JSON array of addresses the running node can see. Equivalent to the offline `parallaxd account list`, but works without stopping the daemon. Uses `personal_listAccounts`.
 
 ```sh
-$ parallax listaccounts
+$ parallax-cli listaccounts
 [
   "0xa202...5108",
   "0x96a5...6b4d"
@@ -546,8 +546,8 @@ $ parallax listaccounts
 Creates a new keystore entry on the running node. Prompts for a passphrase with confirmation, or reads it from `--password <file>`. Prints the bare address. Uses `personal_newAccount`.
 
 ```sh
-parallax newaccount
-parallax newaccount --password /etc/parallax/newkey.pass
+parallax-cli newaccount
+parallax-cli newaccount --password /etc/parallax/newkey.pass
 ```
 
 ### `unlock <address>`
@@ -555,9 +555,9 @@ parallax newaccount --password /etc/parallax/newkey.pass
 Unlocks an account so the node can sign transactions on its behalf. Equivalent to `bitcoin-cli walletpassphrase`. Silent on success. Uses `personal_unlockAccount`.
 
 ```sh
-parallax unlock 0xabc...123
-parallax unlock 0xabc...123 --password /run/secrets/acct.pass --duration 1h
-parallax unlock 0xabc...123 --duration 0     # keep unlocked until the node stops
+parallax-cli unlock 0xabc...123
+parallax-cli unlock 0xabc...123 --password /run/secrets/acct.pass --duration 1h
+parallax-cli unlock 0xabc...123 --duration 0     # keep unlocked until the node stops
 ```
 
 Default duration is 5 minutes (matching geth's built-in default). `--duration 0` passes a null duration to the RPC, which geth interprets as "until node stops".
@@ -567,7 +567,7 @@ Default duration is 5 minutes (matching geth's built-in default). `--duration 0`
 Clears the in-memory decrypted key for an account. Silent on success. Uses `personal_lockAccount`.
 
 ```sh
-parallax lock 0xabc...123
+parallax-cli lock 0xabc...123
 ```
 
 ### `sign <address> <data>`
@@ -577,8 +577,8 @@ Signs `<data>` with the account's key (prefixed with the standard Ethereum signe
 `<data>` accepts a plain UTF-8 string or a 0x-prefixed hex blob (auto-detected). Prompts for the passphrase unless `--password` is set.
 
 ```sh
-parallax sign 0xabc...123 "approve this request"
-parallax sign 0xabc...123 0xdeadbeef --password /run/secrets/acct.pass
+parallax-cli sign 0xabc...123 "approve this request"
+parallax-cli sign 0xabc...123 0xdeadbeef --password /run/secrets/acct.pass
 ```
 
 Uses `personal_sign`.
@@ -591,9 +591,9 @@ Required: `--from`.
 Optional: `--to` (omit for contract deploy), `--value` (wei, decimal or 0x-hex), `--data` (hex), `--gas`, `--gasprice`, `--nonce` (all decimal or 0x-hex).
 
 ```sh
-parallax sendtx --from 0xabc... --to 0xdef... --value 1000000000000000000 --password /run/secrets/from.pass
+parallax-cli sendtx --from 0xabc... --to 0xdef... --value 1000000000000000000 --password /run/secrets/from.pass
 
-parallax sendtx --from 0xabc... --data 0x608060...   # contract deploy
+parallax-cli sendtx --from 0xabc... --data 0x608060...   # contract deploy
 ```
 
 Prompts for the passphrase unless `--password` is set.
@@ -607,7 +607,7 @@ Two commands run entirely client-side and do not require a running daemon — us
 Decodes a 0x-prefixed RLP-encoded signed transaction and prints its fields as JSON, including the recovered sender. Equivalent to `bitcoin-cli decoderawtransaction`. Works for legacy, EIP-2930, and EIP-1559 transactions; dynamic-fee fields (`maxfeepergas`, `maxpriorityfeepergas`) only appear on EIP-1559 txs so legacy output stays clean.
 
 ```sh
-$ parallax decoderaw 0xf86580843b9aca00825208941111111111111111111111111111111111111111010180820a96a0...
+$ parallax-cli decoderaw 0xf86580843b9aca00825208941111111111111111111111111111111111111111010180820a96a0...
 {
   "chainid": "1337",
   "data": "0x",
@@ -632,13 +632,13 @@ No RPC call is made. Parsing and sender recovery happen in the binary itself.
 Derives and prints the 0x-address for a hex-encoded secp256k1 private key. Runs entirely client-side — the key is never sent to any node or written to disk. Useful when verifying a backup or wiring up a key before funding it.
 
 ```sh
-$ parallax toaddr 0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318
+$ parallax-cli toaddr 0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318
 0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
 
-$ parallax toaddr 4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   # 0x prefix optional
+$ parallax-cli toaddr 4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   # 0x prefix optional
 0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
 ```
 
 ## When to use the JS console instead
 
-For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallax attach`.
+For one-off scripted calls and shell pipelines these subcommands are the quickest path. For interactive exploration of the full RPC surface, or any call that doesn't have a sugar wrapper, prefer the [JavaScript console](./js-console) via `parallaxd attach`.

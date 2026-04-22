@@ -13,7 +13,7 @@ A private network is composed of multiple Parallax nodes that can only connect t
 The Parallax mainnet has Network ID = 2110. There are also many other networks that the Parallax client can connect to by providing alternative Chain IDs, some are testnets and others are alternative networks built from forks of the Parallax client source code. Providing a network ID that is not already being used by an existing network or testnet means the nodes using that network ID can only connect to each other, creating a private network. A list of current network IDs is available at [Chainlist.org](https://chainlist.org/). The network ID is controlled using the `networkid` flag, e.g.
 
 ```sh
-parallax --networkid 12345
+parallaxd --networkid 12345
 ```
 
 ### Choosing A Consensus Algorithm
@@ -41,7 +41,7 @@ Below is an example of a `genesis.json` file for a PoA network. The config secti
 The signer account keys can be generated using the [Parallax account](../fundamentals/account-management) command (this command can be run multiple times to create more than one signer key).
 
 ```sh
-parallax account new --datadir data
+parallaxd account new --datadir data
 ```
 
 The Parallax address printed by this command should be recorded. To encode the signer addresses in `extradata`, concatenate 32 zero bytes, all signer addresses and 65 further zero bytes. The result of this concatenation is then used as the value accompanying the `extradata` key in `genesis.json`. In the example below, `extradata` contains a single initial signer address, `0x7df9a875a174b3bc565e6424a0050ebc1b2d1d82`.
@@ -106,21 +106,21 @@ Since XHash is the default consensus algorithm, no additional parameters need to
 
 ### Initialising the Parallax Client Database
 
-To create a blockchain node that uses this genesis block, first use `parallax init` to import and sets the canonical genesis block for the new chain. This requires the path to `genesis.json` to be passed as an argument.
+To create a blockchain node that uses this genesis block, first use `parallaxd init` to import and sets the canonical genesis block for the new chain. This requires the path to `genesis.json` to be passed as an argument.
 
 ```sh
-parallax init --datadir data genesis.json
+parallaxd init --datadir data genesis.json
 ```
 
 When the Parallax client is started using `--datadir` data the genesis block defined in `genesis.json` will be used. For example:
 
 ```sh
-parallax --datadir data --networkid 12345
+parallaxd --datadir data --networkid 12345
 ```
 
 ### Scheduling Hard Forks
 
-As the Parallax protocol development progresses, new features become available. To enable these features on an existing private network, a hard fork must be scheduled. To do this, a future block number must be chosen which determines precisely when the hard fork will activate. Continuing the `genesis.json` example above and assuming the current block number is 35421, a hard fork might be scheduled for block 40000. This hard fork might upgrade the network to conform to the 'London' specs. First, all the Parallax client instances on the private network must be recent enough to support the specific hard fork. If so, `genesis.json` can be updated so that the `londonBlock` key gets the value 40000. The Parallax client instances are then shut down and `parallax init` is run to update their configuration. When the nodes are restarted they will pick up where they left off and run normally until block 40000, at which point they will automatically upgrade.
+As the Parallax protocol development progresses, new features become available. To enable these features on an existing private network, a hard fork must be scheduled. To do this, a future block number must be chosen which determines precisely when the hard fork will activate. Continuing the `genesis.json` example above and assuming the current block number is 35421, a hard fork might be scheduled for block 40000. This hard fork might upgrade the network to conform to the 'London' specs. First, all the Parallax client instances on the private network must be recent enough to support the specific hard fork. If so, `genesis.json` can be updated so that the `londonBlock` key gets the value 40000. The Parallax client instances are then shut down and `parallaxd init` is run to update their configuration. When the nodes are restarted they will pick up where they left off and run normally until block 40000, at which point they will automatically upgrade.
 
 The modification to `genesis.json` is as follows:
 
@@ -135,7 +135,7 @@ The modification to `genesis.json` is as follows:
 The upgrade command is:
 
 ```sh
-parallax init --datadir data genesis.json
+parallaxd init --datadir data genesis.json
 ```
 
 ### Setting Up Networking
@@ -147,13 +147,13 @@ To configure a bootstrap node, the IP address of the machine the bootstrap node 
 The bootstrap node IP is set using the `--nat` flag (the command below contains an example address - replace it with the correct one).
 
 ```sh
-parallax --datadir data --networkid 15 --nat extip:172.16.254.4
+parallaxd --datadir data --networkid 15 --nat extip:172.16.254.4
 ```
 
 The 'node record' of the bootnode can be extracted using the JS console:
 
 ```sh
-parallax attach --exec admin.nodeInfo.enr data/parallax.ipc
+parallaxd attach --exec admin.nodeInfo.enr data/parallax.ipc
 ```
 
 This command should print a base64 string such as the following example. Other nodes will use the information contained in the bootstrap node record to connect to the peer-to-peer network.
@@ -165,7 +165,7 @@ This command should print a base64 string such as the following example. Other n
 If the nodes are intended to connect across the Internet, the bootnode and all other nodes must have public IP addresses assigned, and both TCP and UDP traffic can pass their firewalls. If Internet connectivity is not required or all member nodes connect using well-known IPs, the Parallax client should be set up to restrict peer-to-peer connectivity to an IP subnet. Doing so will further isolate the network and prevents cross-connecting with other blockchain networks in case the nodes are reachable from the Internet. Use the `--netrestrict` flag to configure a whitelist of IP networks:
 
 ```sh
-parallax <other-flags> --netrestrict 172.16.254.0/24
+parallaxd <other-flags> --netrestrict 172.16.254.0/24
 ```
 
 With the above setting, the Parallax client will only allow connections from the 172.16.254.0/24 subnet, and will not attempt to connect to other nodes outside of the set IP range.
@@ -177,13 +177,13 @@ Before running a member node, it must be initialized with the same genesis file 
 For example, using data directory (example: data2) and listening port (example: 30305):
 
 ```sh
-parallax --datadir data2 --networkid 12345 --port 30305 --bootnodes <bootstrap-node-record>
+parallaxd --datadir data2 --networkid 12345 --port 30305 --bootnodes <bootstrap-node-record>
 ```
 
 With the member node running, it is possible to check that it is connected to the bootstrap node or any other node in the network by attaching a console and running `admin.peers`. It may take up to a few seconds for the nodes to get connected.
 
 ```sh
-parallax attach data2/parallax.ipc --exec admin.peers
+parallaxd attach data2/parallax.ipc --exec admin.peers
 ```
 
 ### Running A Signer (Clique)
@@ -191,7 +191,7 @@ parallax attach data2/parallax.ipc --exec admin.peers
 To set up the Parallax client for signing blocks in Clique, a signer account must be available. The account must already be available as a keyfile in the keystore. To use it for signing blocks, it must be unlocked. The following command, for address `0x7df9a875a174b3bc565e6424a0050ebc1b2d1d82` will prompt for the account password, then start signing blocks:
 
 ```sh
-parallax <other-flags> --unlock 0x7df9a875a174b3bc565e6424a0050ebc1b2d1d82 --mine
+parallaxd <other-flags> --unlock 0x7df9a875a174b3bc565e6424a0050ebc1b2d1d82 --mine
 ```
 
 Mining can be further configured by changing the default gas limit blocks converge to (with `--miner.gaslimit`) and the price transactions are accepted at (with `--miner.gasprice`).
@@ -201,7 +201,7 @@ Mining can be further configured by changing the default gas limit blocks conver
 For PoW in a simple private network, a single CPU miner instance is enough to create a stable stream of blocks at regular intervals. To start a Parallax client instance for mining, it can be run with all the usual flags plus the following to configure mining:
 
 ```sh
-parallax <other-flags> --mine --miner.threads=1 --miner.coinbase=0xf41c74c9ae680c1aa78f42e5647a62f353b7bdde
+parallaxd <other-flags> --mine --miner.threads=1 --miner.coinbase=0xf41c74c9ae680c1aa78f42e5647a62f353b7bdde
 ```
 
 This will start mining bocks and transactions on a single CPU thread, crediting all block rewards to the account specified by `--miner.coinbase`.
@@ -217,7 +217,7 @@ This section will run through the commands for setting up a simple private netwo
 Each node will have an associated account that will receive some ether at launch. The following command creates an account for Node 1:
 
 ```sh
-parallax --datadir node1 account new
+parallaxd --datadir node1 account new
 ```
 
 This command returns a request for a password. Once a password has been provided the following information is returned to the terminal:
@@ -275,10 +275,10 @@ In each data directory save a copy of the following `genesis.json` to the top le
 }
 ```
 
-The nodes can now be set up using `parallax init` as follows:
+The nodes can now be set up using `parallaxd init` as follows:
 
 ```sh
-parallax init --datadir node1 genesis.json
+parallaxd init --datadir node1 genesis.json
 ```
 
 This should be repeated for both nodes. The following will be returned to the terminal:
@@ -323,7 +323,7 @@ INFO [05-13|15:50:03.645] New local node record                    seq=1,652,453
 The two nodes can now be started. Open separate terminals for each node, leaving the bootnode running in the original terminal. In each terminal, run the following command (replacing `node1` with `node2` where appropriate, and giving each node different `--port` and `authrpc.port` IDs). The account address and password file for `node` 1 must also be provided:
 
 ```sh
-./parallax --datadir node1 --port 30306 --bootnodes enode://f7aba85ba369923bffd3438b4c8fde6b1f02b1c23ea0aac825ed7eac38e6230e5cadcf868e73b0e28710f4c9f685ca71a86a4911461637ae9ab2bd852939b77f@127.0.0.1:0?discport=30305  --networkid 123454321 --unlock 0xC1B2c0dFD381e6aC08f34816172d6343Decbb12b --password node1/password.txt --authrpc.port 8551
+./parallaxd --datadir node1 --port 30306 --bootnodes enode://f7aba85ba369923bffd3438b4c8fde6b1f02b1c23ea0aac825ed7eac38e6230e5cadcf868e73b0e28710f4c9f685ca71a86a4911461637ae9ab2bd852939b77f@127.0.0.1:0?discport=30305  --networkid 123454321 --unlock 0xC1B2c0dFD381e6aC08f34816172d6343Decbb12b --password node1/password.txt --authrpc.port 8551
 ```
 
 This will start the node using the bootnode as an entry point. Repeat the same command with the information appropriate to node 2. In each terminal, the following logs indicate success:
@@ -384,7 +384,7 @@ TRACE[05-13|16:15:57.767]  PING/v4                               id=f1364e6d060c
 It is now possible to attach a Javascript console to either node to query the network properties:
 
 ```sh
-parallax attach node1/parallax.ipc
+parallaxd attach node1/parallax.ipc
 ```
 
 Once the Javascript console is running, check that the node is connected to one other peer (node 2):

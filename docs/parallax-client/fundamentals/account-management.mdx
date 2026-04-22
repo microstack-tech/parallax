@@ -40,7 +40,7 @@ Enter 'ok' to proceed:
 The Parallax client can be started in a separate terminal. To connect to Clef, ensure the data directory is consistent with the path provided to Clef and pass the location of the the Clef IPC file - which Clef saves to the path provided to its `--configdir` flag - in this case we set it to `~/parallax/testnet/clef`:
 
 ```sh
-parallax --testnet --datadir testnet <other flags> --signer=testnet/clef/clef.ipc
+parallaxd --testnet --datadir testnet <other flags> --signer=testnet/clef/clef.ipc
 ```
 
 ## Interacting with Clef
@@ -143,7 +143,7 @@ It is also possible to create an account by importing an existing private key. F
 The Parallax client requires the private key to be stored as a file which contains the private key as unencrypted canonical elliptic curve bytes encoded into hex (i.e. plain text key without leading 0x). The new account is then saved in encrypted format, protected by a passphrase the user provides on request. As always, this passphrase must be securely and safely backed up - there is no way to retrieve or reset it if it is forgotten!
 
 ```sh
-parallax account import --datadir /some-dir ./keyfile
+parallaxd account import --datadir /some-dir ./keyfile
 ```
 
 The following information will be displayed in the terminal, indicating a successful import:
@@ -160,7 +160,7 @@ This import/export process is **not necessary** for users transferring accounts 
 It is also possible to import an account in non-interactive mode by saving the account password as plaintext in a `.txt` file and passing its path with the `--password` flag on startup.
 
 ```sh
-parallax account import --password path/password.txt path/keyfile
+parallaxd account import --password path/password.txt path/keyfile
 ```
 
 In this case, it is important to ensure the password file is not readable by anyone but the intended user. This can be achieved by changing the file permissions. On Linux, the following commands update the file permissions so only the current user has access:
@@ -184,16 +184,16 @@ This will cause Clef to prompt for a new password, twice, and then the Clef mast
 The Parallax client's `account update` subcommand can also be used to update the account password:
 
 ```sh
-parallax account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b
+parallaxd account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b
 ```
 
 Alternatively, in non-interactive mode the path to a password file containing the account password in unencrypted plaintext can be passed with the `--password` flag:
 
 ```sh
-parallax account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b --password path/password.txt
+parallaxd account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b --password path/password.txt
 ```
 
-Updating the account using `parallax account update` replaces the original file with a new one - this means the original file is no longer available after it has been updated. This can be used to update a key file to the latest format.
+Updating the account using `parallaxd account update` replaces the original file with a new one - this means the original file is no longer available after it has been updated. This can be used to update a key file to the latest format.
 
 ## Unlocking accounts
 

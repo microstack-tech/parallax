@@ -32,7 +32,7 @@ To create a full node pass `--syncmode full` at startup.
 
 ## Archive nodes
 
-An archive node is a node that retains all historical data right back to genesis. There is no need to regenerate any data from checkpoints because all data is directly available in the node's own storage. Archive nodes are therefore ideal for making fast queries about historical states. Archive nodes are created by configuring the Parallax client's garbage collection so that old data is never deleted: `parallax --syncmode full --gcmode archive`.
+An archive node is a node that retains all historical data right back to genesis. There is no need to regenerate any data from checkpoints because all data is directly available in the node's own storage. Archive nodes are therefore ideal for making fast queries about historical states. Archive nodes are created by configuring the Parallax client's garbage collection so that old data is never deleted: `parallaxd --syncmode full --gcmode archive`.
 
 It is also possible to create a partial/recent archive node where the node was synced using snap but the state is never pruned. This creates an archive node that saves all state data from the point that the node first syncs. This is configured by starting the Parallax client with `--syncmode snap --gcmode archive`.
 

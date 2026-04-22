@@ -6,10 +6,10 @@ The default behaviour for the Parallax client is to connect to Parallax mainnet.
 
 ```sh
 # Generate desired config file. You must specify testnet here.
-parallax --testnet --syncmode "full" ... dumpconfig > testnet.toml
+parallaxd --testnet --syncmode "full" ... dumpconfig > testnet.toml
 
 # Start Parallax client with given config file. Here too the testnet must be specified.
-parallax --testnet --config testnet.toml
+parallaxd --testnet --config testnet.toml
 ```
 
 ## Finding peers
@@ -19,7 +19,7 @@ The Parallax client continuously attempts to connect to other nodes on the netwo
 A new node entering the network for the first time gets introduced to a set of peers by a bootstrap node ("bootnode") whose sole purpose is to connect new nodes to peers. The endpoints for these bootnodes are hardcoded into the Parallax client but they can also be specified by providing the `--bootnode` flag along with comma-separated bootnode addresses in the form of [enodes](../../parallax-protocol/advanced/networking/addresses) on startup. For example:
 
 ```sh
-parallax --bootnodes enode://pubkey1@ip1:port1,enode://pubkey2@ip2:port2,enode://pubkey3@ip3:port3
+parallaxd --bootnodes enode://pubkey1@ip1:port1,enode://pubkey2@ip2:port2,enode://pubkey3@ip3:port3
 ```
 
 There are scenarios where disabling the discovery process is useful, for example for running a local test node or an experimental test network with known, fixed nodes. This can be achieved by passing the `--nodiscover` flag to the Parallax client at startup.
@@ -146,7 +146,7 @@ It is often useful for developers to connect to private test networks rather tha
 The Parallax client also supports static nodes. Static nodes are specific peers that are always connected to. The Parallax client reconnects to these peers automatically when it is restarted. Specific nodes are defined to be static nodes by adding their enode addresses to a config file. The easiest way to create this config file is to run:
 
 ```sh
-parallax --datadir <datadir> dumpconfig > config.toml
+parallaxd --datadir <datadir> dumpconfig > config.toml
 ```
 
 This will create `config.toml` in the current directory. The enode addresses for static nodes can then be added as a list to the `StaticNodes` field of the `Node.P2P` section in `config.toml`. When the Parallax client is started, pass `--config config.toml`. The relevant line in `config.toml` looks as follows:
@@ -170,7 +170,7 @@ admin.addPeer(
 It is sometimes desirable to cap the number of peers the Parallax client will connect to in order to limit on the computational and bandwidth cost associated with running a node. By default, the limit is 50 peers, however, this can be updated by passing a value to `--maxpeers`:
 
 ```sh
-parallax <otherflags> --maxpeers 15
+parallaxd <otherflags> --maxpeers 15
 ```
 
 ## Trusted nodes

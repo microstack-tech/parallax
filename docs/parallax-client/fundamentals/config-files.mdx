@@ -10,7 +10,7 @@ To create a shell script, save the Parallax client startup commands in a shell f
 
 ```sh
 #! /bin/bash
-./parallax --testnet --datadir testnet --http --http.api eth,net --metrics.expensive --metric.addr 127.0.0.1 --metrics.port 6060
+./parallaxd --testnet --datadir testnet --http --http.api eth,net --metrics.expensive --metric.addr 127.0.0.1 --metrics.port 6060
 ```
 
 Save the file as (e.g.) start-parallax.sh. Then make the file executable using
@@ -32,7 +32,7 @@ It is also possible to tweak the deeper configuration via a config file. The con
 The config file should be a `.toml` file. A convenient way to create a config file is to get the Parallax client to create one for you and use it as a template. To do this, use the `dumpconfig` command, saving the result to a `.toml` file. Note that you also need to explicitly provide the `network_id` on the command line for the public testnet:
 
 ```sh
-./parallax --testnet dumpconfig > parallax-config.toml
+./parallaxd --testnet dumpconfig > parallax-config.toml
 ```
 
 You can change the values in this file and then pass it to the Parallax client on startup so that the node is configured exactly as you want it. To override an option specified in the configuration file, specify the same option on the command line.
@@ -40,7 +40,7 @@ You can change the values in this file and then pass it to the Parallax client o
 To run the Parallax client with the configuration defined in `parallax-config.toml`, pass the config file path to `--config`. The `network_id` is not persisted from the config file; it has to be explicitly defined on the command line on startup, for example:
 
 ```
-./parallax --testnet --config parallax-config.toml
+./parallaxd --testnet --config parallax-config.toml
 ```
 
 ### Config file example

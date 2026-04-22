@@ -26,16 +26,16 @@ There may be a period of >1 hour during the Compacting Database stage with no lo
 For a normal Parallax node, the client should be stopped and the following command executed to start a offline state prune:
 
 ```sh
-parallax snapshot prune-state
+parallaxd snapshot prune-state
 ```
 
 For a Parallax client run using systemd:
 
 ```sh
-sudo systemctl stop parallax # stop parallax, wait >3mins to ensure clean shutdown
+sudo systemctl stop parallaxd # stop the daemon, wait >3mins to ensure clean shutdown
 tmux # tmux enables pruning to keep running even if you disconnect
-sudo -u <user> parallax --datadir <path> snapshot prune-state # wait for pruning to finish
-sudo systemctl start parallax # restart parallax
+sudo -u <user> parallaxd --datadir <path> snapshot prune-state # wait for pruning to finish
+sudo systemctl start parallaxd # restart the daemon
 ```
 
 The pruning could take 4-5 hours to complete. Once finished, restart the Parallax client.

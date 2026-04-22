@@ -57,7 +57,7 @@ For more information, see the [go test flags](https://golang.org/cmd/go/#hdr-Tes
 A stack trace provides a very detailed look into the current state of the Parallax node. It helps us to debug issues easier as it contains information about what is currently done by the node. Stack traces can be created by running `debug.stacks()` in the Parallax client console. If the node was started without the `console` command or with a script in the background, the following command can be used to dump the stack trace into a file.
 
 ```sh
-parallax attach <path-to-parallax.ipc> --exec "debug.stacks()" > stacktrace.txt
+parallaxd attach <path-to-parallax.ipc> --exec "debug.stacks()" > stacktrace.txt
 ```
 
 The Parallax client logs the location of the IPC endpoint on startup. It is typically under `/home/user/.parallax/parallax.ipc` or `/tmp/parallax.ipc`.
@@ -129,15 +129,15 @@ If the Parallax client is started with the `--pprof` option, a debugging HTTP se
 Note that if multiple instances of the Parallax client exist, port 6060 will only work for the first instance that was launched. To generate stacktraces for other instances, they should be started up with alternative pprof ports. Ensure `stderr` is being redirected to a logfile.
 
 ```sh
-parallax -port=30300 -verbosity 5 --pprof --pprof.port 6060 2>> /tmp/00.glog
-parallax -port=30301 -verbosity 5 --pprof --pprof.port 6061 2>> /tmp/01.glog
-parallax -port=30302 -verbosity 5 --pprof --pprof.port 6062 2>> /tmp/02.glog
+parallaxd -port=30300 -verbosity 5 --pprof --pprof.port 6060 2>> /tmp/00.glog
+parallaxd -port=30301 -verbosity 5 --pprof --pprof.port 6061 2>> /tmp/01.glog
+parallaxd -port=30302 -verbosity 5 --pprof --pprof.port 6062 2>> /tmp/02.glog
 ```
 
 Alternatively to kill the clients (in case they hang or stalled syncing, etc) and have the stacktrace too, use the `-QUIT` signal with `kill`:
 
 ```sh
-killall -QUIT parallax
+killall -QUIT parallaxd
 ```
 
 This will dump stack traces for each instance to their respective log file.

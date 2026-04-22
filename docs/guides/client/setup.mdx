@@ -40,12 +40,14 @@ Before you begin, make sure you have:
     Extract the downloaded file to a folder of your choice.
 
     Inside, you’ll see these programs:
-    - **parallax** → the Parallax client (this is the one you’ll run)
+    - **parallaxd** → the Parallax full-node daemon (this is the one you’ll run)
+    - **parallax-cli** → JSON-RPC client for talking to a running node
+    - **parallax** → a thin multi-call wrapper (`parallax node ...` → `parallaxd`, `parallax rpc ...` → `parallax-cli`)
     - **clef** → account management utility (advanced users only)
     - **parallaxkey** → utility for generating Parallax addresses (advanced users only)
   </Step>
   <Step title="Start the client">
-    - **Windows / macOS**: Simply double-click `parallax` to start your Parallax node.  
+    - **Windows / macOS**: Simply double-click `parallaxd` to start your Parallax node.  
     - **Linux**: You may need to right-click → “Allow executing file as program” before double-clicking.
 
     A window or terminal will open showing logs as the node connects to the network.  
@@ -78,31 +80,31 @@ If you’re comfortable with the terminal, here are a few helpful commands:
 - **Check version**:
 
   ```bash
-  ./parallax version
+  ./parallaxd version
   ```
 
 - **Change data directory**:
 
   ```bash
-  ./parallax --datadir /custom/path
+  ./parallaxd --datadir /custom/path
   ```
 
 - **Enable API**:
 
   ```bash
-  ./parallax --http --http.api "eth,net,web3"
+  ./parallaxd --http --http.api "eth,net,web3"
   ```
 
 - **Increase log detail**:
 
   ```bash
-  ./parallax --verbosity 4
+  ./parallaxd --verbosity 4
   ```
 
 - **Sync from Parallax testnet**:
 
   ```bash
-  ./parallax --testnet
+  ./parallaxd --testnet
   ```
 
 ---

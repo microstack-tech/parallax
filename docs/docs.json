@@ -113,6 +113,7 @@
                 "expanded": false,
                 "pages": [
                   "parallax-client/getting-started/introduction",
+                  "parallax-client/getting-started/binaries",
                   "parallax-client/getting-started/hardware-requirements",
                   "parallax-client/getting-started/installing-client"
                 ]
