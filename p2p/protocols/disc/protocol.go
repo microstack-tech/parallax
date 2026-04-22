@@ -1,0 +1,79 @@
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
+//
+// The parallax library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The parallax library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
+
+package disc
+
+import (
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
+)
+
+// ProtocolName is the devp2p capability name for this subprotocol.
+const ProtocolName = "parallax-disc"
+
+// ProtocolVersion is the only supported version of parallax-disc today.
+const ProtocolVersion uint = 1
+
+// ProtocolLength is the number of message codes in parallax-disc/1. Must
+// be exactly one past the highest code used (YourAddrMsg = 0x02, so 3).
+const ProtocolLength uint64 = 3
+
+// MaxMessageSize caps the size of a single inbound message. Chosen so
+// that a full 1000-entry `Peers` message fits comfortably:
+//
+//	1000 entries × (max PeerEntry ≈ 1+32+2+1+64+8 = 108 bytes + RLP
+//	overhead ≈ 115 bytes) ≈ 115 kB, plus list framing.
+//
+// 256 kB gives us ~2× headroom, still well below the RLPx frame cap.
+const MaxMessageSize = 256 * 1024
+
+// MakeProtocol builds the devp2p Protocol spec for parallax-disc/1. The
+// backend is invoked to construct the per-peer handler state.
+//
+// Callers should pass the result to p2p.Server.Protocols alongside the
+// existing `parallax` and `parallax-snap` protocols.
+func MakeProtocol(backend Backend) p2p.Protocol {
+	return p2p.Protocol{
+		Name:    ProtocolName,
+		Version: ProtocolVersion,
+		Length:  ProtocolLength,
+		Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
+			return Run(backend, peer, rw)
+		},
+		NodeInfo: func() any {
+			return NodeInfo{Version: ProtocolVersion}
+		},
+		Attributes: []enr.Entry{enrEntry{Version: ProtocolVersion}},
+	}
+}
+
+// NodeInfo is the admin-API surface for parallax-disc/1. Extended in
+// later phases with counts of gossiped addresses, quorum state, etc.
+type NodeInfo struct {
+	Version uint `json:"version"`
+}
+
+// enrEntry is the ENR key/value pair advertised by nodes that support
+// parallax-disc/1. Key is "parallax-disc", value is the version integer.
+// Transitional — ENR itself is slated for removal in v3.0.
+type enrEntry struct {
+	Version uint
+	// Ignore trailing fields so future versions can extend the ENR
+	// entry without breaking older parsers.
+	_ []byte `rlp:"tail"`
+}
+
+func (enrEntry) ENRKey() string { return "parallax-disc" }
