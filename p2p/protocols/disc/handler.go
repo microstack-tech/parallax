@@ -1,0 +1,352 @@
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
+//
+// The parallax library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The parallax library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
+
+package disc
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	mrand "math/rand/v2"
+	"sync/atomic"
+	"time"
+
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+)
+
+// Backend is the host-integration surface. The handler calls into Backend
+// for observed-address reports, addrbook ingest, addrbook sampling, and
+// the self-entry used during the outbound greeting sequence.
+//
+// The production implementation is AddrmanBackend; tests can supply
+// their own.
+type Backend interface {
+	// ObserveTheirSource records the observed remote TCP source of an
+	// inbound or outbound connection. Used to compose our outgoing
+	// YourAddr message and, on the peer's side, to feed quorum.
+	ObserveTheirSource(peer *p2p.Peer) (network uint8, addr []byte, port uint16, ok bool)
+
+	// HandleYourAddr feeds a peer's reported view of our external
+	// address into the quorum tally.
+	HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, port uint16)
+
+	// HandlePeers ingests gossiped entries, applying any per-peer rate
+	// limits and the 2-hour gossip LastSeen penalty.
+	HandlePeers(peer *p2p.Peer, entries []PeerEntry)
+
+	// SamplePeers returns up to max entries for a GetPeers response,
+	// subject to reachability filtering. May return nil; the handler
+	// still sends a valid (empty) Peers message.
+	SamplePeers(peer *p2p.Peer, max int) []PeerEntry
+
+	// SelfEntry returns the PeerEntry we should advertise on outbound
+	// sessions, or ok=false if no self-address has reached quorum and
+	// no override is configured. listenPort is the TCP port we listen
+	// on (used when the quorum winner has port=0).
+	SelfEntry(listenPort uint16) (PeerEntry, bool)
+
+	// TrackHandshake records which handshake variant a peer session
+	// was established with. The handler calls this once on session
+	// start. Used by admin.peers to show whether a peer is
+	// v2-authenticated or legacy+v2.
+	TrackHandshake(peer *p2p.Peer, usingV2 bool)
+
+	// PeerHandshake returns the handshake variant recorded for a
+	// peer by TrackHandshake, or an empty string if the peer isn't
+	// known (connection torn down, never parallax-disc/1-negotiated).
+	PeerHandshake(id enode.ID) string
+
+	// Log returns the logger to use for protocol-level events.
+	Log() logging.Logger
+}
+
+// state holds per-peer handler state — one struct per session.
+type state struct {
+	// sentYourAddr: we've written our YourAddr message for this
+	// session. Each side sends exactly one, as the first message after
+	// capability negotiation.
+	sentYourAddr atomic.Bool
+
+	// gotYourAddr: we've seen the peer's YourAddr for this session.
+	gotYourAddr atomic.Bool
+
+	// peersReceived counts Peers messages received on this session.
+	// Bitcoin parity: >1 unsolicited Peers per 24h disconnects; we
+	// enforce the stricter in-session version (only one solicited
+	// response plus one self-advertise are ever expected on an
+	// outbound session).
+	peersReceived atomic.Uint32
+
+	// peersUnsolicited counts Peers messages that arrived without a
+	// matching GetPeers we sent. More than one is a disconnect.
+	peersUnsolicited atomic.Uint32
+
+	// getPeersSent counts GetPeers requests we've issued to this peer.
+	// One-request-per-session is the rule (Bitcoin parity).
+	getPeersSent atomic.Uint32
+
+	// getPeersReceived counts GetPeers from the peer. Bitcoin parity:
+	// one response per session; further requests are silently ignored.
+	getPeersReceived atomic.Uint32
+
+	// knownAddr is the rolling bloom filter tracking addresses we've
+	// sent to this peer. Used to skip re-relaying addresses the peer
+	// already has (Phase 4 RelayAddress discipline).
+	knownAddr bloomFilter
+}
+
+// Run is the per-peer entry point. Called by p2p.Server once the
+// subprotocol has been negotiated.
+func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
+	log := backend.Log().New("peer", peer.ID())
+	log.Trace("parallax-disc/1 session starting")
+
+	backend.TrackHandshake(peer, peer.UsingV2Handshake())
+
+	st := &state{}
+
+	// First action on both sides: send YourAddr reporting the remote's
+	// observed TCP source. Order-independent because RLPx is
+	// multiplexed — either message may arrive first at the receiver.
+	if err := sendYourAddr(backend, peer, rw, st); err != nil {
+		log.Debug("parallax-disc/1: YourAddr send failed", "err", err)
+	}
+
+	// Bitcoin's address-relay discipline is direction-sensitive:
+	// outbound peers get addr(self) + getaddr, inbound peers get
+	// nothing unsolicited. The distinction matters because an inbound
+	// peer could be an adversary probing our addrbook.
+	if !peer.Inbound() {
+		if err := sendSelfAdvertise(backend, rw); err != nil {
+			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
+		}
+		if err := RequestPeers(st, rw); err != nil {
+			log.Debug("parallax-disc/1: GetPeers send failed", "err", err)
+		}
+	}
+
+	defer func() {
+		// Release per-peer state from the backend's maps on session
+		// close. AddrmanBackend exposes PeerDisconnected; other
+		// backends may not, so check via type assertion.
+		if cleaner, ok := backend.(interface{ PeerDisconnected(*p2p.Peer) }); ok {
+			cleaner.PeerDisconnected(peer)
+		}
+	}()
+
+	for {
+		if err := handleOne(backend, peer, rw, st); err != nil {
+			log.Debug("parallax-disc/1: session ending", "err", err)
+			return err
+		}
+	}
+}
+
+// sendSelfAdvertise writes a 1-entry Peers message containing our
+// current self-address claim to an outbound peer. Mirrors Bitcoin's
+// addr(self) sequence on outbound-full-relay peers. Skipped silently
+// if no self-address is available (no quorum, no override).
+func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
+	self, ok := backend.SelfEntry(0)
+	if !ok {
+		return nil
+	}
+	return p2p.Send(rw, PeersMsg, Peers{Entries: []PeerEntry{self}})
+}
+
+// handleOne reads and dispatches one inbound message. Returns on read
+// error, oversized payload, or protocol violation — the caller closes
+// the session.
+func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
+	msg, err := rw.ReadMsg()
+	if err != nil {
+		return err
+	}
+	defer msg.Discard()
+
+	if msg.Size > MaxMessageSize {
+		return fmt.Errorf("disc: message too large: %d > %d", msg.Size, MaxMessageSize)
+	}
+
+	switch msg.Code {
+	case GetPeersMsg:
+		return handleGetPeers(backend, peer, rw, st, msg)
+	case PeersMsg:
+		return handlePeers(backend, peer, st, msg)
+	case YourAddrMsg:
+		return handleYourAddr(backend, peer, st, msg)
+	}
+	return fmt.Errorf("disc: unknown msg code 0x%02x", msg.Code)
+}
+
+func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, msg p2p.Msg) error {
+	var req GetPeers
+	if err := msg.Decode(&req); err != nil {
+		// GetPeers has no payload; anything is a decode error.
+		return fmt.Errorf("disc: GetPeers decode: %w", err)
+	}
+	count := st.getPeersReceived.Add(1)
+	if count > 1 {
+		// Bitcoin parity: repeat GetPeers in the same session is a
+		// silent no-op. Don't even log at info — this is expected
+		// under adversarial probing.
+		backend.Log().Trace("parallax-disc/1: ignoring repeat GetPeers", "peer", peer.ID())
+		return nil
+	}
+	// Apply Poisson jitter so the response doesn't arrive on a
+	// predictable cadence — matches Bitcoin's PoissonNextSend
+	// scheduling on address trickle. Mean is tunable so tests can
+	// drop it to zero; production keeps the 2s mean. The max-delay
+	// cap is a practical truncation against Poisson's long tail (a
+	// natural draw can exceed 10× mean; we cap at 3× to bound worst
+	// case).
+	if mean := peersResponseJitterMean; mean > 0 {
+		delay := poissonDelay(mean)
+		if delay > 3*mean {
+			delay = 3 * mean
+		}
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+	sample := backend.SamplePeers(peer, MaxPeersPerMessage)
+	if sample == nil {
+		sample = []PeerEntry{}
+	}
+	if len(sample) > MaxPeersPerMessage {
+		sample = sample[:MaxPeersPerMessage]
+	}
+	// Mark these addresses as sent-to-this-peer so RelayAddress
+	// doesn't re-relay them later in the session.
+	for _, e := range sample {
+		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
+	}
+	return p2p.Send(rw, PeersMsg, Peers{Entries: sample})
+}
+
+// peersResponseJitterMean is the mean Poisson delay applied to
+// GetPeers responses. Tests override via the SetPeersResponseJitter
+// helper; production value matches Bitcoin's 2-second address-trickle
+// cadence.
+var peersResponseJitterMean = 2 * time.Second
+
+// SetPeersResponseJitterMean overrides the Poisson mean used in the
+// response delay. Exposed for tests; pass 0 to disable jitter.
+func SetPeersResponseJitterMean(d time.Duration) { peersResponseJitterMean = d }
+
+// poissonDelay returns a Poisson-distributed delay with the given mean.
+// Follows Bitcoin's PoissonNextSend(mean) helper: draw U∈(0,1],
+// delay = -ln(U) * mean.
+func poissonDelay(mean time.Duration) time.Duration {
+	u := 1.0 - mrand.Float64() // open interval (0, 1]
+	return time.Duration(-math.Log(u) * float64(mean))
+}
+
+func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
+	var pkt Peers
+	if err := msg.Decode(&pkt); err != nil {
+		return fmt.Errorf("disc: Peers decode: %w", err)
+	}
+	if err := pkt.Validate(); err != nil {
+		return err
+	}
+	st.peersReceived.Add(1)
+
+	// Unsolicited-rate enforcement: every Peers message past the first
+	// (which answers our GetPeers) is unsolicited. The initial
+	// 1-entry self-advertise from an outbound peer's greeting is
+	// allowed — detected by size==1 and peersReceived==1 AND no
+	// GetPeers has been sent yet.
+	solicited := st.getPeersSent.Load() >= 1 && st.peersReceived.Load() == 1
+	selfAdvertise := len(pkt.Entries) == 1 && st.peersReceived.Load() == 1
+	if !solicited && !selfAdvertise {
+		if st.peersUnsolicited.Add(1) > 1 {
+			return errors.New("disc: too many unsolicited Peers messages")
+		}
+	}
+
+	// Filter out skippable entries; disconnect on any shape violation.
+	kept := pkt.Entries[:0]
+	for i := range pkt.Entries {
+		skip, err := pkt.Entries[i].Validate()
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		kept = append(kept, pkt.Entries[i])
+	}
+	backend.HandlePeers(peer, kept)
+	return nil
+}
+
+func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
+	var y YourAddr
+	if err := msg.Decode(&y); err != nil {
+		return fmt.Errorf("disc: YourAddr decode: %w", err)
+	}
+	skip, err := y.Validate()
+	if err != nil {
+		return err
+	}
+	if !st.gotYourAddr.CompareAndSwap(false, true) {
+		// Bitcoin's version message is single-shot; we mirror that —
+		// a second YourAddr is a protocol violation.
+		return errors.New("disc: multiple YourAddr messages from one peer")
+	}
+	if skip {
+		return nil
+	}
+	backend.HandleYourAddr(peer, y.NetworkID, y.Addr, y.TCPPort)
+	return nil
+}
+
+// sendYourAddr is the handshake-time "here's what I see as your source"
+// message. Idempotent — repeated calls in the same session are no-ops
+// thanks to the CAS on sentYourAddr.
+func sendYourAddr(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
+	if !st.sentYourAddr.CompareAndSwap(false, true) {
+		return nil
+	}
+	net, addr, port, ok := backend.ObserveTheirSource(peer)
+	if !ok {
+		// We can't resolve the peer's apparent source — common in
+		// tests. Send an all-zero YourAddr so the peer knows we
+		// support the subprotocol but has nothing actionable to
+		// feed quorum. Matches the PIP-0006 "0 if unknown" rule
+		// for TCPPort.
+		return p2p.Send(rw, YourAddrMsg, YourAddr{})
+	}
+	return p2p.Send(rw, YourAddrMsg, YourAddr{
+		NetworkID: net,
+		Addr:      addr,
+		TCPPort:   port,
+	})
+}
+
+// RequestPeers sends a GetPeers on the session. Callers (the dialer in
+// Phase 4) invoke this once per outbound session. Repeated calls are
+// dropped silently.
+func RequestPeers(st *state, rw p2p.MsgReadWriter) error {
+	if st.getPeersSent.Load() >= 1 {
+		return nil
+	}
+	st.getPeersSent.Add(1)
+	return p2p.Send(rw, GetPeersMsg, GetPeers{})
+}

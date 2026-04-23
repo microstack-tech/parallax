@@ -23,6 +23,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	godebug "runtime/debug"
@@ -648,6 +649,22 @@ var (
 		Name:  "discovery.dns",
 		Usage: "Sets DNS discovery entry points (use \"\" to disable DNS)",
 	}
+	DNSSeedFlag = cli.StringFlag{
+		Name: "dnsseed",
+		Usage: "Comma-separated DNS hostnames resolved every 24h (Bitcoin parity) for plain A/AAAA peer bootstrap. " +
+			"Each resolved IP is paired with the default v2 listen port (32110) and ingested into addrman with source=dns_seed. " +
+			"Empty string disables. Defaults to netparams.MainnetDNSSeeds when unset. --nodiscover overrides to disable.",
+	}
+	LegacyDiscoveryFlag = cli.StringFlag{
+		Name: "legacy-discovery",
+		Usage: "Compatibility mode for the v1.x transport stack (auto|on|off). " +
+			"Controls UDP discv4 AND legacy RLPx handshake acceptance in lockstep — they share the same identity model. " +
+			"auto: discv4 responds to inbound but doesn't drive dialing, legacy RLPx accepted (default, v2.0 transitional posture). " +
+			"on: discv4 is a dial source, legacy RLPx accepted (pre-PIP-0006 v1.x compatibility). " +
+			"off: no UDP socket, legacy RLPx refused, enode URL becomes diagnostic-only — node is v2-only. " +
+			"The addrman and v2 handshake are always on; this flag only controls whether the v1.x surface is exposed alongside them.",
+		Value: "auto",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -838,30 +855,106 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-// setBootstrapNodes creates a list of bootstrap nodes from the command line
-// flags, reverting to pre-configured ones if none have been specified.
+// setBootstrapNodes creates the two bootstrap node slices from the
+// command line flags, reverting to pre-configured ones if none have
+// been specified.
+//
+// Entries come in two forms:
+//
+//   - "enode://…@ip:port" — NodeID-carrying. Seeds discv4's routing
+//     table and is ingested into addrman with KeyType=0x01.
+//   - "ip:port" — plain endpoint. Used by the Parallax v2.0 BIP324-
+//     style handshake (no NodeID on the wire); ingested into addrman
+//     with KeyType=0x00.
+//
+// --bootnodes sniffs per-entry and routes into the right slice.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
-	urls := netparams.MainnetBootnodes
+	enodeURLs := netparams.MainnetBootnodes
+	v2Addrs := netparams.MainnetBootnodesV2
 	switch {
 	case ctx.GlobalIsSet(BootnodesFlag.Name):
-		urls = SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name))
+		enodeURLs = nil
+		v2Addrs = nil
+		for _, raw := range SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name)) {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			if strings.HasPrefix(raw, "enode://") || strings.HasPrefix(raw, "enr:") {
+				enodeURLs = append(enodeURLs, raw)
+			} else {
+				v2Addrs = append(v2Addrs, raw)
+			}
+		}
 	case ctx.GlobalBool(TestnetFlag.Name):
-		urls = netparams.TestnetBootnodes
-	case cfg.BootstrapNodes != nil:
+		enodeURLs = netparams.TestnetBootnodes
+		v2Addrs = netparams.TestnetBootnodesV2
+	case cfg.BootstrapNodes != nil || cfg.BootstrapNodesV2 != nil:
 		return // already set, don't apply defaults.
 	}
 
-	cfg.BootstrapNodes = make([]*enode.Node, 0, len(urls))
-	for _, url := range urls {
-		if url != "" {
-			node, err := enode.Parse(enode.ValidSchemes, url)
-			if err != nil {
-				logging.Crit("Bootstrap URL invalid", "enode", url, "err", err)
-				continue
-			}
-			cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
+	cfg.BootstrapNodes = make([]*enode.Node, 0, len(enodeURLs))
+	for _, url := range enodeURLs {
+		if url == "" {
+			continue
 		}
+		node, err := enode.Parse(enode.ValidSchemes, url)
+		if err != nil {
+			logging.Crit("Bootstrap URL invalid", "enode", url, "err", err)
+			continue
+		}
+		cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
 	}
+
+	cfg.BootstrapNodesV2 = make([]*net.TCPAddr, 0, len(v2Addrs))
+	for _, raw := range v2Addrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		host, portStr, err := net.SplitHostPort(raw)
+		if err != nil {
+			logging.Crit("Bootstrap v2 entry invalid (expected ip:port)", "entry", raw, "err", err)
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			logging.Crit("Bootstrap v2 entry has invalid IP", "entry", raw, "host", host)
+			continue
+		}
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil || port == 0 {
+			logging.Crit("Bootstrap v2 entry has invalid port", "entry", raw, "port", portStr)
+			continue
+		}
+		cfg.BootstrapNodesV2 = append(cfg.BootstrapNodesV2, &net.TCPAddr{IP: ip, Port: int(port)})
+	}
+}
+
+// setDNSSeeds populates cfg.DNSSeeds from --dnsseed, falling back to
+// netparams.MainnetDNSSeeds (or testnet equivalent). --nodiscover
+// overrides everything and clears the slice. An empty --dnsseed=
+// (set to the empty string) also disables — operators who want zero
+// DNS lookups but full discovery otherwise have a knob.
+func setDNSSeeds(ctx *cli.Context, cfg *p2p.Config) {
+	if ctx.GlobalIsSet(NoDiscoverFlag.Name) && ctx.GlobalBool(NoDiscoverFlag.Name) {
+		cfg.DNSSeeds = nil
+		return
+	}
+	if ctx.GlobalIsSet(DNSSeedFlag.Name) {
+		raw := ctx.GlobalString(DNSSeedFlag.Name)
+		if raw == "" {
+			cfg.DNSSeeds = nil
+			return
+		}
+		cfg.DNSSeeds = SplitAndTrim(raw)
+		return
+	}
+	if ctx.GlobalBool(TestnetFlag.Name) {
+		cfg.DNSSeeds = netparams.TestnetDNSSeeds
+		return
+	}
+	cfg.DNSSeeds = netparams.MainnetDNSSeeds
 }
 
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
@@ -1112,6 +1205,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setListenAddress(ctx, cfg)
 	setBootstrapNodes(ctx, cfg)
 	setBootstrapNodesV5(ctx, cfg)
+	setDNSSeeds(ctx, cfg)
 
 	if ctx.GlobalIsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.GlobalInt(MaxPeersFlag.Name)
@@ -1126,6 +1220,9 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	}
 	if ctx.GlobalIsSet(DiscoveryV5Flag.Name) {
 		cfg.DiscoveryV5 = ctx.GlobalBool(DiscoveryV5Flag.Name)
+	}
+	if ctx.GlobalIsSet(LegacyDiscoveryFlag.Name) {
+		cfg.LegacyDiscoveryMode = ctx.GlobalString(LegacyDiscoveryFlag.Name)
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {
@@ -1173,6 +1270,13 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setNodeUserIdent(ctx, cfg)
 	setDataDir(ctx, cfg)
 	setSmartCard(ctx, cfg)
+
+	// Default the addrbook location to <datadir>/addrbook.rlp. An
+	// empty AddrBookPath keeps the addrman in-memory only (fine for
+	// ephemeral test nodes without a datadir).
+	if cfg.P2P.AddrBookPath == "" && cfg.DataDir != "" {
+		cfg.P2P.AddrBookPath = filepath.Join(cfg.DataDir, "addrbook.rlp")
+	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {
 		cfg.JWTSecret = ctx.GlobalString(JWTSecretFlag.Name)

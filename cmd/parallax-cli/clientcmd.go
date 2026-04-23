@@ -386,6 +386,56 @@ scripts or in health probes.`,
 		Category:  "CLIENT COMMANDS",
 	}
 
+	addnodeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientAddnode),
+		Name:      "addnode",
+		Usage:     "Pin a peer into the addrbook (source=manual)",
+		ArgsUsage: "<ip:port | enode://…>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Adds an address to the addrman with source=manual. Manual entries persist
+across restarts, are exempt from source-aware bucket eviction, and are
+dialed before any other source. Accepts either plain ip:port (v2.0-native
+peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).
+
+Requires the node to be running with --experimental-addrman.`,
+	}
+
+	removenodeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientRemovenode),
+		Name:      "removenode",
+		Usage:     "Remove a peer from the addrbook",
+		ArgsUsage: "<ip:port | enode://…>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+	}
+
+	addrbookStatusCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientAddrbookStatus),
+		Name:     "addrbook-status",
+		Usage:    "Show addrbook size, per-source counts, and table occupancy",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+	}
+
+	addrbookResetKeyCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientAddrbookResetKey),
+		Name:     "addrbook-resetkey",
+		Usage:    "Regenerate the addrbook's nKey and clear the tried table (operator-only, for suspected nKey leaks)",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+	}
+
+	dialV2Command = cli.Command{
+		Action:    utils.MigrateFlags(clientDialV2),
+		Name:      "dialv2",
+		Usage:     "Dial a remote node over the BIP324-style v2 RLPx handshake (requires --experimental-v2-handshake on the target daemon)",
+		ArgsUsage: "<ip:port>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+	}
+
 	addTrustedCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientAddTrusted),
 		Name:      "addtrusted",
@@ -670,6 +720,11 @@ var clientSugarCommands = []cli.Command{
 	removePeerCommand,
 	addTrustedCommand,
 	removeTrustedCommand,
+	addnodeCommand,
+	removenodeCommand,
+	addrbookStatusCommand,
+	addrbookResetKeyCommand,
+	dialV2Command,
 	miningCommand,
 	startMiningCommand,
 	stopMiningCommand,
@@ -1541,6 +1596,102 @@ func clientRemoveTrusted(ctx *cli.Context) error {
 	return callPeerAdmin(ctx, "admin_removeTrustedPeer", "enode|host:port")
 }
 
+// clientAddnode invokes admin_addnode. Unlike admin_addPeer (which dials
+// immediately and keeps a static dial task), addnode just ingests into
+// the addrman with source=manual — the dialer picks it up on its next
+// Select() round.
+func clientAddnode(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port | enode://…")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_addnode", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_addnode returned false (address already present or invalid)")
+	}
+	return nil
+}
+
+func clientRemovenode(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port | enode://…")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_removenode", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_removenode returned false (address not in addrbook)")
+	}
+	return nil
+}
+
+// clientAddrbookStatus prints the current addrbook snapshot.
+func clientAddrbookStatus(ctx *cli.Context) error {
+	var status addrbookStatus
+	if err := callRPC(ctx, &status, "admin_addrbookStatus"); err != nil {
+		return err
+	}
+	fmt.Printf("total:  %d\n", status.Total)
+	fmt.Printf("new:    %d\n", status.New)
+	fmt.Printf("tried:  %d\n", status.Tried)
+	if len(status.PerSource) > 0 {
+		fmt.Println("per-source:")
+		for src, n := range status.PerSource {
+			fmt.Printf("  %-16s %d\n", src, n)
+		}
+	}
+	return nil
+}
+
+// addrbookStatus mirrors the wire shape of addrman.Status as emitted by
+// admin_addrbookStatus. Duplicated here so parallax-cli has no import on
+// p2p/addrman (keeps the CLI binary slim).
+type addrbookStatus struct {
+	Total     int            `json:"total"`
+	New       int            `json:"new"`
+	Tried     int            `json:"tried"`
+	PerSource map[string]int `json:"perSource"`
+}
+
+// clientDialV2 invokes admin_dialV2. Operator-testing helper for the
+// BIP324-style v2 handshake — useful when the target's addrman entry
+// can't be auto-selected (e.g., loopback in a single-host topology).
+func clientDialV2(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_dialV2", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_dialV2 returned false")
+	}
+	fmt.Println("v2 dial initiated")
+	return nil
+}
+
+// clientAddrbookResetKey invokes admin_addrbookResetKey. Destructive —
+// clears the tried table — so emit a clear confirmation prompt on the
+// interactive path.
+func clientAddrbookResetKey(ctx *cli.Context) error {
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_addrbookResetKey"); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_addrbookResetKey returned false")
+	}
+	fmt.Println("addrbook nKey regenerated and tried table cleared")
+	return nil
+}
+
 // callPeerAdmin implements the shared body of all four peer-admin sugar
 // commands. It reads the first positional argument, resolves it to a full
 // enode URL if the user gave a bare host:port, and dispatches the named
@@ -2086,10 +2237,14 @@ func resolvePeerTarget(ctx *cli.Context, input string) (string, error) {
 	wantIP := net.ParseIP(host)
 	var matches []*p2p.PeerInfo
 	for _, p := range peers {
-		// p.Enode is the peer's authenticated enode URL with its
-		// advertised listen address (not the ephemeral socket port
-		// that RemoteAddress would report for inbound peers).
-		u, err := url.Parse(p.Enode)
+		// p.Enode is the peer's authenticated enode URL. v2 peers
+		// have no enode URL (session-scoped identity), so skip them
+		// — this helper is for legacy-peer admin commands and can't
+		// materialize an enode:// string for a v2 session.
+		if p.Enode == nil {
+			continue
+		}
+		u, err := url.Parse(*p.Enode)
 		if err != nil || u.Host == "" {
 			continue
 		}
@@ -2112,16 +2267,13 @@ func resolvePeerTarget(ctx *cli.Context, input string) (string, error) {
 
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("no currently connected peer at %s — pass the full enode:// URL instead", input)
+		return "", fmt.Errorf("no currently connected legacy peer at %s — pass the full enode:// URL, or ip:port if the target is v2", input)
 	case 1:
-		return matches[0].Enode, nil
+		return *matches[0].Enode, nil
 	default:
-		// Ambiguous: multiple peers share this host (e.g. two nodes
-		// behind the same NAT). Make the user disambiguate with a
-		// port, and show them the candidates.
 		candidates := make([]string, 0, len(matches))
 		for _, p := range matches {
-			candidates = append(candidates, p.Enode)
+			candidates = append(candidates, *p.Enode)
 		}
 		return "", fmt.Errorf("multiple peers match %s; disambiguate with host:port or a full enode URL. Candidates:\n  %s",
 			input, strings.Join(candidates, "\n  "))

@@ -1991,6 +1991,16 @@ func (s *PublicNetAPI) PeerCount() hexutil.Uint {
 	return hexutil.Uint(s.net.PeerCount())
 }
 
+// Peers returns the remote addresses (ip:port) of connected peers.
+func (s *PublicNetAPI) Peers() []string {
+	infos := s.net.PeersInfo()
+	addrs := make([]string, len(infos))
+	for i, info := range infos {
+		addrs[i] = info.Network.RemoteAddress
+	}
+	return addrs
+}
+
 // Version returns the current Parallax protocol version.
 func (s *PublicNetAPI) Version() string {
 	return fmt.Sprintf("%d", s.networkVersion)

@@ -19,6 +19,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
@@ -31,11 +32,14 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
@@ -55,6 +59,17 @@ const (
 
 	// This time limits inbound connection attempts per source IP.
 	inboundThrottleTime = 30 * time.Second
+
+	// maxInboundConnAttemptsPerIP caps how many distinct inbound TCP
+	// attempts from the same source IP are tolerated within
+	// inboundThrottleTime. Set above 1 so legitimate co-located
+	// scenarios work (e.g. an operator running parallax-disc-crawl
+	// on the same host as their parallaxd, which puts the crawler
+	// and the daemon behind the same public-NAT IP from any remote
+	// peer's POV). Still strict enough to make per-IP flooding
+	// expensive — an attacker has to scale across IPs as before, with
+	// only a 4x relaxation per IP.
+	maxInboundConnAttemptsPerIP = 4
 
 	// Maximum time allowed for reading a complete message.
 	// This is effectively the amount of time a connection can be idle.
@@ -97,14 +112,30 @@ type Config struct {
 	// Use util.MakeName to create a name that follows existing conventions.
 	Name string `toml:"-"`
 
-	// BootstrapNodes are used to establish connectivity
-	// with the rest of the network.
+	// BootstrapNodes are the NodeID-carrying bootstrap peers used to
+	// seed connectivity with the rest of the network. Consumed by
+	// discv4's routing table (v1.x-compat peers) and ingested into
+	// addrman with KeyType=0x01 via IngestNode.
 	BootstrapNodes []*enode.Node
+
+	// BootstrapNodesV2 are the plain-ip:port bootstrap peers used by
+	// the Parallax v2.0 BIP324-style handshake. No NodeID / enode URL
+	// is required to reach them — the handshake authenticates against
+	// whoever answered on that ip:port. Ingested into addrman with
+	// source=dns_seed and KeyType=0x00 via IngestV2Addr.
+	BootstrapNodesV2 []*net.TCPAddr
 
 	// BootstrapNodesV5 are used to establish connectivity
 	// with the rest of the network using the V5 discovery
 	// protocol.
 	BootstrapNodesV5 []*enode.Node `toml:",omitempty"`
+
+	// DNSSeeds are hostnames the node resolves at DNSSeedDefaultInterval
+	// (24h, Bitcoin parity) to bootstrap addrman with v2.0-native peers
+	// on DNSSeedDefaultPort. Empty disables the resolver loop entirely.
+	// Populated from netparams.MainnetDNSSeeds (or testnet equivalent)
+	// gated by --dnsseed / --nodiscover.
+	DNSSeeds []string `toml:",omitempty"`
 
 	// Static nodes are used as pre-configured connections which are always
 	// maintained and re-connected on disconnects.
@@ -157,6 +188,46 @@ type Config struct {
 	// discovery routing table during revalidation.
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
+	// LegacyDiscoveryMode is the single operator knob controlling
+	// this node's compatibility with the v1.x transport stack. It
+	// drives three subsystems in lockstep because they all reflect
+	// the same v1.x identity model (persistent secp256k1, enode/ENR,
+	// legacy RLPx, UDP discovery):
+	//
+	//   "auto" (default) — discv4 UDP responder-only (answers inbound
+	//                      PING/FINDNODE but doesn't drive dialing);
+	//                      both legacy and v2 handshakes accepted;
+	//                      addrman is the primary dial source.
+	//   "on"             — discv4 fully active as a dial candidate
+	//                      source; both handshakes accepted. Matches
+	//                      pre-PIP-0006 operator expectations.
+	//   "off"            — no UDP socket; listener rejects legacy
+	//                      RLPx; dialer refuses KeyType=0x01
+	//                      (legacy-enode) addrman entries. Every
+	//                      peer session uses the v2 handshake. The
+	//                      enode URL emitted on startup is
+	//                      diagnostic-only.
+	//
+	// Empty / invalid values fall back to "auto" with a warning.
+	// The v2 handshake code path and addrman are always present —
+	// this flag only controls whether the legacy v1.x surface is
+	// exposed alongside them.
+	LegacyDiscoveryMode string `toml:",omitempty"`
+
+	// AddrBookPath is where the addrbook persists across restarts.
+	// Defaults to <datadir>/addrbook.rlp via the node layer. If
+	// empty, the addrman still runs in-memory but nothing is
+	// persisted on shutdown — useful for ephemeral tests.
+	AddrBookPath string `toml:",omitempty"`
+
+	// AddrManager, when non-nil, is an already-initialized address
+	// manager supplied by the caller. Server skips internal Load and
+	// just adopts this instance — useful when the caller (node.Node)
+	// needs the addrman available before Server.Start so it can wire
+	// the parallax-disc/1 subprotocol backend against it. Save-on-stop
+	// still happens if AddrBookPath is also set.
+	AddrManager *addrman.AddrMan `toml:"-"`
+
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger logging.Logger `toml:",omitempty"`
 
@@ -190,6 +261,23 @@ type Server struct {
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
 
+	// addrbook is the PIP-0006 address manager. Populated only when
+	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
+	// additional FairMix source and receives discv4/bootnode entries
+	// via teeIter wrappers. Exposed via AddrBook() so upstream code
+	// can register subprotocols against it without pulling p2p into
+	// an import cycle with p2p/protocols/*.
+	addrbook     *addrman.AddrMan
+	addrbookIter *addrman.NodeIter
+	v2Iter       *addrman.V2Iter
+
+	// v2DialRecent is a per-(ip:port) cooldown keyed by tcp addr
+	// string. Gates DialV2 so every caller — runV2Dialer, the v2-ENR
+	// branch in the dial scheduler, admin RPC — shares a single
+	// throttle. Serialized by v2DialRecentMu.
+	v2DialRecentMu sync.Mutex
+	v2DialRecent   map[string]time.Time
+
 	// Channels into the run loop.
 	quit                    chan struct{}
 	addtrusted              chan *enode.Node
@@ -212,6 +300,27 @@ type peerDrop struct {
 	requested bool // true if signaled by the peer
 }
 
+// enrV2Transport is the ENR entry a node sets to signal that its
+// listening TCP endpoint accepts the BIP324-style v2 handshake.
+// Peers that see this on an enode's ENR dial v2 from the start and
+// skip the v1 RLPx path, avoiding the "connect v1, tear down, redial
+// v2" promotion dance. No payload — presence is the signal.
+type enrV2Transport struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (enrV2Transport) ENRKey() string { return "pipv2" }
+
+// hasV2TransportENR reports whether n's ENR advertises v2-transport
+// support.
+func hasV2TransportENR(n *enode.Node) bool {
+	if n == nil {
+		return false
+	}
+	var e enrV2Transport
+	return n.Load(&e) == nil
+}
+
 type connFlag int32
 
 const (
@@ -219,6 +328,12 @@ const (
 	staticDialedConn
 	inboundConn
 	trustedConn
+	// v2DialedConn marks a connection initiated via Server.DialV2.
+	// pickHandshakeVariant reads this bit to route outbound v2
+	// dials — the legacy dial path never sets it, so existing
+	// code paths keep their original semantics after the Phase 2b
+	// changes.
+	v2DialedConn
 )
 
 // conn wraps a network connection with information gathered
@@ -405,9 +520,26 @@ func (srv *Server) Stop() {
 		// this unblocks listener Accept
 		srv.listener.Close()
 	}
+	if srv.addrbookIter != nil {
+		srv.addrbookIter.Close()
+	}
+	if srv.v2Iter != nil {
+		srv.v2Iter.Close()
+	}
 	close(srv.quit)
 	srv.lock.Unlock()
 	srv.loopWG.Wait()
+
+	// Persist addrbook on shutdown. Done after loopWG so no inflight
+	// Good/Attempt/Add calls race the Save. Failures are logged, not
+	// propagated — a save error on shutdown must not crash the node.
+	if srv.addrbook != nil && srv.AddrBookPath != "" {
+		if err := srv.addrbook.Save(srv.AddrBookPath); err != nil {
+			srv.log.Warn("addrbook save failed on shutdown", "path", srv.AddrBookPath, "err", err)
+		} else {
+			srv.log.Info("addrbook saved", "path", srv.AddrBookPath, "entries", srv.addrbook.Size(nil, nil))
+		}
+	}
 }
 
 // sharedUDPConn implements a shared connection. Write sends messages to the underlying connection while read returns
@@ -460,6 +592,17 @@ func (srv *Server) Start() (err error) {
 	if srv.PrivateKey == nil {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
 	}
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
+		// --legacy-discovery=off implies v2-only: legacy RLPx is
+		// refused at the listener, dialer refuses KeyType=0x01
+		// entries, and the enode URL emitted on startup becomes a
+		// diagnostic artifact rather than a dialable identifier.
+		// The secp256k1 private key is still loaded because
+		// LocalNode uses it to derive a stable placeholder for
+		// logs and metrics; no peer handshake consumes it in this
+		// mode.
+		srv.log.Info("--legacy-discovery=off: legacy RLPx refused, enode URL diagnostic-only")
+	}
 	if srv.newTransport == nil {
 		srv.newTransport = newRLPX
 	}
@@ -483,6 +626,10 @@ func (srv *Server) Start() (err error) {
 			return err
 		}
 	}
+	srv.applyLegacyDiscoveryMode()
+	if err := srv.setupAddrMan(); err != nil {
+		return err
+	}
 	if err := srv.setupDiscovery(); err != nil {
 		return err
 	}
@@ -491,6 +638,119 @@ func (srv *Server) Start() (err error) {
 	srv.loopWG.Add(1)
 	go srv.run()
 	return nil
+}
+
+// setupAddrMan initializes the address manager. Always runs — the
+// addrman is the v2 design and is not operator-optional anymore.
+//
+// Flow:
+//
+//   - If Config.AddrManager is supplied (the node layer's typical path,
+//     wired before Start so parallax-disc/1 can register), adopt it.
+//   - Otherwise construct an empty addrman, Load addrbook.rlp if
+//     Config.AddrBookPath is non-empty (skipping persistence when it's
+//     empty — useful for ephemeral tests), and ingest BootstrapNodes
+//     with source=dns_seed.
+func (srv *Server) setupAddrMan() error {
+	var m *addrman.AddrMan
+	if srv.AddrManager != nil {
+		m = srv.AddrManager
+	} else {
+		var err error
+		m, err = addrman.New()
+		if err != nil {
+			return fmt.Errorf("addrman: new: %w", err)
+		}
+		if srv.AddrBookPath != "" {
+			if err := m.Load(srv.AddrBookPath); err != nil {
+				if errors.Is(err, addrman.ErrFutureSchema) {
+					srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
+				} else {
+					srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+				}
+			}
+		}
+		now := time.Now()
+		for _, n := range srv.BootstrapNodes {
+			addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+		}
+		for _, addr := range srv.BootstrapNodesV2 {
+			addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
+		}
+	}
+	srv.addrbook = m
+	srv.log.Info("addrman enabled", "path", srv.AddrBookPath, "entries", m.Size(nil, nil))
+
+	// Periodic metrics refresh and legacy_udp dominance log. Cheap —
+	// Size() is O(1) and sourceCounts is a small map. Tied to quit so
+	// Stop() tears it down cleanly.
+	srv.loopWG.Add(1)
+	go func() {
+		defer srv.loopWG.Done()
+		metricsTick := time.NewTicker(5 * time.Second)
+		defer metricsTick.Stop()
+		dominanceTick := time.NewTicker(15 * time.Minute)
+		defer dominanceTick.Stop()
+		for {
+			select {
+			case <-srv.quit:
+				return
+			case <-metricsTick.C:
+				srv.addrbook.RefreshMetrics()
+			case <-dominanceTick.C:
+				srv.warnOnLegacyUDPDominance()
+			}
+		}
+	}()
+
+	// DNS-seed resolver loop. Plain A/AAAA at DNSSeedDefaultInterval,
+	// each IP paired with DNSSeedDefaultPort and ingested into addrman
+	// with source=dns_seed. Empty Config.DNSSeeds disables it (matches
+	// --nodiscover semantics).
+	if len(srv.DNSSeeds) > 0 {
+		seedCtx, seedCancel := context.WithCancel(context.Background())
+		srv.loopWG.Add(2)
+		go func() {
+			defer srv.loopWG.Done()
+			<-srv.quit
+			seedCancel()
+		}()
+		go func() {
+			defer srv.loopWG.Done()
+			dnsSeedLoop(
+				seedCtx,
+				net.DefaultResolver,
+				srv.DNSSeeds,
+				srv.addrbook,
+				DNSSeedDefaultPort,
+				DNSSeedDefaultInterval,
+				srv.log,
+			)
+		}()
+		srv.log.Info("DNS-seed resolver enabled", "hosts", srv.DNSSeeds, "interval", DNSSeedDefaultInterval, "port", DNSSeedDefaultPort)
+	}
+	return nil
+}
+
+// warnOnLegacyUDPDominance logs at warn level if legacy_udp entries
+// account for more than 50% of the addrbook. PIP-0006 Phase 5 flags
+// this as a signal of poor v2.0 network share — the operator should
+// investigate whether they've partitioned onto v1.x peers only.
+func (srv *Server) warnOnLegacyUDPDominance() {
+	if srv.addrbook == nil {
+		return
+	}
+	total := srv.addrbook.Size(nil, nil)
+	if total < 20 {
+		// Too few entries for the ratio to be meaningful.
+		return
+	}
+	counts := srv.addrbook.CountsBySource()
+	legacy := counts[addrman.SourceLegacyUDP]
+	if legacy*2 > total {
+		srv.log.Warn("addrbook dominated by legacy_udp entries — v2.0 network share may be low",
+			"legacy_udp", legacy, "total", total)
+	}
 }
 
 func (srv *Server) setupLocalNode() error {
@@ -510,6 +770,10 @@ func (srv *Server) setupLocalNode() error {
 	srv.nodedb = db
 	srv.localnode = enode.NewLocalNode(db, srv.PrivateKey)
 	srv.localnode.SetFallbackIP(net.IP{127, 0, 0, 1})
+	// Advertise v2-transport acceptance in our ENR. Peers that
+	// resolve our enode (via enrtree or discv4) will see this and
+	// dial v2 directly instead of v1-then-promote.
+	srv.localnode.Set(enrV2Transport{})
 	// TODO: check conflicts
 	for _, p := range srv.Protocols {
 		for _, e := range p.Attributes {
@@ -545,11 +809,20 @@ func (srv *Server) setupLocalNode() error {
 func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
-	// Add protocol-specific discovery sources.
+	// Add protocol-specific discovery sources. Tee each into addrman
+	// (when present) with source=dns_seed so the enrtree-delivered
+	// enodes become addrman entries — otherwise addrman sees only
+	// the static MainnetBootnodes ingest and has no view of the rest
+	// of the network, which leaves stale KeyType=0x00 entries
+	// dominating V2Iter with nothing to balance them out.
 	added := make(map[string]bool)
 	for _, proto := range srv.Protocols {
 		if proto.DialCandidates != nil && !added[proto.Name] {
-			srv.discmix.AddSource(proto.DialCandidates)
+			src := proto.DialCandidates
+			if srv.addrbook != nil {
+				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceDNSSeed)
+			}
+			srv.discmix.AddSource(src)
 			added[proto.Name] = true
 		}
 	}
@@ -601,6 +874,10 @@ func (srv *Server) setupDiscovery() error {
 			unhandled = make(chan discover.ReadPacket, 100)
 			sconn = &sharedUDPConn{conn, unhandled}
 		}
+		// discv4 seeds its routing table with BootstrapNodes (NodeID-
+		// carrying entries). BootstrapNodesV2 (ip:port only) are not
+		// usable here — discv4 is NodeID-keyed — and reach the v2
+		// handshake path through addrman ingest in setupAddrMan.
 		cfg := discover.Config{
 			PrivateKey:  srv.PrivateKey,
 			NetRestrict: srv.NetRestrict,
@@ -614,7 +891,29 @@ func (srv *Server) setupDiscovery() error {
 			return err
 		}
 		srv.ntab = ntab
-		srv.discmix.AddSource(ntab.RandomNodes())
+		// PIP-0006 Phase 5: legacy discovery mode gates whether
+		// discv4 drives the dial path. Modes:
+		//   on    — discv4 is a full dial source (v1.x compat).
+		//   auto  — discv4 responds but is NOT plumbed to the
+		//           dialer; addrman is the source of truth.
+		//   off   — this branch isn't reached because NoDiscovery
+		//           is already true (see setLegacyDiscoveryDefaults).
+		//
+		// discv4's own periodic table refresh still runs in auto
+		// mode so inbound PING/FINDNODE continues to work and the
+		// routing table stays warm — we only skip using RandomNodes
+		// as a dial candidate iterator.
+		mode := srv.legacyDiscoveryMode()
+		if mode == legacyDiscoveryOn {
+			src := ntab.RandomNodes()
+			if srv.addrbook != nil {
+				// Tee discv4 discoveries into addrman with
+				// source=legacy_udp. Original node passes
+				// through to the dialer unchanged.
+				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
+			}
+			srv.discmix.AddSource(src)
+		}
 	}
 
 	// Discovery V5
@@ -647,6 +946,8 @@ func (srv *Server) setupDialScheduler() {
 		netRestrict:    srv.NetRestrict,
 		dialer:         srv.Dialer,
 		clock:          srv.clock,
+		v2Predicate:    hasV2TransportENR,
+		v2Dial:         srv.DialV2,
 	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
@@ -654,10 +955,431 @@ func (srv *Server) setupDialScheduler() {
 	if config.dialer == nil {
 		config.dialer = tcpDialer{&net.Dialer{Timeout: defaultDialTimeout}}
 	}
+	// When addrman is enabled, add its NodeIter as an additional FairMix
+	// source. discmix hands the dialer candidates round-robin across
+	// sources, so this lets addrman feed dials without displacing
+	// discv4 during the transition window.
+	if srv.addrbook != nil {
+		srv.addrbookIter = addrman.NewNodeIter(srv.addrbook, 250*time.Millisecond)
+		srv.discmix.AddSource(srv.addrbookIter)
+		// v2 dialer is always spawned — v2 handshake is not
+		// operator-optional. V2Iter yields KeyType=0x00 entries;
+		// when the addrbook has none (e.g., a freshly-installed
+		// v1.x-only network), the goroutine idles on its internal
+		// backoff.
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
+		srv.loopWG.Add(1)
+		go srv.runV2Dialer()
+	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
 		srv.dialsched.addStatic(n)
 	}
+}
+
+// legacyDiscoveryMode parses Config.LegacyDiscoveryMode into a
+// stable enum. Unknown / empty values map to auto.
+type legacyDiscoveryMode int
+
+const (
+	legacyDiscoveryAuto legacyDiscoveryMode = iota
+	legacyDiscoveryOn
+	legacyDiscoveryOff
+)
+
+func (srv *Server) legacyDiscoveryMode() legacyDiscoveryMode {
+	switch srv.LegacyDiscoveryMode {
+	case "on":
+		return legacyDiscoveryOn
+	case "off":
+		return legacyDiscoveryOff
+	case "", "auto":
+		return legacyDiscoveryAuto
+	}
+	srv.log.Warn("unknown --legacy-discovery value; defaulting to auto", "value", srv.LegacyDiscoveryMode)
+	return legacyDiscoveryAuto
+}
+
+// applyLegacyDiscoveryMode rewrites NoDiscovery for mode=off. Must be
+// called before setupDiscovery. mode=auto/on leave NoDiscovery alone —
+// auto still listens to answer inbound, it just doesn't drive the
+// dial path (see setupDiscovery).
+func (srv *Server) applyLegacyDiscoveryMode() {
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
+		srv.NoDiscovery = true
+	}
+}
+
+// runV2Dialer drains v2-native addrman entries and launches a Server
+// DialV2 for each. Rate-limited to one outstanding dial at a time so
+// a large addrbook doesn't burst-dial the network.
+func (srv *Server) runV2Dialer() {
+	defer srv.loopWG.Done()
+
+	// No local cooldown: DialV2 itself gates per-addr timing via
+	// v2DialCooldownCheckAndMark. If the cooldown rejects a draw we
+	// back off briefly to stop the iterator from looping hot.
+	const cooldownRejectPause = 1 * time.Second
+
+	var prev time.Time
+	for srv.v2Iter.Next() {
+		select {
+		case <-srv.quit:
+			return
+		default:
+		}
+		cand := srv.v2Iter.Candidate()
+		addrPort, ok := cand.Addr.AddrPort()
+		if !ok {
+			continue
+		}
+		tcp := &net.TCPAddr{IP: addrPort.Addr().AsSlice(), Port: int(addrPort.Port())}
+		now := time.Now()
+		var sincePrev time.Duration
+		if !prev.IsZero() {
+			sincePrev = now.Sub(prev)
+		}
+		srv.log.Trace("pip6: runV2Dialer iter", "addr", tcp.String(), "sincePrev", sincePrev)
+		prev = now
+		if err := srv.DialV2(tcp); err != nil {
+			srv.log.Trace("v2 dial failed", "addr", tcp, "err", err)
+			if errors.Is(err, errV2DialCooldown) {
+				select {
+				case <-srv.quit:
+					return
+				case <-time.After(cooldownRejectPause):
+				}
+			}
+		}
+	}
+}
+
+// DialV2 opens a v2-handshake TCP connection to the supplied address
+// and hands the resulting peer to the normal run-loop checkpoints.
+// Called by the v2 dial goroutine and by admin_dialV2 for operator
+// testing.
+//
+// Skips the dial if any existing peer is already connected on the
+// same (IP, TCP port). v2 sessions derive node.ID from ephemeral
+// keys, so the Server's node.ID-keyed peer map can't dedupe on its
+// own — short-circuit here before the TCP connection spends kernel
+// resources on a duplicate handshake.
+func (srv *Server) DialV2(addr *net.TCPAddr) error {
+	if addr == nil {
+		return errors.New("v2 dial: nil address")
+	}
+	if !srv.v2DialCooldownCheckAndMark(addr) {
+		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
+	}
+	already := srv.alreadyConnectedTo(addr)
+	peerCount := len(srv.Peers())
+	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount)
+	if already {
+		// Refresh LastTry without counting a failure. addrman's
+		// Select chance weighting drops ~100x for 10 min once
+		// LastTry is recent, so the iterator stops burning cycles
+		// re-picking an endpoint we already peer with via v1.
+		srv.addrmanAttemptByTCP(addr, false)
+		return fmt.Errorf("v2 dial %s: already connected", addr)
+	}
+	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
+	if err != nil {
+		srv.addrmanAttemptByTCP(addr, true)
+		return fmt.Errorf("v2 dial %s: %w", addr, err)
+	}
+	// Flags: dynDialedConn so the run loop slots it correctly, plus
+	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
+	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil); err != nil {
+		// v2 handshake / protocol negotiation failed before a Peer
+		// object was constructed, so the delpeer path never runs
+		// and addrman never learns the entry is unreachable. Record
+		// it here so IsTerrible can eventually evict it.
+		srv.addrmanAttemptByTCP(addr, true)
+		return err
+	}
+	return nil
+}
+
+// addrmanAttemptByTCP records a dial attempt in addrman, keyed by
+// (IP, port). countFailure=true bumps the failure counter so
+// IsTerrible can eventually evict unreachable entries; pass false to
+// update only LastTry (throttles re-selection without signalling
+// unreachability — used when we short-circuit a dial because we're
+// already peered with the endpoint via a different transport).
+func (srv *Server) addrmanAttemptByTCP(addr *net.TCPAddr, countFailure bool) {
+	if srv.addrbook == nil || addr == nil || addr.IP == nil {
+		return
+	}
+	var netID addrman.NetID
+	var bytes []byte
+	if v4 := addr.IP.To4(); v4 != nil {
+		netID, bytes = addrman.NetIPv4, v4
+	} else {
+		netID, bytes = addrman.NetIPv6, addr.IP.To16()
+	}
+	na, err := addrman.NewNetAddr(netID, bytes, uint16(addr.Port))
+	if err != nil {
+		return
+	}
+	srv.addrbook.Attempt(na, countFailure, time.Now())
+}
+
+// v2DialCooldown is the minimum interval between successive v2 dial
+// attempts to the same (IP, port). Select's chanceFactor ramp
+// guarantees addrman returns a candidate regardless of LastTry, so
+// chance-based throttling isn't a rate-limit when the KeyType=0
+// cohort is small; this is the authoritative gate.
+const v2DialCooldown = 30 * time.Second
+
+// errV2DialCooldown is the sentinel returned by DialV2 when the
+// per-addr cooldown rejects an attempt. Callers check with
+// errors.Is to back off instead of treating the rejection as a
+// real failure.
+var errV2DialCooldown = errors.New("v2 dial cooldown")
+
+// v2DialCooldownCheckAndMark returns true and records addr's dial
+// timestamp if the cooldown has elapsed; returns false otherwise.
+// Serialized so concurrent callers (runV2Dialer, dial-scheduler v2
+// branch, admin RPC) agree on the decision.
+func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
+	key := addr.String()
+	now := time.Now()
+	srv.v2DialRecentMu.Lock()
+	defer srv.v2DialRecentMu.Unlock()
+	if srv.v2DialRecent == nil {
+		srv.v2DialRecent = make(map[string]time.Time)
+	}
+	if last, ok := srv.v2DialRecent[key]; ok && now.Sub(last) < v2DialCooldown {
+		return false
+	}
+	srv.v2DialRecent[key] = now
+	// Opportunistic purge — cheap because the map is small.
+	for k, t := range srv.v2DialRecent {
+		if now.Sub(t) >= v2DialCooldown {
+			delete(srv.v2DialRecent, k)
+		}
+	}
+	return true
+}
+
+// alreadyConnectedTo reports whether any current peer has a RemoteAddr
+// matching addr's (IP, port). Used by DialV2 to dedupe v2 targets
+// that can't be caught by node.ID-keyed matching.
+func (srv *Server) alreadyConnectedTo(addr *net.TCPAddr) bool {
+	for _, p := range srv.Peers() {
+		pra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if pra.Port == addr.Port && pra.IP.Equal(addr.IP) {
+			return true
+		}
+	}
+	return false
+}
+
+// logStartup emits the node's starting address as plain ip:port
+// rather than a full enode URL. The URL form hard-couples to the v1.x
+// identity model, which misleads operators running in v2-only mode
+// (where the persistent secp256k1 key doesn't participate in any
+// handshake). For v1.x-compatible modes the enode URL is still worth
+// having — we emit it at debug level as a secondary line.
+func (srv *Server) logStartup() {
+	n := srv.localnode.Node()
+	srv.log.Info("Started P2P networking",
+		"address", formatAddr(n.IP(), n.TCP()),
+		"mode", srv.startupModeString())
+	if srv.legacyHandshakeMode() != legacyHandshakeOff {
+		srv.log.Debug("Legacy enode URL", "self", n.URLv4())
+	}
+}
+
+// formatAddr renders an ip/port pair as "ip:port", bracketing IPv6
+// to keep the colon separator unambiguous.
+func formatAddr(ip net.IP, port int) string {
+	return (&net.TCPAddr{IP: ip, Port: port}).String()
+}
+
+// startupModeString describes the handshake/discovery posture for the
+// startup banner.
+func (srv *Server) startupModeString() string {
+	switch srv.legacyDiscoveryMode() {
+	case legacyDiscoveryOff:
+		return "v2-only"
+	case legacyDiscoveryOn:
+		return "legacy+v2 (discv4-full)"
+	}
+	return "legacy+v2 (discv4-responder)"
+}
+
+// watchLocalAddrChanges polls the LocalNode's advertised IP/port and
+// logs a follow-up line when they change — typically when NAT/UPnP
+// resolves the public IP or the ENR is refreshed by a peer observation.
+// The poll cadence matches the LocalNode's internal refresh rate
+// closely enough; precise hooks would require a subscription API on
+// LocalNode that doesn't exist yet.
+func (srv *Server) watchLocalAddrChanges() {
+	prevIP := srv.localnode.Node().IP()
+	prevPort := srv.localnode.Node().TCP()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-srv.quit:
+			return
+		case <-tick.C:
+			n := srv.localnode.Node()
+			ip, port := n.IP(), n.TCP()
+			if !ip.Equal(prevIP) || port != prevPort {
+				srv.log.Info("P2P external address updated", "address", formatAddr(ip, port))
+				prevIP, prevPort = ip, port
+			}
+		}
+	}
+}
+
+// LegacyHandshakeRefused reports whether this Server is in v2-only
+// mode (--legacy-discovery=off). Exposed for RPC handlers that want
+// to branch on the transport posture — e.g., admin_addPeer rejects
+// enode:// targets in this mode because the legacy handshake is
+// refused both inbound and outbound.
+func (srv *Server) LegacyHandshakeRefused() bool {
+	return srv.legacyHandshakeMode() == legacyHandshakeOff
+}
+
+// DisconnectByAddr finds the first connected peer whose RemoteAddr
+// matches the given TCP address and disconnects it. Returns true if
+// a matching peer was found. Used by admin_removePeer in v2 mode
+// because v2 peer identities are session-ephemeral and can't be used
+// as stable lookup keys.
+func (srv *Server) DisconnectByAddr(addr *net.TCPAddr) bool {
+	if addr == nil {
+		return false
+	}
+	for _, p := range srv.Peers() {
+		ra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if ra.Port == addr.Port && ra.IP.Equal(addr.IP) {
+			p.Disconnect(DiscRequested)
+			return true
+		}
+	}
+	return false
+}
+
+// AddrBook returns the server's address manager, or nil when
+// ExperimentalAddrMan is not enabled. Upstream packages register the
+// parallax-disc/1 subprotocol against this book — doing the
+// registration here would create an import cycle with
+// p2p/protocols/disc.
+func (srv *Server) AddrBook() *addrman.AddrMan { return srv.addrbook }
+
+// addrmanGood marks the peer's address as verified in the addrman.
+// No-op when ExperimentalAddrMan is off. Called from the run-loop
+// right after a peer joins the peers map.
+//
+// Note on KeyType: we deliberately do NOT upgrade an existing entry's
+// KeyType on success. A remote that accepts a v1 RLPx handshake may
+// also accept v2 BIP324 on the same endpoint — v1-success does not
+// imply v2-failure. Changing 0x00 → 0x01 here would hide a legitimate
+// dual-stack peer from V2Iter. Short-circuit / dial noise on v2-only
+// entries that only speak v1 is instead handled via:
+//   - Attempt(countFailure=true) on real dial failures,
+//   - Attempt(countFailure=false) on alreadyConnectedTo short-circuit
+//     (refreshes LastTry, decays Select chance to ~1% for 10 min),
+//   - V2Iter skip on IsTerrible entries (closes the stale-entry loop).
+func (srv *Server) addrmanGood(p *Peer) {
+	if srv.addrbook == nil {
+		return
+	}
+	addr, ok := peerAdvertisedAddr(p)
+	if !ok {
+		return
+	}
+	srv.log.Trace("pip6: addrmanGood",
+		"addr", addr.String(),
+		"isV2", p.UsingV2Handshake(),
+		"id", p.ID())
+	srv.addrbook.Good(addr, time.Now())
+}
+
+// peerAdvertisedAddr returns the addrman.NetAddr form of a Peer's
+// advertised listening endpoint — (IP, TCP) from p.Node() rather than
+// the TCP socket's RemoteAddr. Inbound v1 peers' RemoteAddr carries
+// the ephemeral source port, which doesn't match the addrman entry
+// keyed by the peer's listening port; p.Node() is rebuilt in
+// SetupConn for inbound v1 to hold the handshake-advertised port.
+// Outbound v1 peers have c.node = dialDest, which already carries
+// the correct listening port.
+func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
+	n := p.Node()
+	if n == nil {
+		return addrman.NetAddr{}, false
+	}
+	ip := n.IP()
+	port := n.TCP()
+	if ip == nil || port == 0 {
+		return peerRemoteAddr(p)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv4, v4, uint16(port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	if v6 := ip.To16(); v6 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv6, v6, uint16(port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	return addrman.NetAddr{}, false
+}
+
+// addrmanAttempt records a failed connection attempt in the addrman.
+// No-op when ExperimentalAddrMan is off.
+func (srv *Server) addrmanAttempt(p *Peer) {
+	if srv.addrbook == nil {
+		return
+	}
+	addr, ok := peerRemoteAddr(p)
+	if !ok {
+		return
+	}
+	srv.addrbook.Attempt(addr, true, time.Now())
+}
+
+// peerRemoteAddr extracts the addrman.NetAddr form of a Peer's
+// RemoteAddr. Returns ok=false for non-TCP or unresolvable connections
+// (test pipes, Unix sockets, etc.).
+func peerRemoteAddr(p *Peer) (addrman.NetAddr, bool) {
+	ra := p.RemoteAddr()
+	if ra == nil {
+		return addrman.NetAddr{}, false
+	}
+	tcp, ok := ra.(*net.TCPAddr)
+	if !ok {
+		return addrman.NetAddr{}, false
+	}
+	if v4 := tcp.IP.To4(); v4 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv4, v4, uint16(tcp.Port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	if v6 := tcp.IP.To16(); v6 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv6, v6, uint16(tcp.Port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	return addrman.NetAddr{}, false
 }
 
 func (srv *Server) maxInboundConns() int {
@@ -728,7 +1450,8 @@ func (srv *Server) doPeerOp(fn peerOpFunc) {
 
 // run is the main loop of the server.
 func (srv *Server) run() {
-	srv.log.Info("Started P2P networking", "self", srv.localnode.Node().URLv4())
+	srv.logStartup()
+	go srv.watchLocalAddrChanges()
 	defer srv.loopWG.Done()
 	defer srv.nodedb.Close()
 	defer srv.discmix.Close()
@@ -798,6 +1521,10 @@ running:
 				if p.Inbound() {
 					inboundCount++
 				}
+				// addrman.Good: mark this peer's address as verified.
+				// Callers to addrman learn from our successes this
+				// way — matches CAddrMan::Good in src/addrman.cpp.
+				srv.addrmanGood(p)
 			}
 			c.cont <- err
 
@@ -809,6 +1536,14 @@ running:
 			srv.dialsched.peerRemoved(pd.rw)
 			if pd.Inbound() {
 				inboundCount--
+			}
+			// addrman.Attempt: log the dial failure so IsTerrible
+			// eventually evicts unreachable entries. Only count
+			// failures on outbound-dial sessions — inbound
+			// disconnects tell us nothing about our view of the
+			// peer's reachability.
+			if pd.err != nil && !pd.Inbound() {
+				srv.addrmanAttempt(pd.Peer)
 			}
 		}
 	}
@@ -846,9 +1581,26 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 		return DiscAlreadyConnected
 	case c.node.ID() == srv.localnode.ID():
 		return DiscSelf
-	default:
-		return nil
 	}
+	// Phase 2b dedup: v2 sessions derive node.ID from ephemeral
+	// X25519 keys, so reconnecting to the same remote yields a
+	// fresh-looking ID that the map above can't flag. Fall back to
+	// (IP, TCP port) matching — if a peer on the same address is
+	// already connected, treat this as a duplicate.
+	if _, isV2 := c.transport.(*v2Transport); isV2 {
+		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			for _, p := range peers {
+				pra, ok := p.RemoteAddr().(*net.TCPAddr)
+				if !ok {
+					continue
+				}
+				if pra.Port == remote.Port && pra.IP.Equal(remote.IP) {
+					return DiscAlreadyConnected
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
@@ -927,11 +1679,81 @@ func (srv *Server) listenLoop() {
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
 		go func() {
-			srv.SetupConn(fd, inboundConn, nil)
+			// PIP-0006 Phase 2b: peek the first byte to classify the
+			// inbound connection as legacy ECIES or v2 AEAD. The
+			// peekedConn wrapper replays the byte for the legacy
+			// path and consumes it for the v2 path. peeked-variant
+			// is read by pickHandshakeVariant in SetupConn.
+			wrapped := srv.dispatchInbound(fd)
+			if wrapped != nil {
+				srv.SetupConn(wrapped, inboundConn, nil)
+			}
 			slots <- struct{}{}
 		}()
 	}
 }
+
+// dispatchInbound inspects the first byte of fd to classify the
+// handshake variant. Returns nil after closing fd if the peek failed
+// or the byte doesn't match a supported variant under the current
+// configuration.
+//
+// Rules (v2 handshake is always available in this build):
+//   - Peek the first byte.
+//   - 0xA0 → v2 handshake (magic consumed by the peek).
+//   - Legacy RLPx magic → accepted only when legacyHandshakeMode == on.
+//   - Anything else → reject.
+func (srv *Server) dispatchInbound(fd net.Conn) net.Conn {
+	// Give the peek a short deadline so a silent client doesn't
+	// burn a goroutine forever.
+	_ = fd.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	variant, peeked, err := bip324handshake.PeekVersion(fd)
+	// Reset read deadline — individual handshakes manage their own.
+	_ = fd.SetReadDeadline(time.Time{})
+	if err != nil {
+		srv.log.Trace("Peek failed on inbound connection", "addr", fd.RemoteAddr(), "err", err)
+		fd.Close()
+		return nil
+	}
+	wrapped := &peekedConn{Conn: fd, peeked: peeked}
+	switch variant {
+	case bip324handshake.VariantV2:
+		wrapped.variant = peekedVariantV2
+		return wrapped
+	case bip324handshake.VariantLegacy:
+		if srv.legacyHandshakeMode() == legacyHandshakeOff {
+			srv.log.Trace("Rejecting legacy inbound (LegacyHandshakeMode=off)", "addr", fd.RemoteAddr())
+			fd.Close()
+			return nil
+		}
+		wrapped.variant = peekedVariantLegacy
+		return wrapped
+	default:
+		srv.log.Trace("Rejecting unknown-handshake inbound", "addr", fd.RemoteAddr())
+		fd.Close()
+		return nil
+	}
+}
+
+// peekedConn wraps a net.Conn that's had its first byte(s) peeked by
+// bip324handshake.PeekVersion. The v2 path has already consumed the
+// magic byte; the legacy path replays it.
+type peekedConn struct {
+	net.Conn
+	peeked  *bip324handshake.PeekedConn
+	variant peekedVariant
+}
+
+// Read delegates to the PeekedConn's Read, which handles replay
+// transparently for the legacy path.
+func (p *peekedConn) Read(b []byte) (int, error) { return p.peeked.Read(b) }
+
+type peekedVariant int
+
+const (
+	peekedVariantLegacy peekedVariant = iota
+	peekedVariantV2
+)
 
 func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	if remoteIP == nil {
@@ -941,10 +1763,12 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	if srv.NetRestrict != nil && !srv.NetRestrict.Contains(remoteIP) {
 		return fmt.Errorf("not in netrestrict list")
 	}
-	// Reject Internet peers that try too often.
+	// Reject Internet peers that try too often. Allow up to
+	// maxInboundConnAttemptsPerIP concurrent in-window attempts from
+	// the same source IP — anything over that is rate-limited.
 	now := srv.clock.Now()
 	srv.inboundHistory.expire(now, nil)
-	if !netutil.IsLAN(remoteIP) && srv.inboundHistory.contains(remoteIP.String()) {
+	if !netutil.IsLAN(remoteIP) && srv.inboundHistory.count(remoteIP.String()) >= maxInboundConnAttemptsPerIP {
 		return fmt.Errorf("too many attempts")
 	}
 	srv.inboundHistory.add(remoteIP.String(), now.Add(inboundThrottleTime))
@@ -956,10 +1780,23 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
-	if dialDest == nil {
-		c.transport = srv.newTransport(fd, nil)
-	} else {
-		c.transport = srv.newTransport(fd, dialDest.Pubkey())
+	variant := srv.pickHandshakeVariant(fd, flags, dialDest)
+	switch variant {
+	case handshakeVariantV2:
+		// Outbound v2 dial: the TCP connection is freshly open; the
+		// v2Transport's DialHandshake will write the magic byte.
+		c.transport = newV2Outbound(fd)
+	case handshakeVariantV2Inbound:
+		// Inbound v2: the listener-side PeekVersion has already
+		// consumed the magic byte. Wrap the peeked connection.
+		c.transport = newV2Inbound(fd)
+	default:
+		// Legacy RLPx path (unchanged).
+		if dialDest == nil {
+			c.transport = srv.newTransport(fd, nil)
+		} else {
+			c.transport = srv.newTransport(fd, dialDest.Pubkey())
+		}
 	}
 
 	err := srv.setupConn(c, flags, dialDest)
@@ -967,6 +1804,73 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) 
 		c.close(err)
 	}
 	return err
+}
+
+// handshakeVariant is the per-connection choice between legacy RLPx
+// ECIES and the Phase 2b v2 handshake. Chosen by pickHandshakeVariant
+// at connection setup time.
+type handshakeVariant int
+
+const (
+	handshakeVariantLegacy handshakeVariant = iota
+	handshakeVariantV2
+	handshakeVariantV2Inbound
+)
+
+// pickHandshakeVariant decides which handshake path to use for a given
+// connection. The three axes that matter:
+//
+//   - Is this an outbound dial or an inbound accept?
+//   - Is ExperimentalV2Handshake enabled?
+//   - For outbound: does the dial target carry a legacy NodeID (its
+//     pubkey resolves to a usable secp256k1 point) or is it a
+//     v2-native entry (dialDest is nil / marker)?
+//
+// For inbound, the caller (listener goroutine) has already dispatched
+// via bip324handshake.PeekVersion; pickHandshakeVariant reads a
+// per-connection flag recorded on the fd.
+func (srv *Server) pickHandshakeVariant(fd net.Conn, flags connFlag, dialDest *enode.Node) handshakeVariant {
+	// Inbound: the peek-result is hung off the connection via a
+	// *peekedConn wrapper. If peek said v2, the wrapper signals it
+	// through the peekedVariant field.
+	if flags&inboundConn != 0 {
+		if pc, ok := fd.(*peekedConn); ok && pc.variant == peekedVariantV2 {
+			return handshakeVariantV2Inbound
+		}
+		return handshakeVariantLegacy
+	}
+	// Outbound: the v2 dial path sets v2DialedConn explicitly, so we
+	// key off that flag rather than guessing from dialDest. This
+	// preserves the legacy outbound contract (dialDest==nil still
+	// means "unspecified target, use legacy"), which existing tests
+	// and callers rely on.
+	if flags&v2DialedConn != 0 {
+		return handshakeVariantV2
+	}
+	// --legacy-discovery=off forbids legacy outbound: anything that
+	// reaches here without the v2-dial flag is a bug, but we route it
+	// to v2 rather than silently use the legacy path.
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+		return handshakeVariantV2
+	}
+	return handshakeVariantLegacy
+}
+
+// legacyHandshakeMode is a derived view of LegacyDiscoveryMode — UDP
+// discovery and legacy RLPx handshake are the two halves of the same
+// v1.x identity model, so they share a single operator knob.
+type legacyHandshakeMode int
+
+const (
+	legacyHandshakeOn legacyHandshakeMode = iota
+	legacyHandshakeOff
+)
+
+func (srv *Server) legacyHandshakeMode() legacyHandshakeMode {
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
+		return legacyHandshakeOff
+	}
+	return legacyHandshakeOn
 }
 
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) error {
@@ -994,10 +1898,17 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
 		return err
 	}
-	if dialDest != nil {
-		c.node = dialDest
-	} else {
+	// For v2 transports there is no persistent peer identity; we
+	// derive c.node from the remote ephemeral X25519 key via
+	// v2NodeFromConn, which uses enode.SignNull to assign a
+	// session-scoped ID. Any dialDest we started with is replaced so
+	// the run-loop's peers map is keyed by the real session identity.
+	if v2t, v2 := c.transport.(*v2Transport); v2 {
+		c.node = v2NodeFromConn(v2t.remoteEphem, c.fd)
+	} else if dialDest == nil {
 		c.node = nodeFromConn(remotePubkey, c.fd)
+	} else {
+		c.node = dialDest
 	}
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)
@@ -1017,6 +1928,18 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		return DiscUnexpectedIdentity
 	}
 	c.caps, c.name = phs.Caps, phs.Name
+	// Inbound v1 peers: nodeFromConn built c.node with the ephemeral
+	// source port from the TCP socket, which won't match any addrman
+	// entry keyed by the peer's advertised listening port. Rebuild
+	// c.node using phs.ListenPort so addrmanGood resolves to the
+	// correct service-key.
+	if _, isV2 := c.transport.(*v2Transport); !isV2 && c.is(inboundConn) && phs.ListenPort != 0 {
+		if tcp, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			if pub := c.node.Pubkey(); pub != nil {
+				c.node = enode.NewV4(pub, tcp.IP, int(phs.ListenPort), int(phs.ListenPort))
+			}
+		}
+	}
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
@@ -1092,15 +2015,26 @@ func (srv *Server) runPeer(p *Peer) {
 }
 
 // NodeInfo represents a short summary of the information known about the host.
+//
+// Enode and ENR are pointer types so they marshal to JSON null when the
+// node is running in v2-only mode (--legacy-discovery=off) — the
+// persistent secp256k1 identity has no peer-visible use in that mode,
+// and emitting its URL as if it were a dialable identifier would
+// mislead operators.
 type NodeInfo struct {
-	ID    string `json:"id"`    // Unique node identifier (also the encryption key)
-	Name  string `json:"name"`  // Name of the node, including client type, version, OS, custom data
-	Enode string `json:"enode"` // Enode URL for adding this peer from remote peers
-	ENR   string `json:"enr"`   // Parallax Node Record
-	IP    string `json:"ip"`    // IP address of the node
+	ID    string  `json:"id"`    // Unique node identifier (also the encryption key)
+	Name  string  `json:"name"`  // Name of the node, including client type, version, OS, custom data
+	Enode *string `json:"enode"` // Enode URL for adding this peer from remote peers; null in v2-only mode
+	ENR   *string `json:"enr"`   // Parallax Node Record; null in v2-only mode
+	IP    string  `json:"ip"`    // IP address of the node
 	Ports struct {
-		Discovery int `json:"discovery"` // UDP listening port for discovery protocol
-		Listener  int `json:"listener"`  // TCP listening port for RLPx
+		// Discovery is the UDP listening port for legacy discv4. In
+		// v2-only mode (--legacy-discovery=off) there is no UDP
+		// socket, and this field reports the TCP listener port
+		// instead — discovery on a v2-only node happens entirely
+		// over TCP via parallax-disc/1 gossip.
+		Discovery int `json:"discovery"`
+		Listener  int `json:"listener"` // TCP listening port for RLPx
 	} `json:"ports"`
 	ListenAddr string         `json:"listenAddr"`
 	Protocols  map[string]any `json:"protocols"`
@@ -1112,15 +2046,23 @@ func (srv *Server) NodeInfo() *NodeInfo {
 	node := srv.Self()
 	info := &NodeInfo{
 		Name:       srv.Name,
-		Enode:      node.URLv4(),
 		ID:         node.ID().String(),
 		IP:         node.IP().String(),
 		ListenAddr: srv.ListenAddr,
 		Protocols:  make(map[string]any),
 	}
-	info.Ports.Discovery = node.UDP()
 	info.Ports.Listener = node.TCP()
-	info.ENR = node.String()
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+		// v2-only: no persistent identity is dialable, no UDP exists.
+		// Enode/ENR null, discovery port mirrors the TCP port.
+		info.Ports.Discovery = node.TCP()
+	} else {
+		enode := node.URLv4()
+		enr := node.String()
+		info.Enode = &enode
+		info.ENR = &enr
+		info.Ports.Discovery = node.UDP()
+	}
 
 	// Gather all the running protocol infos (only once per protocol type)
 	for _, proto := range srv.Protocols {
@@ -1144,10 +2086,17 @@ func (srv *Server) PeersInfo() []*PeerInfo {
 			infos = append(infos, peer.Info())
 		}
 	}
-	// Sort the result array alphabetically by node identifier
+	// Sort the result array by node identifier where available,
+	// falling back to RemoteAddress for v2 peers (whose ID is nil).
+	keyOf := func(p *PeerInfo) string {
+		if p.ID != nil {
+			return *p.ID
+		}
+		return p.Network.RemoteAddress
+	}
 	for i := 0; i < len(infos); i++ {
 		for j := i + 1; j < len(infos); j++ {
-			if infos[i].ID > infos[j].ID {
+			if keyOf(infos[i]) > keyOf(infos[j]) {
 				infos[i], infos[j] = infos[j], infos[i]
 			}
 		}

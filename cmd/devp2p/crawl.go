@@ -35,6 +35,54 @@ type parallaxENREntry struct {
 
 func (e parallaxENREntry) ENRKey() string { return "parallax" }
 
+// pipv2ENREntry tests for the "pipv2" key — the v2-transport
+// capability flag set by nodes that accept BIP324-style handshakes.
+// Used by the crawler to report v2 adoption across the discovered
+// network.
+type pipv2ENREntry struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (e pipv2ENREntry) ENRKey() string { return "pipv2" }
+
+// hasPipV2 reports whether n's ENR advertises v2-transport support.
+func hasPipV2(n *enode.Node) bool {
+	if n == nil {
+		return false
+	}
+	var e pipv2ENREntry
+	return n.Load(&e) == nil
+}
+
+// logCrawlEntry emits a per-node info line describing the crawler's
+// decision for n. One line per processed entry so operators can see
+// the crawl unfold live rather than wait for the periodic status
+// ticker.
+func logCrawlEntry(status int, n *enode.Node) {
+	if n == nil {
+		return
+	}
+	action := "updated"
+	switch status {
+	case nodeAdded:
+		action = "added"
+	case nodeRemoved:
+		action = "removed"
+	case nodeSkipRecent:
+		action = "skip_recent"
+	case nodeSkipIncompat:
+		action = "skip_incompat"
+	}
+	logging.Info("Crawl entry",
+		"action", action,
+		"id", n.ID(),
+		"ip", n.IP(),
+		"tcp", n.TCP(),
+		"udp", n.UDP(),
+		"seq", n.Seq(),
+		"pipv2", hasPipV2(n))
+}
+
 type crawler struct {
 	input     nodeSet
 	output    nodeSet
@@ -112,7 +160,8 @@ func (c *crawler) run(timeout time.Duration, nthreads int) nodeSet {
 			for {
 				select {
 				case n := <-c.ch:
-					switch c.updateNode(n) {
+					status := c.updateNode(n)
+					switch status {
 					case nodeSkipIncompat:
 						atomic.AddUint64(&skipped, 1)
 					case nodeSkipRecent:
@@ -124,6 +173,7 @@ func (c *crawler) run(timeout time.Duration, nthreads int) nodeSet {
 					default:
 						atomic.AddUint64(&updated, 1)
 					}
+					logCrawlEntry(status, n)
 				case <-c.closed:
 					return
 				}
@@ -166,6 +216,18 @@ loop:
 		<-doneCh
 	}
 	wg.Wait()
+
+	var v2Count int
+	for _, n := range c.output {
+		if hasPipV2(n.N) {
+			v2Count++
+		}
+	}
+	logging.Info("Crawl complete",
+		"total", len(c.output),
+		"pipv2", v2Count,
+		"v1_only", len(c.output)-v2Count)
+
 	return c.output
 }
 

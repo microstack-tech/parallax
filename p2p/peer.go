@@ -223,6 +223,17 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
+// UsingV2Handshake reports whether this session is authenticated via
+// the PIP-0006 Phase 2b BIP324-style v2 handshake (true) or the legacy
+// RLPx ECIES handshake (false). Callers use this to tell whether the
+// remote supports the v2 transport: a v2 session proves v2 support,
+// while a legacy session says nothing about whether the remote would
+// also accept v2 — it only tells us they accepted legacy from us.
+func (p *Peer) UsingV2Handshake() bool {
+	_, ok := p.rw.transport.(*v2Transport)
+	return ok
+}
+
 func newPeer(log logging.Logger, conn *conn, protocols []Protocol) *Peer {
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
@@ -489,11 +500,22 @@ func (rw *protoRW) ReadMsg() (Msg, error) {
 // peer. Sub-protocol independent fields are contained and initialized here, with
 // protocol specifics delegated to all connected sub-protocols.
 type PeerInfo struct {
-	ENR     string   `json:"enr,omitempty"` // Parallax Node Record
-	Enode   string   `json:"enode"`         // Node URL
-	ID      string   `json:"id"`            // Unique node identifier
-	Name    string   `json:"name"`          // Name of the node, including client type, version, OS, custom data
-	Caps    []string `json:"caps"`          // Protocols advertised by this peer
+	// ENR is the peer's Parallax Node Record. Emitted only for
+	// legacy-RLPx-authenticated peers; v2 sessions have no ENR
+	// (session-scoped identity derived from ephemeral X25519 keys)
+	// so the field marshals as null there.
+	ENR *string `json:"enr"`
+	// Enode is the peer's enode URL. Emitted for legacy peers;
+	// marshals as null for v2 peers for the same reason as ENR.
+	Enode *string `json:"enode"`
+	// ID is the peer's persistent node identifier. Emitted only for
+	// legacy peers; v2 sessions have no persistent identity (the
+	// underlying hash rotates on every reconnect) so the field
+	// marshals as null for them. Operators correlate v2 peers via
+	// (RemoteAddress, LocalAddress) instead.
+	ID      *string  `json:"id"`
+	Name    string   `json:"name"` // Name of the node, including client type, version, OS, custom data
+	Caps    []string `json:"caps"` // Protocols advertised by this peer
 	Network struct {
 		LocalAddress  string `json:"localAddress"`  // Local endpoint of the TCP data connection
 		RemoteAddress string `json:"remoteAddress"` // Remote endpoint of the TCP data connection
@@ -511,16 +533,25 @@ func (p *Peer) Info() *PeerInfo {
 	for _, cap := range p.Caps() {
 		caps = append(caps, cap.String())
 	}
-	// Assemble the generic peer metadata
+	// Assemble the generic peer metadata. Enode, ENR, and ID all
+	// describe a PERSISTENT identity — for v2 peers none of them is
+	// persistent, so all three marshal as null. Operators correlate
+	// v2 peers via RemoteAddress + LocalAddress and the
+	// parallax-disc.handshake="v2" tag.
 	info := &PeerInfo{
-		Enode:     p.Node().URLv4(),
-		ID:        p.ID().String(),
 		Name:      p.Fullname(),
 		Caps:      caps,
 		Protocols: make(map[string]any),
 	}
-	if p.Node().Seq() > 0 {
-		info.ENR = p.Node().String()
+	if !p.UsingV2Handshake() {
+		url := p.Node().URLv4()
+		id := p.ID().String()
+		info.Enode = &url
+		info.ID = &id
+		if p.Node().Seq() > 0 {
+			enr := p.Node().String()
+			info.ENR = &enr
+		}
 	}
 	info.Network.LocalAddress = p.LocalAddr().String()
 	info.Network.RemoteAddress = p.RemoteAddr().String()

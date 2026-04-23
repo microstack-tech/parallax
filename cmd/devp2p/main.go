@@ -62,8 +62,10 @@ func init() {
 		discv4Command,
 		discv5Command,
 		dnsCommand,
+		dnsSeedCommand,
 		nodesetCommand,
 		rlpxCommand,
+		parallaxDiscCommand,
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/node"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/simulations/pipes"
 	"github.com/ParallaxProtocol/parallax/rpc"
@@ -91,6 +92,16 @@ func (s *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
 		return nil, err
 	}
 
+	// Pre-wire an empty addrman so node.setupAddrManAndDisc early-returns
+	// and skips registering the parallax-disc/1 subprotocol. Sim nodes
+	// talk over net.Pipe and can't tolerate the extra unsolicited traffic
+	// disc generates (the unbuffered pipe stalls competing protocol
+	// writes on the same connection).
+	am, err := addrman.New()
+	if err != nil {
+		return nil, err
+	}
+
 	n, err := node.New(&node.Config{
 		P2P: p2p.Config{
 			PrivateKey:      config.PrivateKey,
@@ -98,6 +109,7 @@ func (s *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
 			NoDiscovery:     true,
 			Dialer:          s,
 			EnableMsgEvents: config.EnableMsgEvents,
+			AddrManager:     am,
 		},
 		ExternalSigner: config.ExternalSigner,
 		Logger:         logging.New("node.id", id.String()),
@@ -344,9 +356,10 @@ func (sn *SimNode) SubscribeEvents(ch chan *p2p.PeerEvent) event.Subscription {
 func (sn *SimNode) NodeInfo() *p2p.NodeInfo {
 	server := sn.Server()
 	if server == nil {
+		enode := sn.Node().String()
 		return &p2p.NodeInfo{
 			ID:    sn.ID.String(),
-			Enode: sn.Node().String(),
+			Enode: &enode,
 		}
 	}
 	return server.NodeInfo()

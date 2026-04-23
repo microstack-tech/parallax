@@ -101,12 +101,16 @@ func TestServerListen(t *testing.T) {
 	defer close(connected)
 	defer srv.Stop()
 
-	// dial the test server
+	// dial the test server. Send any non-0xA0 byte so the PIP-0006
+	// listener peek classifies as legacy and proceeds.
 	conn, err := net.DialTimeout("tcp", srv.ListenAddr, 5*time.Second)
 	if err != nil {
 		t.Fatalf("could not dial: %v", err)
 	}
 	defer conn.Close()
+	if _, err := conn.Write([]byte{0x01}); err != nil {
+		t.Fatalf("could not write peek byte: %v", err)
+	}
 
 	select {
 	case peer := <-connected:
@@ -533,24 +537,38 @@ func TestServerInboundThrottle(t *testing.T) {
 	}
 	defer srv.Stop()
 
-	// Dial the test server.
+	// Dial the test server up to maxInboundConnAttemptsPerIP times.
+	// Each one should reach newTransport — the throttle only kicks in
+	// once that count is exceeded.
+	//
+	// Send a legacy-RLPx-shaped first byte (0xf9, the RLP list-length
+	// prefix for an ECIES auth packet) so the PIP-0006 peek dispatcher
+	// classifies each connection as legacy and proceeds into
+	// srv.newTransport.
+	for i := 0; i < maxInboundConnAttemptsPerIP; i++ {
+		conn, err := net.DialTimeout("tcp", srv.ListenAddr, timeout)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		if _, err := conn.Write([]byte{0xf9}); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		select {
+		case <-newTransportCalled:
+			// OK — connection reached the handshake stage.
+		case <-time.After(timeout):
+			t.Fatalf("newTransport not called for attempt %d (within rate limit)", i)
+		}
+		conn.Close()
+	}
+
+	// One more dial — this exceeds maxInboundConnAttemptsPerIP within
+	// the throttle window. Server should close the connection
+	// immediately (pre-handshake).
+	connClosed := make(chan struct{}, 1)
 	conn, err := net.DialTimeout("tcp", srv.ListenAddr, timeout)
 	if err != nil {
-		t.Fatalf("could not dial: %v", err)
-	}
-	select {
-	case <-newTransportCalled:
-		// OK
-	case <-time.After(timeout):
-		t.Error("newTransport not called")
-	}
-	conn.Close()
-
-	// Dial again. This time the server should close the connection immediately.
-	connClosed := make(chan struct{}, 1)
-	conn, err = net.DialTimeout("tcp", srv.ListenAddr, timeout)
-	if err != nil {
-		t.Fatalf("could not dial: %v", err)
+		t.Fatalf("could not dial throttled attempt: %v", err)
 	}
 	defer conn.Close()
 	go func() {
@@ -565,7 +583,7 @@ func TestServerInboundThrottle(t *testing.T) {
 	case <-connClosed:
 		// OK
 	case <-newTransportCalled:
-		t.Error("newTransport called for second attempt")
+		t.Errorf("newTransport called for over-limit attempt (cap=%d)", maxInboundConnAttemptsPerIP)
 	case <-time.After(timeout):
 		t.Error("connection not closed within timeout")
 	}

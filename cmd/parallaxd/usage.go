@@ -149,6 +149,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Flags: []cli.Flag{
 			utils.BootnodesFlag,
 			utils.DNSDiscoveryFlag,
+			utils.DNSSeedFlag,
 			utils.ListenPortFlag,
 			utils.MaxPeersFlag,
 			utils.MaxPendingPeersFlag,
@@ -158,6 +159,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.NetrestrictFlag,
 			utils.NodeKeyFileFlag,
 			utils.NodeKeyHexFlag,
+			utils.LegacyDiscoveryFlag,
 		},
 	},
 	{

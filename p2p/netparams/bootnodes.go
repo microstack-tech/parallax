@@ -21,8 +21,13 @@ import (
 	"github.com/ParallaxProtocol/parallax/util"
 )
 
-// MainnetBootnodes are the enode URLs of the P2P bootstrap nodes running on
-// the main Parallax network.
+// MainnetBootnodes are the enode URLs of the P2P bootstrap nodes on the
+// main Parallax network. These carry a persistent secp256k1 NodeID and
+// are consumed by NodeID-keyed tooling (discv4 crawler, resolve, etc.)
+// and any v1.x-compat peer that bonds via PING/PONG.
+//
+// The v2 handshake bootstrap path does not use this slice; it uses
+// MainnetBootnodesV2 instead.
 var MainnetBootnodes = []string{
 	// Parallax Foundation Go Bootnodes
 	// us-boston
@@ -33,9 +38,38 @@ var MainnetBootnodes = []string{
 	"enode://7fcacf55ab8ffb8bd7bc722ba2336b6a4b304a2fc76fa65aadab4e17d196261793287f2cac80d10a25a351f06a038e73cca1170b2007af076bf82eb33e85d2f3@69.62.94.166:32110",
 }
 
+// MainnetBootnodesV2 are the addresses of P2P bootstrap nodes on the
+// main Parallax network, in plain "ip:port" form. Consumed by the
+// BIP324-style v2 handshake path (addrman KeyType=0x00); operators
+// who run a v2-native bootnode register its endpoint here.
+//
+// The Foundation bootnodes in MainnetBootnodes serve v1 RLPx only
+// and are intentionally omitted here — listing a v1-only endpoint
+// produces a TCP RST on every dial-scheduler tick.
+var MainnetBootnodesV2 = []string{}
+
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
 // test network.
 var TestnetBootnodes = []string{}
+
+// TestnetBootnodesV2 are the plain "ip:port" bootstrap addresses used
+// by the v2 handshake bootstrap path on testnet.
+var TestnetBootnodesV2 = []string{}
+
+// MainnetDNSSeeds are the DNS hostnames the node resolves at a 24h
+// cadence (Bitcoin parity) to bootstrap its addrbook with v2.0-native
+// (KeyType=0x00) peers on the default port 32110. Each A/AAAA record
+// returned is paired with the default port and ingested into addrman
+// with source=dns_seed. Plain DNS — no enrtree — so it works in
+// v2-only posture (`--legacy-discovery=off`) where enrtree's legacy
+// NodeIDs are useless.
+var MainnetDNSSeeds = []string{
+	"seed.prlxdisc.org",
+}
+
+// TestnetDNSSeeds is empty by default; testnet operators set their own
+// via --dnsseed flag.
+var TestnetDNSSeeds = []string{}
 
 var V5Bootnodes = []string{
 	// Teku team's bootnode

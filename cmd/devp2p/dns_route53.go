@@ -134,6 +134,58 @@ func (c *route53Client) deleteDomain(name string) error {
 	return c.submitChanges(changes, comment)
 }
 
+// deploySeedZone reconciles the SeedZone's A and AAAA records at the
+// zone's apex. One RRSet per family (all IPv4s in one A RRSet, all
+// IPv6s in one AAAA RRSet) — matches Route53's billing model and what
+// plan.md specifies. Records are submitted via UPSERT (idempotent) so
+// re-running with the same SeedZone is a no-op at the API level.
+func (c *route53Client) deploySeedZone(z *SeedZone, ttl int64) error {
+	if err := c.checkZone(z.Name); err != nil {
+		return err
+	}
+	var ipv4s, ipv6s []string
+	for _, r := range z.Records {
+		switch r.Family {
+		case "A":
+			ipv4s = append(ipv4s, r.IP)
+		case "AAAA":
+			ipv6s = append(ipv6s, r.IP)
+		}
+	}
+	sort.Strings(ipv4s)
+	sort.Strings(ipv6s)
+
+	var changes []types.Change
+	if len(ipv4s) > 0 {
+		changes = append(changes, newAddrChange(types.RRTypeA, z.Name, ttl, ipv4s))
+	}
+	if len(ipv6s) > 0 {
+		changes = append(changes, newAddrChange(types.RRTypeAaaa, z.Name, ttl, ipv6s))
+	}
+	if len(changes) == 0 {
+		return errors.New("seed zone has no IPv4 or IPv6 records — refusing to deploy an empty zone")
+	}
+	comment := fmt.Sprintf("dns-seed update of %s at seq %d", z.Name, z.Seq)
+	return c.submitChanges(changes, comment)
+}
+
+// newAddrChange builds an UPSERT change for one A or AAAA RRSet.
+func newAddrChange(rrtype types.RRType, name string, ttl int64, values []string) types.Change {
+	rrs := make([]types.ResourceRecord, 0, len(values))
+	for _, v := range values {
+		rrs = append(rrs, types.ResourceRecord{Value: aws.String(v)})
+	}
+	return types.Change{
+		Action: types.ChangeActionUpsert,
+		ResourceRecordSet: &types.ResourceRecordSet{
+			Type:            rrtype,
+			Name:            aws.String(name),
+			TTL:             aws.Int64(ttl),
+			ResourceRecords: rrs,
+		},
+	}
+}
+
 // submitChanges submits the given DNS changes to Route53.
 func (c *route53Client) submitChanges(changes []types.Change, comment string) error {
 	if len(changes) == 0 {
