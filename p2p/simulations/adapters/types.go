@@ -32,8 +32,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/moby/sys/reexec"
 	"github.com/gorilla/websocket"
+	"github.com/moby/sys/reexec"
 )
 
 // Node represents a node in a simulation network which is created by a

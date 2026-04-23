@@ -39,8 +39,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/moby/sys/reexec"
 	"github.com/gorilla/websocket"
+	"github.com/moby/sys/reexec"
 )
 
 func init() {
