@@ -51,6 +51,20 @@ func (h expHeap) contains(item string) bool {
 	return false
 }
 
+// count returns the number of unexpired entries matching item. Used by
+// per-IP inbound rate limiting where multiple concurrent connections
+// from the same source are legitimate (e.g. a crawler co-located with
+// a real peer behind the same NAT).
+func (h expHeap) count(item string) int {
+	n := 0
+	for _, v := range h {
+		if v.item == item {
+			n++
+		}
+	}
+	return n
+}
+
 // expire removes items with expiry time before 'now'.
 func (h *expHeap) expire(now mclock.AbsTime, onExp func(string)) {
 	for h.Len() > 0 && h.nextExpiry() < now {

@@ -59,6 +59,17 @@ const (
 	// This time limits inbound connection attempts per source IP.
 	inboundThrottleTime = 30 * time.Second
 
+	// maxInboundConnAttemptsPerIP caps how many distinct inbound TCP
+	// attempts from the same source IP are tolerated within
+	// inboundThrottleTime. Set above 1 so legitimate co-located
+	// scenarios work (e.g. an operator running parallax-disc-crawl
+	// on the same host as their parallaxd, which puts the crawler
+	// and the daemon behind the same public-NAT IP from any remote
+	// peer's POV). Still strict enough to make per-IP flooding
+	// expensive — an attacker has to scale across IPs as before, with
+	// only a 4x relaxation per IP.
+	maxInboundConnAttemptsPerIP = 4
+
 	// Maximum time allowed for reading a complete message.
 	// This is effectively the amount of time a connection can be idle.
 	frameReadTimeout = 30 * time.Second
@@ -1547,10 +1558,12 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	if srv.NetRestrict != nil && !srv.NetRestrict.Contains(remoteIP) {
 		return fmt.Errorf("not in netrestrict list")
 	}
-	// Reject Internet peers that try too often.
+	// Reject Internet peers that try too often. Allow up to
+	// maxInboundConnAttemptsPerIP concurrent in-window attempts from
+	// the same source IP — anything over that is rate-limited.
 	now := srv.clock.Now()
 	srv.inboundHistory.expire(now, nil)
-	if !netutil.IsLAN(remoteIP) && srv.inboundHistory.contains(remoteIP.String()) {
+	if !netutil.IsLAN(remoteIP) && srv.inboundHistory.count(remoteIP.String()) >= maxInboundConnAttemptsPerIP {
 		return fmt.Errorf("too many attempts")
 	}
 	srv.inboundHistory.add(remoteIP.String(), now.Add(inboundThrottleTime))
