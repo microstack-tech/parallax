@@ -1827,10 +1827,18 @@ func (srv *Server) PeersInfo() []*PeerInfo {
 			infos = append(infos, peer.Info())
 		}
 	}
-	// Sort the result array alphabetically by node identifier
+	// Sort the result array by the displayed node identifier. v2
+	// peers have ID=nil, which we treat as sorting last (empty
+	// string).
+	idOf := func(p *PeerInfo) string {
+		if p.ID != nil {
+			return *p.ID
+		}
+		return ""
+	}
 	for i := 0; i < len(infos); i++ {
 		for j := i + 1; j < len(infos); j++ {
-			if infos[i].ID > infos[j].ID {
+			if idOf(infos[i]) > idOf(infos[j]) {
 				infos[i], infos[j] = infos[j], infos[i]
 			}
 		}

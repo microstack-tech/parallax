@@ -2237,10 +2237,14 @@ func resolvePeerTarget(ctx *cli.Context, input string) (string, error) {
 	wantIP := net.ParseIP(host)
 	var matches []*p2p.PeerInfo
 	for _, p := range peers {
-		// p.Enode is the peer's authenticated enode URL with its
-		// advertised listen address (not the ephemeral socket port
-		// that RemoteAddress would report for inbound peers).
-		u, err := url.Parse(p.Enode)
+		// p.Enode is the peer's authenticated enode URL. v2 peers
+		// have no enode URL (session-scoped identity), so skip them
+		// — this helper is for legacy-peer admin commands and can't
+		// materialize an enode:// string for a v2 session.
+		if p.Enode == nil {
+			continue
+		}
+		u, err := url.Parse(*p.Enode)
 		if err != nil || u.Host == "" {
 			continue
 		}
@@ -2263,16 +2267,13 @@ func resolvePeerTarget(ctx *cli.Context, input string) (string, error) {
 
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("no currently connected peer at %s — pass the full enode:// URL instead", input)
+		return "", fmt.Errorf("no currently connected legacy peer at %s — pass the full enode:// URL, or ip:port if the target is v2", input)
 	case 1:
-		return matches[0].Enode, nil
+		return *matches[0].Enode, nil
 	default:
-		// Ambiguous: multiple peers share this host (e.g. two nodes
-		// behind the same NAT). Make the user disambiguate with a
-		// port, and show them the candidates.
 		candidates := make([]string, 0, len(matches))
 		for _, p := range matches {
-			candidates = append(candidates, p.Enode)
+			candidates = append(candidates, *p.Enode)
 		}
 		return "", fmt.Errorf("multiple peers match %s; disambiguate with host:port or a full enode URL. Candidates:\n  %s",
 			input, strings.Join(candidates, "\n  "))

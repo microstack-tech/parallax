@@ -500,11 +500,21 @@ func (rw *protoRW) ReadMsg() (Msg, error) {
 // peer. Sub-protocol independent fields are contained and initialized here, with
 // protocol specifics delegated to all connected sub-protocols.
 type PeerInfo struct {
-	ENR     string   `json:"enr,omitempty"` // Parallax Node Record
-	Enode   string   `json:"enode"`         // Node URL
-	ID      string   `json:"id"`            // Unique node identifier
-	Name    string   `json:"name"`          // Name of the node, including client type, version, OS, custom data
-	Caps    []string `json:"caps"`          // Protocols advertised by this peer
+	// ENR is the peer's Parallax Node Record. Emitted only for
+	// legacy-RLPx-authenticated peers; v2 sessions have no ENR
+	// (session-scoped identity derived from ephemeral X25519 keys)
+	// so the field marshals as null there.
+	ENR *string `json:"enr"`
+	// Enode is the peer's enode URL. Emitted for legacy peers;
+	// marshals as null for v2 peers for the same reason as ENR.
+	Enode *string `json:"enode"`
+	// ID is the peer's node identifier. Emitted for legacy peers;
+	// v2 peers' IDs are ephemeral per session and uninformative, so
+	// they marshal as null to avoid the illusion of a stable
+	// identity.
+	ID      *string  `json:"id"`
+	Name    string   `json:"name"` // Name of the node, including client type, version, OS, custom data
+	Caps    []string `json:"caps"` // Protocols advertised by this peer
 	Network struct {
 		LocalAddress  string `json:"localAddress"`  // Local endpoint of the TCP data connection
 		RemoteAddress string `json:"remoteAddress"` // Remote endpoint of the TCP data connection
@@ -522,16 +532,26 @@ func (p *Peer) Info() *PeerInfo {
 	for _, cap := range p.Caps() {
 		caps = append(caps, cap.String())
 	}
-	// Assemble the generic peer metadata
+	// Assemble the generic peer metadata. v2 sessions don't have a
+	// meaningful persistent identity — the URLv4 for them is just
+	// "enode://null.<session-hex>@ip:port", the ID keccak-hashes
+	// ephemeral X25519 bytes, and there is no ENR. Marshal all
+	// three as null for v2 peers so operators aren't misled into
+	// thinking the displayed values are stable.
 	info := &PeerInfo{
-		Enode:     p.Node().URLv4(),
-		ID:        p.ID().String(),
 		Name:      p.Fullname(),
 		Caps:      caps,
 		Protocols: make(map[string]any),
 	}
-	if p.Node().Seq() > 0 {
-		info.ENR = p.Node().String()
+	if !p.UsingV2Handshake() {
+		url := p.Node().URLv4()
+		id := p.ID().String()
+		info.Enode = &url
+		info.ID = &id
+		if p.Node().Seq() > 0 {
+			enr := p.Node().String()
+			info.ENR = &enr
+		}
 	}
 	info.Network.LocalAddress = p.LocalAddr().String()
 	info.Network.RemoteAddress = p.RemoteAddr().String()
