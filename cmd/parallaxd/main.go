@@ -129,6 +129,7 @@ var (
 		utils.DNSDiscoveryFlag,
 		utils.ExperimentalAddrmanFlag,
 		utils.LegacyDiscoveryFlag,
+		utils.ExperimentalV2HandshakeFlag,
 		utils.DeveloperFlag,
 		utils.DeveloperPeriodFlag,
 		utils.DeveloperGasLimitFlag,

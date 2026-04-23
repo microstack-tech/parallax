@@ -657,6 +657,10 @@ var (
 		Usage: "Legacy discv4 usage mode when --experimental-addrman is active (auto|on|off). auto: respond to inbound but don't drive dialing. on: full v1.x compat, discv4 is a dial source. off: no UDP discovery at all.",
 		Value: "auto",
 	}
+	ExperimentalV2HandshakeFlag = cli.BoolFlag{
+		Name:  "experimental-v2-handshake",
+		Usage: "Enable the BIP324-style v2 RLPx handshake for dialing KeyType=0x00 peers on IP:port alone. Experimental; the listener accepts both handshake variants when this is set. Default off — incoming v2 handshakes are rejected until this flag is flipped.",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -1144,6 +1148,9 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	}
 	if ctx.GlobalIsSet(LegacyDiscoveryFlag.Name) {
 		cfg.LegacyDiscoveryMode = ctx.GlobalString(LegacyDiscoveryFlag.Name)
+	}
+	if ctx.GlobalBool(ExperimentalV2HandshakeFlag.Name) {
+		cfg.ExperimentalV2Handshake = true
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {

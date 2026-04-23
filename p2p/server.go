@@ -158,6 +158,18 @@ type Config struct {
 	// discovery routing table during revalidation.
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
+	// ExperimentalV2Handshake enables the BIP324-style v2 RLPx
+	// handshake. When true:
+	//   - Listener accepts both legacy ECIES auth packets and v2
+	//     handshakes (dispatched via the version-negotiation byte).
+	//   - Dialer uses v2 for addrman entries with KeyType=0x00 and
+	//     legacy for KeyType=0x01.
+	// Default off — per PIP-0006 Phase 2b the flag stays behind until
+	// Phase 5 stabilizes. Phase 2b ships the handshake primitive in
+	// p2p/rlpx/bip324handshake; Server-level dispatch wiring lands
+	// behind this flag in a follow-up.
+	ExperimentalV2Handshake bool `toml:",omitempty"`
+
 	// LegacyDiscoveryMode controls whether this node issues legacy
 	// discv4 FINDNODE lookups. PIP-0006 Phase 5 values:
 	//   "off"  — never issue, respond only. Safest for v2.0+-only
