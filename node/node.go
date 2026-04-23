@@ -592,8 +592,12 @@ func (n *Node) setupAddrManAndDisc() error {
 			n.log.Warn("addrbook load failed; proceeding empty", "path", n.config.P2P.AddrBookPath, "err", err)
 		}
 	}
+	now := time.Now()
 	for _, bn := range n.config.P2P.BootstrapNodes {
-		addrman.IngestV2Addr(m, bn, addrman.SourceDNSSeed, time.Now())
+		addrman.IngestNode(m, bn, addrman.SourceDNSSeed, now)
+	}
+	for _, addr := range n.config.P2P.BootstrapNodesV2 {
+		addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
 	}
 	// Register the subprotocol. Append directly to Protocols — we're
 	// still in initializingState (Start's state machine has flipped

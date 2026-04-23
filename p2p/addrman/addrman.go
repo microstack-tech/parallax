@@ -1,12 +1,15 @@
 package addrman
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	mrand "math/rand/v2"
 	"sync"
 	"time"
+
+	"github.com/ParallaxProtocol/parallax/logging"
 )
 
 // AddrMan is the Bitcoin-style stochastic address manager. See doc.go for
@@ -351,8 +354,19 @@ func (m *AddrMan) Good(addr NetAddr, now time.Time) bool {
 func (m *AddrMan) goodLocked(addr NetAddr, testBeforeEvict bool, now time.Time) bool {
 	id, pinfo := m.findLocked(addr)
 	if pinfo == nil {
+		logging.Trace("pip6: Good miss", "addr", addr.String())
 		return false
 	}
+	preTried := pinfo.InTried
+	preKT := pinfo.KeyType
+	defer func() {
+		logging.Trace("pip6: Good",
+			"addr", addr.String(),
+			"keyType", preKT,
+			"preInTried", preTried,
+			"postInTried", pinfo.InTried,
+			"refCount", pinfo.RefCount)
+	}()
 
 	m.lastGood = now
 	pinfo.LastSuccess = now
@@ -382,6 +396,55 @@ func (m *AddrMan) goodLocked(addr NetAddr, testBeforeEvict bool, now time.Time) 
 	return true
 }
 
+// UpgradeIdentity rewrites an existing entry's KeyType (and NodeID)
+// in place when the caller has learned a stronger identity for the
+// endpoint than the one it was ingested with.
+//
+// Concrete motivation: an endpoint previously ingested as v2-native
+// (KeyType=0x00) accepted a legacy RLPx handshake. That handshake
+// proves the remote holds a persistent secp256k1 identity — callers
+// lift the entry to KeyType=0x01 so V2Iter's KeyType filter stops
+// yielding it and the dialer won't burn cycles re-dialing an endpoint
+// it already peers with.
+//
+// No-op when the entry doesn't exist or already matches. Returns
+// true iff anything changed. Does not touch LastTry/LastSuccess —
+// combine with Good or Attempt as the caller sees fit.
+func (m *AddrMan) UpgradeIdentity(addr NetAddr, keyType uint8, nodeID []byte) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, info := m.findLocked(addr)
+	if info == nil {
+		logging.Trace("pip6: UpgradeIdentity miss", "addr", addr.String(), "wantKeyType", keyType)
+		return false
+	}
+	oldKT := info.KeyType
+	changed := false
+	if info.KeyType != keyType {
+		info.KeyType = keyType
+		changed = true
+	}
+	switch keyType {
+	case 0x01:
+		if len(nodeID) > 0 && !bytes.Equal(info.NodeID, nodeID) {
+			info.NodeID = append([]byte(nil), nodeID...)
+			changed = true
+		}
+	case 0x00:
+		if len(info.NodeID) != 0 {
+			info.NodeID = nil
+			changed = true
+		}
+	}
+	logging.Trace("pip6: UpgradeIdentity",
+		"addr", addr.String(),
+		"oldKT", oldKT, "newKT", keyType,
+		"changed", changed,
+		"inTried", info.InTried,
+		"attempts", info.Attempts)
+	return changed
+}
+
 // Attempt records a connect attempt (successful or not). If countFailure is
 // true the per-entry attempt counter increments, but only if the last
 // counted attempt was before the most recent Good() — this keeps short
@@ -393,13 +456,28 @@ func (m *AddrMan) Attempt(addr NetAddr, countFailure bool, now time.Time) {
 	defer m.mu.Unlock()
 	_, info := m.findLocked(addr)
 	if info == nil {
+		logging.Trace("pip6: Attempt miss", "addr", addr.String(), "countFail", countFailure)
 		return
 	}
+	preAttempts := info.Attempts
+	preLCA := info.LastCountAttempt
+	preLG := m.lastGood
+	gated := countFailure && info.LastCountAttempt.Before(m.lastGood)
 	info.LastTry = now
-	if countFailure && info.LastCountAttempt.Before(m.lastGood) {
+	if gated {
 		info.LastCountAttempt = now
 		info.Attempts++
 	}
+	logging.Trace("pip6: Attempt",
+		"addr", addr.String(),
+		"countFail", countFailure,
+		"preAttempts", preAttempts,
+		"postAttempts", info.Attempts,
+		"gatedIncrement", gated,
+		"preLastCountAttempt", preLCA,
+		"lastGood", preLG,
+		"inTried", info.InTried,
+		"keyType", info.KeyType)
 }
 
 // Connected refreshes an entry's LastSeen. Callers should invoke this only

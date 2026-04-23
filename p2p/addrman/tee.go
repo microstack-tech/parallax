@@ -123,9 +123,15 @@ func (t *TeeIter) ingestLocked(n *enode.Node) {
 	IngestNode(t.m, n, t.tag, time.Now())
 }
 
-// pubkeyBytes returns the 64-byte (x || y) uncompressed form of n's
+// PubkeyBytes returns the 64-byte (x || y) uncompressed form of n's
 // secp256k1 public key — the format addrman stores and the wire format
-// for parallax-disc/1 KeyType=0x01 entries.
+// for parallax-disc/1 KeyType=0x01 entries. Exported so callers
+// outside this package can supply the NodeID payload for
+// UpgradeIdentity.
+func PubkeyBytes(n *enode.Node) ([]byte, error) { return pubkeyBytes(n) }
+
+// pubkeyBytes is the unexported implementation reused by tee.go's
+// IngestNode and by the exported wrapper above.
 func pubkeyBytes(n *enode.Node) ([]byte, error) {
 	pub := n.Pubkey()
 	if pub == nil {

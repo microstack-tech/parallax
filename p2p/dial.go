@@ -138,6 +138,13 @@ type dialConfig struct {
 	log            logging.Logger
 	clock          mclock.Clock
 	rand           *mrand.Rand
+
+	// v2Predicate reports whether the iterator-yielded node should be
+	// dialed via the v2 BIP324 path instead of v1 RLPx. v2Dial is the
+	// callback invoked for such nodes; both are nil for unit tests
+	// that don't want the v2 branch.
+	v2Predicate func(*enode.Node) bool
+	v2Dial      func(*net.TCPAddr) error
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -243,6 +250,20 @@ loop:
 		case node := <-nodesCh:
 			if err := d.checkDial(node); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
+			} else if d.v2Predicate != nil && d.v2Dial != nil && d.v2Predicate(node) {
+				// Peer advertises v2-transport in its ENR — bypass
+				// v1 RLPx entirely and hand off to the v2 dial
+				// path. History is still recorded so v1 checkDial
+				// won't reattempt this node for a while.
+				hkey := string(node.ID().Bytes())
+				d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
+				tcp := &net.TCPAddr{IP: node.IP(), Port: node.TCP()}
+				v2Dial := d.v2Dial
+				go func() {
+					if err := v2Dial(tcp); err != nil {
+						d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
+					}
+				}()
 			} else {
 				d.startDial(newDialTask(node, dynDialedConn))
 			}

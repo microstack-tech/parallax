@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
@@ -60,6 +61,11 @@ func NewV2Iter(m *AddrMan, maxBackoff time.Duration) *V2Iter {
 // available or Close is called.
 func (it *V2Iter) Next() bool {
 	backoff := 10 * time.Millisecond
+	// Cap per-call Select spins. An addrman whose KeyType=0x00
+	// cohort is empty (or fully IsTerrible) would otherwise turn
+	// this loop into 100% CPU forever.
+	const maxSkipsBeforeBackoff = 64
+	skips := 0
 	for {
 		select {
 		case <-it.closed:
@@ -70,13 +76,51 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
+				// Skip entries addrman already considers dead.
+				// Without this gate a single stale KeyType=0x00
+				// entry — persisted in addrbook.rlp from a prior
+				// session or left over after a peer became
+				// permanently unreachable — dominates Select
+				// when it's the only KeyType=0x00 candidate,
+				// producing an unbounded dial storm.
+				if info.IsTerrible(time.Now()) {
+					logging.Trace("pip6: V2Iter skip (terrible)",
+						"addr", addr.String(),
+						"attempts", info.Attempts,
+						"lastSuccess", info.LastSuccess,
+						"lastTry", info.LastTry)
+					skips++
+					if skips >= maxSkipsBeforeBackoff {
+						goto idleBackoff
+					}
+					continue
+				}
+				logging.Trace("pip6: V2Iter emit",
+					"addr", addr.String(),
+					"keyType", info.KeyType,
+					"attempts", info.Attempts,
+					"lastTry", info.LastTry,
+					"lastSuccess", info.LastSuccess,
+					"inTried", info.InTried)
 				it.current = V2Candidate{Addr: addr}
 				return true
 			}
-			// Wrong KeyType — spin; Select will eventually return
-			// a v2-native entry if one exists.
+			if info != nil {
+				logging.Trace("pip6: V2Iter skip (wrong KeyType)",
+					"addr", addr.String(),
+					"keyType", info.KeyType,
+					"inTried", info.InTried)
+			}
+			skips++
+			if skips >= maxSkipsBeforeBackoff {
+				goto idleBackoff
+			}
+			// Wrong KeyType — try again; Select will eventually
+			// return a v2-native entry if one exists.
 			continue
 		}
+	idleBackoff:
+		skips = 0
 		t := time.NewTimer(backoff)
 		select {
 		case <-it.closed:

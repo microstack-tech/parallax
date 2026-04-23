@@ -39,6 +39,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
@@ -111,12 +112,18 @@ type Config struct {
 	// Use util.MakeName to create a name that follows existing conventions.
 	Name string `toml:"-"`
 
-	// BootstrapNodes are the plain-ip:port bootstrap peers used to
-	// establish connectivity with the rest of the network. Starting
-	// with Parallax v2.0 all bootnodes run the BIP324-style v2
-	// handshake; no NodeID / enode URL is required to reach them.
-	// Feeds addrman with source=dns_seed and KeyType=0x00.
-	BootstrapNodes []*net.TCPAddr
+	// BootstrapNodes are the NodeID-carrying bootstrap peers used to
+	// seed connectivity with the rest of the network. Consumed by
+	// discv4's routing table (v1.x-compat peers) and ingested into
+	// addrman with KeyType=0x01 via IngestNode.
+	BootstrapNodes []*enode.Node
+
+	// BootstrapNodesV2 are the plain-ip:port bootstrap peers used by
+	// the Parallax v2.0 BIP324-style handshake. No NodeID / enode URL
+	// is required to reach them — the handshake authenticates against
+	// whoever answered on that ip:port. Ingested into addrman with
+	// source=dns_seed and KeyType=0x00 via IngestV2Addr.
+	BootstrapNodesV2 []*net.TCPAddr
 
 	// BootstrapNodesV5 are used to establish connectivity
 	// with the rest of the network using the V5 discovery
@@ -264,6 +271,13 @@ type Server struct {
 	addrbookIter *addrman.NodeIter
 	v2Iter       *addrman.V2Iter
 
+	// v2DialRecent is a per-(ip:port) cooldown keyed by tcp addr
+	// string. Gates DialV2 so every caller — runV2Dialer, the v2-ENR
+	// branch in the dial scheduler, admin RPC — shares a single
+	// throttle. Serialized by v2DialRecentMu.
+	v2DialRecentMu sync.Mutex
+	v2DialRecent   map[string]time.Time
+
 	// Channels into the run loop.
 	quit                    chan struct{}
 	addtrusted              chan *enode.Node
@@ -284,6 +298,27 @@ type peerDrop struct {
 	*Peer
 	err       error
 	requested bool // true if signaled by the peer
+}
+
+// enrV2Transport is the ENR entry a node sets to signal that its
+// listening TCP endpoint accepts the BIP324-style v2 handshake.
+// Peers that see this on an enode's ENR dial v2 from the start and
+// skip the v1 RLPx path, avoiding the "connect v1, tear down, redial
+// v2" promotion dance. No payload — presence is the signal.
+type enrV2Transport struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (enrV2Transport) ENRKey() string { return "pipv2" }
+
+// hasV2TransportENR reports whether n's ENR advertises v2-transport
+// support.
+func hasV2TransportENR(n *enode.Node) bool {
+	if n == nil {
+		return false
+	}
+	var e enrV2Transport
+	return n.Load(&e) == nil
 }
 
 type connFlag int32
@@ -636,7 +671,10 @@ func (srv *Server) setupAddrMan() error {
 			}
 		}
 		now := time.Now()
-		for _, addr := range srv.BootstrapNodes {
+		for _, n := range srv.BootstrapNodes {
+			addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+		}
+		for _, addr := range srv.BootstrapNodesV2 {
 			addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
 		}
 	}
@@ -732,6 +770,10 @@ func (srv *Server) setupLocalNode() error {
 	srv.nodedb = db
 	srv.localnode = enode.NewLocalNode(db, srv.PrivateKey)
 	srv.localnode.SetFallbackIP(net.IP{127, 0, 0, 1})
+	// Advertise v2-transport acceptance in our ENR. Peers that
+	// resolve our enode (via enrtree or discv4) will see this and
+	// dial v2 directly instead of v1-then-promote.
+	srv.localnode.Set(enrV2Transport{})
 	// TODO: check conflicts
 	for _, p := range srv.Protocols {
 		for _, e := range p.Attributes {
@@ -767,11 +809,20 @@ func (srv *Server) setupLocalNode() error {
 func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
-	// Add protocol-specific discovery sources.
+	// Add protocol-specific discovery sources. Tee each into addrman
+	// (when present) with source=dns_seed so the enrtree-delivered
+	// enodes become addrman entries — otherwise addrman sees only
+	// the static MainnetBootnodes ingest and has no view of the rest
+	// of the network, which leaves stale KeyType=0x00 entries
+	// dominating V2Iter with nothing to balance them out.
 	added := make(map[string]bool)
 	for _, proto := range srv.Protocols {
 		if proto.DialCandidates != nil && !added[proto.Name] {
-			srv.discmix.AddSource(proto.DialCandidates)
+			src := proto.DialCandidates
+			if srv.addrbook != nil {
+				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceDNSSeed)
+			}
+			srv.discmix.AddSource(src)
 			added[proto.Name] = true
 		}
 	}
@@ -823,15 +874,14 @@ func (srv *Server) setupDiscovery() error {
 			unhandled = make(chan discover.ReadPacket, 100)
 			sconn = &sharedUDPConn{conn, unhandled}
 		}
-		// discv4 is transitional; Parallax v2.0 bootnodes don't
-		// carry enode.Node shape (ip:port only), so discv4's routing
-		// table starts empty and populates through inbound PING
-		// traffic as v1.x-compatible peers find us. Operators who
-		// need to seed the v1.x routing table can do so at runtime
-		// via admin_addPeer with an enode:// URL.
+		// discv4 seeds its routing table with BootstrapNodes (NodeID-
+		// carrying entries). BootstrapNodesV2 (ip:port only) are not
+		// usable here — discv4 is NodeID-keyed — and reach the v2
+		// handshake path through addrman ingest in setupAddrMan.
 		cfg := discover.Config{
 			PrivateKey:  srv.PrivateKey,
 			NetRestrict: srv.NetRestrict,
+			Bootnodes:   srv.BootstrapNodes,
 			Unhandled:   unhandled,
 			Log:         srv.log,
 			NodeFilter:  srv.NodeFilter,
@@ -896,6 +946,8 @@ func (srv *Server) setupDialScheduler() {
 		netRestrict:    srv.NetRestrict,
 		dialer:         srv.Dialer,
 		clock:          srv.clock,
+		v2Predicate:    hasV2TransportENR,
+		v2Dial:         srv.DialV2,
 	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
@@ -963,6 +1015,13 @@ func (srv *Server) applyLegacyDiscoveryMode() {
 // a large addrbook doesn't burst-dial the network.
 func (srv *Server) runV2Dialer() {
 	defer srv.loopWG.Done()
+
+	// No local cooldown: DialV2 itself gates per-addr timing via
+	// v2DialCooldownCheckAndMark. If the cooldown rejects a draw we
+	// back off briefly to stop the iterator from looping hot.
+	const cooldownRejectPause = 1 * time.Second
+
+	var prev time.Time
 	for srv.v2Iter.Next() {
 		select {
 		case <-srv.quit:
@@ -975,8 +1034,22 @@ func (srv *Server) runV2Dialer() {
 			continue
 		}
 		tcp := &net.TCPAddr{IP: addrPort.Addr().AsSlice(), Port: int(addrPort.Port())}
+		now := time.Now()
+		var sincePrev time.Duration
+		if !prev.IsZero() {
+			sincePrev = now.Sub(prev)
+		}
+		srv.log.Trace("pip6: runV2Dialer iter", "addr", tcp.String(), "sincePrev", sincePrev)
+		prev = now
 		if err := srv.DialV2(tcp); err != nil {
 			srv.log.Trace("v2 dial failed", "addr", tcp, "err", err)
+			if errors.Is(err, errV2DialCooldown) {
+				select {
+				case <-srv.quit:
+					return
+				case <-time.After(cooldownRejectPause):
+				}
+			}
 		}
 	}
 }
@@ -995,16 +1068,98 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	if addr == nil {
 		return errors.New("v2 dial: nil address")
 	}
-	if srv.alreadyConnectedTo(addr) {
+	if !srv.v2DialCooldownCheckAndMark(addr) {
+		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
+	}
+	already := srv.alreadyConnectedTo(addr)
+	peerCount := len(srv.Peers())
+	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount)
+	if already {
+		// Refresh LastTry without counting a failure. addrman's
+		// Select chance weighting drops ~100x for 10 min once
+		// LastTry is recent, so the iterator stops burning cycles
+		// re-picking an endpoint we already peer with via v1.
+		srv.addrmanAttemptByTCP(addr, false)
 		return fmt.Errorf("v2 dial %s: already connected", addr)
 	}
 	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
 	if err != nil {
+		srv.addrmanAttemptByTCP(addr, true)
 		return fmt.Errorf("v2 dial %s: %w", addr, err)
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
-	return srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil)
+	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil); err != nil {
+		// v2 handshake / protocol negotiation failed before a Peer
+		// object was constructed, so the delpeer path never runs
+		// and addrman never learns the entry is unreachable. Record
+		// it here so IsTerrible can eventually evict it.
+		srv.addrmanAttemptByTCP(addr, true)
+		return err
+	}
+	return nil
+}
+
+// addrmanAttemptByTCP records a dial attempt in addrman, keyed by
+// (IP, port). countFailure=true bumps the failure counter so
+// IsTerrible can eventually evict unreachable entries; pass false to
+// update only LastTry (throttles re-selection without signalling
+// unreachability — used when we short-circuit a dial because we're
+// already peered with the endpoint via a different transport).
+func (srv *Server) addrmanAttemptByTCP(addr *net.TCPAddr, countFailure bool) {
+	if srv.addrbook == nil || addr == nil || addr.IP == nil {
+		return
+	}
+	var netID addrman.NetID
+	var bytes []byte
+	if v4 := addr.IP.To4(); v4 != nil {
+		netID, bytes = addrman.NetIPv4, v4
+	} else {
+		netID, bytes = addrman.NetIPv6, addr.IP.To16()
+	}
+	na, err := addrman.NewNetAddr(netID, bytes, uint16(addr.Port))
+	if err != nil {
+		return
+	}
+	srv.addrbook.Attempt(na, countFailure, time.Now())
+}
+
+// v2DialCooldown is the minimum interval between successive v2 dial
+// attempts to the same (IP, port). Select's chanceFactor ramp
+// guarantees addrman returns a candidate regardless of LastTry, so
+// chance-based throttling isn't a rate-limit when the KeyType=0
+// cohort is small; this is the authoritative gate.
+const v2DialCooldown = 30 * time.Second
+
+// errV2DialCooldown is the sentinel returned by DialV2 when the
+// per-addr cooldown rejects an attempt. Callers check with
+// errors.Is to back off instead of treating the rejection as a
+// real failure.
+var errV2DialCooldown = errors.New("v2 dial cooldown")
+
+// v2DialCooldownCheckAndMark returns true and records addr's dial
+// timestamp if the cooldown has elapsed; returns false otherwise.
+// Serialized so concurrent callers (runV2Dialer, dial-scheduler v2
+// branch, admin RPC) agree on the decision.
+func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
+	key := addr.String()
+	now := time.Now()
+	srv.v2DialRecentMu.Lock()
+	defer srv.v2DialRecentMu.Unlock()
+	if srv.v2DialRecent == nil {
+		srv.v2DialRecent = make(map[string]time.Time)
+	}
+	if last, ok := srv.v2DialRecent[key]; ok && now.Sub(last) < v2DialCooldown {
+		return false
+	}
+	srv.v2DialRecent[key] = now
+	// Opportunistic purge — cheap because the map is small.
+	for k, t := range srv.v2DialRecent {
+		if now.Sub(t) >= v2DialCooldown {
+			delete(srv.v2DialRecent, k)
+		}
+	}
+	return true
 }
 
 // alreadyConnectedTo reports whether any current peer has a RemoteAddr
@@ -1124,15 +1279,65 @@ func (srv *Server) AddrBook() *addrman.AddrMan { return srv.addrbook }
 // addrmanGood marks the peer's address as verified in the addrman.
 // No-op when ExperimentalAddrMan is off. Called from the run-loop
 // right after a peer joins the peers map.
+//
+// Note on KeyType: we deliberately do NOT upgrade an existing entry's
+// KeyType on success. A remote that accepts a v1 RLPx handshake may
+// also accept v2 BIP324 on the same endpoint — v1-success does not
+// imply v2-failure. Changing 0x00 → 0x01 here would hide a legitimate
+// dual-stack peer from V2Iter. Short-circuit / dial noise on v2-only
+// entries that only speak v1 is instead handled via:
+//   - Attempt(countFailure=true) on real dial failures,
+//   - Attempt(countFailure=false) on alreadyConnectedTo short-circuit
+//     (refreshes LastTry, decays Select chance to ~1% for 10 min),
+//   - V2Iter skip on IsTerrible entries (closes the stale-entry loop).
 func (srv *Server) addrmanGood(p *Peer) {
 	if srv.addrbook == nil {
 		return
 	}
-	addr, ok := peerRemoteAddr(p)
+	addr, ok := peerAdvertisedAddr(p)
 	if !ok {
 		return
 	}
+	srv.log.Trace("pip6: addrmanGood",
+		"addr", addr.String(),
+		"isV2", p.UsingV2Handshake(),
+		"id", p.ID())
 	srv.addrbook.Good(addr, time.Now())
+}
+
+// peerAdvertisedAddr returns the addrman.NetAddr form of a Peer's
+// advertised listening endpoint — (IP, TCP) from p.Node() rather than
+// the TCP socket's RemoteAddr. Inbound v1 peers' RemoteAddr carries
+// the ephemeral source port, which doesn't match the addrman entry
+// keyed by the peer's listening port; p.Node() is rebuilt in
+// SetupConn for inbound v1 to hold the handshake-advertised port.
+// Outbound v1 peers have c.node = dialDest, which already carries
+// the correct listening port.
+func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
+	n := p.Node()
+	if n == nil {
+		return addrman.NetAddr{}, false
+	}
+	ip := n.IP()
+	port := n.TCP()
+	if ip == nil || port == 0 {
+		return peerRemoteAddr(p)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv4, v4, uint16(port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	if v6 := ip.To16(); v6 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv6, v6, uint16(port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	return addrman.NetAddr{}, false
 }
 
 // addrmanAttempt records a failed connection attempt in the addrman.
@@ -1723,6 +1928,18 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		return DiscUnexpectedIdentity
 	}
 	c.caps, c.name = phs.Caps, phs.Name
+	// Inbound v1 peers: nodeFromConn built c.node with the ephemeral
+	// source port from the TCP socket, which won't match any addrman
+	// entry keyed by the peer's advertised listening port. Rebuild
+	// c.node using phs.ListenPort so addrmanGood resolves to the
+	// correct service-key.
+	if _, isV2 := c.transport.(*v2Transport); !isV2 && c.is(inboundConn) && phs.ListenPort != 0 {
+		if tcp, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			if pub := c.node.Pubkey(); pub != nil {
+				c.node = enode.NewV4(pub, tcp.IP, int(phs.ListenPort), int(phs.ListenPort))
+			}
+		}
+	}
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)

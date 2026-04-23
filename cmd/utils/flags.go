@@ -855,52 +855,79 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-// setBootstrapNodes creates a list of bootstrap nodes from the command
-// line flags, reverting to pre-configured ones if none have been
-// specified.
+// setBootstrapNodes creates the two bootstrap node slices from the
+// command line flags, reverting to pre-configured ones if none have
+// been specified.
 //
-// Each entry must be plain "ip:port" form. Parallax v2.0 bootnodes
-// carry no NodeID on the wire — they authenticate via the BIP324-style
-// v2 handshake, which derives session identity from ephemeral X25519
-// keys rather than from a persistent secp256k1 pubkey. An enode://
-// URL passed to --bootnodes is rejected with a clear error.
+// Entries come in two forms:
+//
+//   - "enode://…@ip:port" — NodeID-carrying. Seeds discv4's routing
+//     table and is ingested into addrman with KeyType=0x01.
+//   - "ip:port" — plain endpoint. Used by the Parallax v2.0 BIP324-
+//     style handshake (no NodeID on the wire); ingested into addrman
+//     with KeyType=0x00.
+//
+// --bootnodes sniffs per-entry and routes into the right slice.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
-	urls := netparams.MainnetBootnodes
+	enodeURLs := netparams.MainnetBootnodes
+	v2Addrs := netparams.MainnetBootnodesV2
 	switch {
 	case ctx.GlobalIsSet(BootnodesFlag.Name):
-		urls = SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name))
+		enodeURLs = nil
+		v2Addrs = nil
+		for _, raw := range SplitAndTrim(ctx.GlobalString(BootnodesFlag.Name)) {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			if strings.HasPrefix(raw, "enode://") || strings.HasPrefix(raw, "enr:") {
+				enodeURLs = append(enodeURLs, raw)
+			} else {
+				v2Addrs = append(v2Addrs, raw)
+			}
+		}
 	case ctx.GlobalBool(TestnetFlag.Name):
-		urls = netparams.TestnetBootnodes
-	case cfg.BootstrapNodes != nil:
+		enodeURLs = netparams.TestnetBootnodes
+		v2Addrs = netparams.TestnetBootnodesV2
+	case cfg.BootstrapNodes != nil || cfg.BootstrapNodesV2 != nil:
 		return // already set, don't apply defaults.
 	}
 
-	cfg.BootstrapNodes = make([]*net.TCPAddr, 0, len(urls))
-	for _, raw := range urls {
+	cfg.BootstrapNodes = make([]*enode.Node, 0, len(enodeURLs))
+	for _, url := range enodeURLs {
+		if url == "" {
+			continue
+		}
+		node, err := enode.Parse(enode.ValidSchemes, url)
+		if err != nil {
+			logging.Crit("Bootstrap URL invalid", "enode", url, "err", err)
+			continue
+		}
+		cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
+	}
+
+	cfg.BootstrapNodesV2 = make([]*net.TCPAddr, 0, len(v2Addrs))
+	for _, raw := range v2Addrs {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		if strings.HasPrefix(raw, "enode://") || strings.HasPrefix(raw, "enr:") {
-			logging.Crit("Bootstrap entry must be ip:port (Parallax v2.0 bootnodes carry no NodeID)", "entry", raw)
-			continue
-		}
 		host, portStr, err := net.SplitHostPort(raw)
 		if err != nil {
-			logging.Crit("Bootstrap entry invalid (expected ip:port)", "entry", raw, "err", err)
+			logging.Crit("Bootstrap v2 entry invalid (expected ip:port)", "entry", raw, "err", err)
 			continue
 		}
 		ip := net.ParseIP(host)
 		if ip == nil {
-			logging.Crit("Bootstrap entry has invalid IP", "entry", raw, "host", host)
+			logging.Crit("Bootstrap v2 entry has invalid IP", "entry", raw, "host", host)
 			continue
 		}
 		port, err := strconv.ParseUint(portStr, 10, 16)
 		if err != nil || port == 0 {
-			logging.Crit("Bootstrap entry has invalid port", "entry", raw, "port", portStr)
+			logging.Crit("Bootstrap v2 entry has invalid port", "entry", raw, "port", portStr)
 			continue
 		}
-		cfg.BootstrapNodes = append(cfg.BootstrapNodes, &net.TCPAddr{IP: ip, Port: int(port)})
+		cfg.BootstrapNodesV2 = append(cfg.BootstrapNodesV2, &net.TCPAddr{IP: ip, Port: int(port)})
 	}
 }
 
