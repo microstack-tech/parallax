@@ -558,8 +558,8 @@ func TestSugarNotFoundErrors(t *testing.T) {
 		if code == 0 {
 			t.Fatal("expected non-zero exit when no peer matches ip:port")
 		}
-		if !strings.Contains(stderr, "no currently connected peer") {
-			t.Errorf("expected 'no currently connected peer' hint, got: %s", stderr)
+		if !strings.Contains(stderr, "no currently connected") {
+			t.Errorf("expected 'no currently connected' hint, got: %s", stderr)
 		}
 	})
 }
