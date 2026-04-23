@@ -31,6 +31,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/dbstore"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -270,6 +272,13 @@ func (n *Node) doClose(errs []error) error {
 
 // openEndpoints starts all network and RPC endpoints.
 func (n *Node) openEndpoints() error {
+	// Wire the parallax-disc/1 subprotocol before Server.Start when
+	// ExperimentalAddrMan is enabled. Building the addrman here
+	// (rather than letting Server do it internally) avoids the import
+	// cycle that would appear if p2p imported p2p/protocols/disc.
+	if err := n.setupAddrManAndDisc(); err != nil {
+		return err
+	}
 	// start networking endpoints
 	n.log.Info("Starting peer-to-peer node", "instance", n.server.Name)
 	if err := n.server.Start(); err != nil {
@@ -559,6 +568,45 @@ func (n *Node) RegisterProtocols(protocols []p2p.Protocol) {
 		panic("can't register protocols on running/stopped node")
 	}
 	n.server.Protocols = append(n.server.Protocols, protocols...)
+}
+
+// setupAddrManAndDisc constructs the address manager and registers the
+// parallax-disc/1 subprotocol against it. No-op when the feature flag
+// is off. Runs during openEndpoints, before Server.Start.
+//
+// Done at the Node layer (not inside p2p) to avoid the import cycle:
+// p2p/protocols/disc needs p2p.Peer / p2p.MsgReadWriter, so p2p cannot
+// in turn import disc.
+func (n *Node) setupAddrManAndDisc() error {
+	if !n.config.P2P.ExperimentalAddrMan {
+		return nil
+	}
+	if n.server.AddrManager != nil {
+		// Already wired (test harness or double-Start).
+		return nil
+	}
+	if n.config.P2P.AddrBookPath == "" {
+		n.log.Warn("ExperimentalAddrMan enabled but AddrBookPath is empty; skipping addrman setup")
+		n.config.P2P.ExperimentalAddrMan = false
+		return nil
+	}
+	m, err := addrman.New()
+	if err != nil {
+		return err
+	}
+	if err := m.Load(n.config.P2P.AddrBookPath); err != nil {
+		n.log.Warn("addrbook load failed; proceeding empty", "path", n.config.P2P.AddrBookPath, "err", err)
+	}
+	for _, bn := range n.config.P2P.BootstrapNodes {
+		addrman.IngestNode(m, bn, addrman.SourceDNSSeed, time.Now())
+	}
+	// Register the subprotocol. Append directly to Protocols — we're
+	// still in initializingState (Start's state machine has flipped
+	// to runningState but the server hasn't started yet).
+	backend := disc.NewAddrmanBackend(m, nil, n.log)
+	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
+	n.server.AddrManager = m
+	return nil
 }
 
 // RegisterAPIs registers the APIs a service provides on the node.

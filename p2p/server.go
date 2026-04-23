@@ -162,14 +162,21 @@ type Config struct {
 	// alongside discv4. When true, Server wires an addrman instance
 	// into the dial path as an additional candidate source, tees
 	// discv4 / bootnode results into it, and persists addrbook.rlp on
-	// shutdown. Default off — PIP-0006 Phase 3 lands this behind a
-	// flag, Phase 5 flips the default.
+	// shutdown. Default off.
 	ExperimentalAddrMan bool `toml:",omitempty"`
 
 	// AddrBookPath is where the addrbook persists across restarts.
-	// Required when ExperimentalAddrMan is true. Usually
-	// <datadir>/addrbook.rlp.
+	// Required when ExperimentalAddrMan is true unless AddrManager is
+	// supplied directly. Usually <datadir>/addrbook.rlp.
 	AddrBookPath string `toml:",omitempty"`
+
+	// AddrManager, when non-nil, is an already-initialized address
+	// manager supplied by the caller. Server skips internal Load and
+	// just adopts this instance — useful when the caller (node.Node)
+	// needs the addrman available before Server.Start so it can wire
+	// the parallax-disc/1 subprotocol backend against it. Save-on-stop
+	// still happens if AddrBookPath is also set.
+	AddrManager *addrman.AddrMan `toml:"-"`
 
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger logging.Logger `toml:",omitempty"`
@@ -207,7 +214,9 @@ type Server struct {
 	// addrbook is the PIP-0006 address manager. Populated only when
 	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
 	// additional FairMix source and receives discv4/bootnode entries
-	// via teeIter wrappers.
+	// via teeIter wrappers. Exposed via AddrBook() so upstream code
+	// can register subprotocols against it without pulling p2p into
+	// an import cycle with p2p/protocols/*.
 	addrbook     *addrman.AddrMan
 	addrbookIter *addrman.NodeIter
 
@@ -531,34 +540,40 @@ func (srv *Server) Start() (err error) {
 	return nil
 }
 
-// setupAddrMan initializes the optional PIP-0006 address manager. No-op
-// when ExperimentalAddrMan is false; on true it loads addrbook.rlp (or
-// creates a fresh one) and ingests BootstrapNodes with source=dns_seed.
-// Discovery results are teed in later by setupDiscovery.
+// setupAddrMan initializes the optional address manager. No-op when
+// ExperimentalAddrMan is false. On true:
+//
+//   - If Config.AddrManager is supplied, adopt it directly (the caller
+//     has already done Load + subprotocol wiring).
+//   - Otherwise construct an empty addrman, Load addrbook.rlp, and
+//     ingest BootstrapNodes with source=dns_seed.
 func (srv *Server) setupAddrMan() error {
 	if !srv.ExperimentalAddrMan {
 		return nil
 	}
-	if srv.AddrBookPath == "" {
-		return errors.New("ExperimentalAddrMan: AddrBookPath must be set")
-	}
-	m, err := addrman.New()
-	if err != nil {
-		return fmt.Errorf("addrman: new: %w", err)
-	}
-	if err := m.Load(srv.AddrBookPath); err != nil {
-		if errors.Is(err, addrman.ErrFutureSchema) {
-			srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
-		} else {
-			srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+	var m *addrman.AddrMan
+	if srv.AddrManager != nil {
+		m = srv.AddrManager
+	} else {
+		if srv.AddrBookPath == "" {
+			return errors.New("ExperimentalAddrMan: AddrBookPath must be set when AddrManager is not supplied")
 		}
-	}
-	// Ingest bootnodes as one-shot dns_seed (Bitcoin `-seednode`
-	// equivalent). Manual-pinned peers from `addnode` are a separate
-	// source and land in Phase 6.
-	now := time.Now()
-	for _, n := range srv.BootstrapNodes {
-		addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+		var err error
+		m, err = addrman.New()
+		if err != nil {
+			return fmt.Errorf("addrman: new: %w", err)
+		}
+		if err := m.Load(srv.AddrBookPath); err != nil {
+			if errors.Is(err, addrman.ErrFutureSchema) {
+				srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
+			} else {
+				srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+			}
+		}
+		now := time.Now()
+		for _, n := range srv.BootstrapNodes {
+			addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+		}
 	}
 	srv.addrbook = m
 	srv.log.Info("addrman enabled", "path", srv.AddrBookPath, "entries", m.Size(nil, nil))
@@ -764,6 +779,69 @@ func (srv *Server) setupDialScheduler() {
 	}
 }
 
+// AddrBook returns the server's address manager, or nil when
+// ExperimentalAddrMan is not enabled. Upstream packages register the
+// parallax-disc/1 subprotocol against this book — doing the
+// registration here would create an import cycle with
+// p2p/protocols/disc.
+func (srv *Server) AddrBook() *addrman.AddrMan { return srv.addrbook }
+
+// addrmanGood marks the peer's address as verified in the addrman.
+// No-op when ExperimentalAddrMan is off. Called from the run-loop
+// right after a peer joins the peers map.
+func (srv *Server) addrmanGood(p *Peer) {
+	if srv.addrbook == nil {
+		return
+	}
+	addr, ok := peerRemoteAddr(p)
+	if !ok {
+		return
+	}
+	srv.addrbook.Good(addr, time.Now())
+}
+
+// addrmanAttempt records a failed connection attempt in the addrman.
+// No-op when ExperimentalAddrMan is off.
+func (srv *Server) addrmanAttempt(p *Peer) {
+	if srv.addrbook == nil {
+		return
+	}
+	addr, ok := peerRemoteAddr(p)
+	if !ok {
+		return
+	}
+	srv.addrbook.Attempt(addr, true, time.Now())
+}
+
+// peerRemoteAddr extracts the addrman.NetAddr form of a Peer's
+// RemoteAddr. Returns ok=false for non-TCP or unresolvable connections
+// (test pipes, Unix sockets, etc.).
+func peerRemoteAddr(p *Peer) (addrman.NetAddr, bool) {
+	ra := p.RemoteAddr()
+	if ra == nil {
+		return addrman.NetAddr{}, false
+	}
+	tcp, ok := ra.(*net.TCPAddr)
+	if !ok {
+		return addrman.NetAddr{}, false
+	}
+	if v4 := tcp.IP.To4(); v4 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv4, v4, uint16(tcp.Port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	if v6 := tcp.IP.To16(); v6 != nil {
+		a, err := addrman.NewNetAddr(addrman.NetIPv6, v6, uint16(tcp.Port))
+		if err != nil {
+			return addrman.NetAddr{}, false
+		}
+		return a, true
+	}
+	return addrman.NetAddr{}, false
+}
+
 func (srv *Server) maxInboundConns() int {
 	return srv.MaxPeers - srv.maxDialedConns()
 }
@@ -902,6 +980,10 @@ running:
 				if p.Inbound() {
 					inboundCount++
 				}
+				// addrman.Good: mark this peer's address as verified.
+				// Callers to addrman learn from our successes this
+				// way — matches CAddrMan::Good in src/addrman.cpp.
+				srv.addrmanGood(p)
 			}
 			c.cont <- err
 
@@ -913,6 +995,14 @@ running:
 			srv.dialsched.peerRemoved(pd.rw)
 			if pd.Inbound() {
 				inboundCount--
+			}
+			// addrman.Attempt: log the dial failure so IsTerrible
+			// eventually evicts unreachable entries. Only count
+			// failures on outbound-dial sessions — inbound
+			// disconnects tell us nothing about our view of the
+			// peer's reachability.
+			if pd.err != nil && !pd.Inbound() {
+				srv.addrmanAttempt(pd.Peer)
 			}
 		}
 	}
