@@ -35,6 +35,25 @@ type parallaxENREntry struct {
 
 func (e parallaxENREntry) ENRKey() string { return "parallax" }
 
+// pipv2ENREntry tests for the "pipv2" key — the v2-transport
+// capability flag set by nodes that accept BIP324-style handshakes.
+// Used by the crawler to report v2 adoption across the discovered
+// network.
+type pipv2ENREntry struct {
+	Rest []rlp.RawValue `rlp:"tail"`
+}
+
+func (e pipv2ENREntry) ENRKey() string { return "pipv2" }
+
+// hasPipV2 reports whether n's ENR advertises v2-transport support.
+func hasPipV2(n *enode.Node) bool {
+	if n == nil {
+		return false
+	}
+	var e pipv2ENREntry
+	return n.Load(&e) == nil
+}
+
 type crawler struct {
 	input     nodeSet
 	output    nodeSet
@@ -166,6 +185,18 @@ loop:
 		<-doneCh
 	}
 	wg.Wait()
+
+	var v2Count int
+	for _, n := range c.output {
+		if hasPipV2(n.N) {
+			v2Count++
+		}
+	}
+	logging.Info("Crawl complete",
+		"total", len(c.output),
+		"pipv2", v2Count,
+		"v1_only", len(c.output)-v2Count)
+
 	return c.output
 }
 
