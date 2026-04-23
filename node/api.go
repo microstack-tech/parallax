@@ -173,6 +173,33 @@ func (api *privateAdminAPI) AddrbookStatus() (*addrman.Status, error) {
 	return &s, nil
 }
 
+// DialV2 directly opens a BIP324-style v2 RLPx connection to the given
+// "ip:port". Bypasses the addrman routability filter, so it can
+// target loopback/RFC1918 addresses for testing. PIP-0006 Phase 2b.
+func (api *privateAdminAPI) DialV2(address string) (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return false, fmt.Errorf("invalid address %q: %w", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false, fmt.Errorf("invalid ip %q", host)
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return false, err
+	}
+	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
+	if err := server.DialV2(tcp); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // AddrbookResetKey regenerates the addrman's nKey and clears the tried
 // table atomically. Operator-only; intended for cases where an nKey
 // leak is credibly suspected. PIP-0006 Phase 6.

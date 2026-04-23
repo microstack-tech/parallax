@@ -34,6 +34,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
@@ -164,11 +165,25 @@ type Config struct {
 	//     handshakes (dispatched via the version-negotiation byte).
 	//   - Dialer uses v2 for addrman entries with KeyType=0x00 and
 	//     legacy for KeyType=0x01.
-	// Default off — per PIP-0006 Phase 2b the flag stays behind until
-	// Phase 5 stabilizes. Phase 2b ships the handshake primitive in
-	// p2p/rlpx/bip324handshake; Server-level dispatch wiring lands
-	// behind this flag in a follow-up.
+	// Default off — per PIP-0006 Phase 2b deprecation timeline.
 	ExperimentalV2Handshake bool `toml:",omitempty"`
+
+	// LegacyHandshakeMode controls whether legacy RLPx ECIES
+	// handshakes are offered or accepted. PIP-0006 deprecation
+	// timeline values (the plan's v2.0/v2.2 split exposed a release
+	// earlier):
+	//   "on"  — default for v2.0. Legacy listener, legacy dialer for
+	//           KeyType=0x01 entries. Node still loads a persistent
+	//           secp256k1 identity key and publishes an ENR/enode URL.
+	//   "off" — "v3.0 posture, early-opt-in". Listener rejects
+	//           anything that isn't the v2 magic byte. Dialer refuses
+	//           to dial KeyType=0x01 entries. No persistent secp256k1
+	//           key is loaded for legacy-inbound purposes, no ENR is
+	//           published, no enode URL is emitted. Implies
+	//           ExperimentalV2Handshake=true (flag combo validated at
+	//           Start).
+	// Empty or invalid → "on".
+	LegacyHandshakeMode string `toml:",omitempty"`
 
 	// LegacyDiscoveryMode controls whether this node issues legacy
 	// discv4 FINDNODE lookups. PIP-0006 Phase 5 values:
@@ -246,6 +261,7 @@ type Server struct {
 	// an import cycle with p2p/protocols/*.
 	addrbook     *addrman.AddrMan
 	addrbookIter *addrman.NodeIter
+	v2Iter       *addrman.V2Iter
 
 	// Channels into the run loop.
 	quit                    chan struct{}
@@ -465,6 +481,9 @@ func (srv *Server) Stop() {
 	if srv.addrbookIter != nil {
 		srv.addrbookIter.Close()
 	}
+	if srv.v2Iter != nil {
+		srv.v2Iter.Close()
+	}
 	close(srv.quit)
 	srv.lock.Unlock()
 	srv.loopWG.Wait()
@@ -527,9 +546,27 @@ func (srv *Server) Start() (err error) {
 		srv.log.Warn("P2P server will be useless, neither dialing nor listening")
 	}
 
+	// Validate the LegacyHandshake / ExperimentalV2Handshake combination
+	// up front so operators get a clear error rather than a silent
+	// failure mode. LegacyHandshake=off requires ExperimentalV2Handshake
+	// because otherwise the listener/dialer have no handshake variant
+	// to use for any peer.
+	if srv.LegacyHandshakeMode == "off" && !srv.ExperimentalV2Handshake {
+		return errors.New("--legacy-handshake=off requires --experimental-v2-handshake")
+	}
+
 	// static fields
 	if srv.PrivateKey == nil {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
+	}
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+		// The secp256k1 key is still loaded (used by crypto.FromECDSAPub
+		// to derive a stable placeholder for LocalNode), but no peer
+		// exchange depends on it: legacy RLPx is refused at the
+		// listener, and every outbound dial uses v2. The enode URL
+		// produced by Started-P2P-networking logs in this mode is a
+		// diagnostic artifact, not a dialable identifier.
+		srv.log.Info("LegacyHandshakeMode=off: legacy RLPx refused, enode URL diagnostic-only")
 	}
 	if srv.newTransport == nil {
 		srv.newTransport = newRLPX
@@ -841,6 +878,16 @@ func (srv *Server) setupDialScheduler() {
 	if srv.addrbook != nil {
 		srv.addrbookIter = addrman.NewNodeIter(srv.addrbook, 250*time.Millisecond)
 		srv.discmix.AddSource(srv.addrbookIter)
+		// Phase 2b: if v2 handshake is enabled, spawn a dedicated
+		// goroutine that drains v2-native addrman entries and dials
+		// them directly via Server.DialV2. The enode.Iterator
+		// abstraction can't carry "this is a v2 target" cleanly, so
+		// v2 dialing uses a side channel.
+		if srv.ExperimentalV2Handshake {
+			srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
+			srv.loopWG.Add(1)
+			go srv.runV2Dialer()
+		}
 	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
@@ -879,6 +926,47 @@ func (srv *Server) applyLegacyDiscoveryMode() {
 	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
 		srv.NoDiscovery = true
 	}
+}
+
+// runV2Dialer drains v2-native addrman entries and launches a Server
+// DialV2 for each. Rate-limited to one outstanding dial at a time so
+// a large addrbook doesn't burst-dial the network.
+func (srv *Server) runV2Dialer() {
+	defer srv.loopWG.Done()
+	for srv.v2Iter.Next() {
+		select {
+		case <-srv.quit:
+			return
+		default:
+		}
+		cand := srv.v2Iter.Candidate()
+		addrPort, ok := cand.Addr.AddrPort()
+		if !ok {
+			continue
+		}
+		tcp := &net.TCPAddr{IP: addrPort.Addr().AsSlice(), Port: int(addrPort.Port())}
+		if err := srv.DialV2(tcp); err != nil {
+			srv.log.Trace("v2 dial failed", "addr", tcp, "err", err)
+		}
+	}
+}
+
+// DialV2 opens a v2-handshake TCP connection to the supplied address
+// and hands the resulting peer to the normal run-loop checkpoints.
+// Called by the v2 dial goroutine and by admin_dialV2 for operator
+// testing. Returns an error if the handshake fails or the peer set
+// is full. No-op when ExperimentalV2Handshake is false.
+func (srv *Server) DialV2(addr *net.TCPAddr) error {
+	if !srv.ExperimentalV2Handshake {
+		return errors.New("ExperimentalV2Handshake is disabled")
+	}
+	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
+	if err != nil {
+		return fmt.Errorf("v2 dial %s: %w", addr, err)
+	}
+	// Flags: dynDialedConn so the run loop slots it correctly. No
+	// inboundConn bit — this is outbound.
+	return srv.SetupConn(fd, dynDialedConn, nil)
 }
 
 // AddrBook returns the server's address manager, or nil when
@@ -1223,11 +1311,86 @@ func (srv *Server) listenLoop() {
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
 		go func() {
-			srv.SetupConn(fd, inboundConn, nil)
+			// PIP-0006 Phase 2b: peek the first byte to classify the
+			// inbound connection as legacy ECIES or v2 AEAD. The
+			// peekedConn wrapper replays the byte for the legacy
+			// path and consumes it for the v2 path. peeked-variant
+			// is read by pickHandshakeVariant in SetupConn.
+			wrapped := srv.dispatchInbound(fd)
+			if wrapped != nil {
+				srv.SetupConn(wrapped, inboundConn, nil)
+			}
 			slots <- struct{}{}
 		}()
 	}
 }
+
+// dispatchInbound inspects the first byte of fd to classify the
+// handshake variant. Returns nil after closing fd if the peek failed
+// or the byte doesn't match a supported variant under the current
+// configuration.
+//
+// Rules:
+//   - !ExperimentalV2Handshake: all inbound treated as legacy. No peek
+//     is performed (zero-byte overhead on hot path).
+//   - ExperimentalV2Handshake: peek. If v2, proceed. If legacy AND
+//     LegacyHandshakeMode=on, proceed. If legacy AND
+//     LegacyHandshakeMode=off, reject. If unknown byte, reject.
+func (srv *Server) dispatchInbound(fd net.Conn) net.Conn {
+	if !srv.ExperimentalV2Handshake {
+		// Legacy-only posture: no peek needed.
+		return fd
+	}
+	// Give the peek a short deadline so a silent client doesn't
+	// burn a goroutine forever.
+	_ = fd.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	variant, peeked, err := bip324handshake.PeekVersion(fd)
+	// Reset read deadline — individual handshakes manage their own.
+	_ = fd.SetReadDeadline(time.Time{})
+	if err != nil {
+		srv.log.Trace("Peek failed on inbound connection", "addr", fd.RemoteAddr(), "err", err)
+		fd.Close()
+		return nil
+	}
+	wrapped := &peekedConn{Conn: fd, peeked: peeked}
+	switch variant {
+	case bip324handshake.VariantV2:
+		wrapped.variant = peekedVariantV2
+		return wrapped
+	case bip324handshake.VariantLegacy:
+		if srv.legacyHandshakeMode() == legacyHandshakeOff {
+			srv.log.Trace("Rejecting legacy inbound (LegacyHandshakeMode=off)", "addr", fd.RemoteAddr())
+			fd.Close()
+			return nil
+		}
+		wrapped.variant = peekedVariantLegacy
+		return wrapped
+	default:
+		srv.log.Trace("Rejecting unknown-handshake inbound", "addr", fd.RemoteAddr())
+		fd.Close()
+		return nil
+	}
+}
+
+// peekedConn wraps a net.Conn that's had its first byte(s) peeked by
+// bip324handshake.PeekVersion. The v2 path has already consumed the
+// magic byte; the legacy path replays it.
+type peekedConn struct {
+	net.Conn
+	peeked  *bip324handshake.PeekedConn
+	variant peekedVariant
+}
+
+// Read delegates to the PeekedConn's Read, which handles replay
+// transparently for the legacy path.
+func (p *peekedConn) Read(b []byte) (int, error) { return p.peeked.Read(b) }
+
+type peekedVariant int
+
+const (
+	peekedVariantLegacy peekedVariant = iota
+	peekedVariantV2
+)
 
 func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	if remoteIP == nil {
@@ -1252,10 +1415,23 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
-	if dialDest == nil {
-		c.transport = srv.newTransport(fd, nil)
-	} else {
-		c.transport = srv.newTransport(fd, dialDest.Pubkey())
+	variant := srv.pickHandshakeVariant(fd, flags, dialDest)
+	switch variant {
+	case handshakeVariantV2:
+		// Outbound v2 dial: the TCP connection is freshly open; the
+		// v2Transport's DialHandshake will write the magic byte.
+		c.transport = newV2Outbound(fd)
+	case handshakeVariantV2Inbound:
+		// Inbound v2: the listener-side PeekVersion has already
+		// consumed the magic byte. Wrap the peeked connection.
+		c.transport = newV2Inbound(fd)
+	default:
+		// Legacy RLPx path (unchanged).
+		if dialDest == nil {
+			c.transport = srv.newTransport(fd, nil)
+		} else {
+			c.transport = srv.newTransport(fd, dialDest.Pubkey())
+		}
 	}
 
 	err := srv.setupConn(c, flags, dialDest)
@@ -1263,6 +1439,88 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) 
 		c.close(err)
 	}
 	return err
+}
+
+// handshakeVariant is the per-connection choice between legacy RLPx
+// ECIES and the Phase 2b v2 handshake. Chosen by pickHandshakeVariant
+// at connection setup time.
+type handshakeVariant int
+
+const (
+	handshakeVariantLegacy handshakeVariant = iota
+	handshakeVariantV2
+	handshakeVariantV2Inbound
+)
+
+// pickHandshakeVariant decides which handshake path to use for a given
+// connection. The three axes that matter:
+//
+//   - Is this an outbound dial or an inbound accept?
+//   - Is ExperimentalV2Handshake enabled?
+//   - For outbound: does the dial target carry a legacy NodeID (its
+//     pubkey resolves to a usable secp256k1 point) or is it a
+//     v2-native entry (dialDest is nil / marker)?
+//
+// For inbound, the caller (listener goroutine) has already dispatched
+// via bip324handshake.PeekVersion; pickHandshakeVariant reads a
+// per-connection flag recorded on the fd.
+func (srv *Server) pickHandshakeVariant(fd net.Conn, flags connFlag, dialDest *enode.Node) handshakeVariant {
+	// Inbound: the peek-result is hung off the connection via a
+	// *peekedConn wrapper. If peek said v2, the wrapper signals it
+	// through the peekedVariant field.
+	if flags&inboundConn != 0 {
+		if pc, ok := fd.(*peekedConn); ok && pc.variant == peekedVariantV2 {
+			return handshakeVariantV2Inbound
+		}
+		return handshakeVariantLegacy
+	}
+	// Outbound: decide by target.
+	if !srv.ExperimentalV2Handshake {
+		return handshakeVariantLegacy
+	}
+	// If legacy is turned off, every outbound must be v2. A caller
+	// that couldn't build a v2 target shouldn't have reached here.
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+		return handshakeVariantV2
+	}
+	// v2-native dial targets are signalled by a nil dialDest (the v2
+	// dial path bypasses the enode.Node abstraction) OR by a dialDest
+	// whose Pubkey is the v2 marker — see addrman.ZeroPubkeyMarker.
+	if dialDest == nil || isV2Marker(dialDest.Pubkey()) {
+		return handshakeVariantV2
+	}
+	return handshakeVariantLegacy
+}
+
+// legacyHandshakeMode is the parsed LegacyHandshakeMode.
+type legacyHandshakeMode int
+
+const (
+	legacyHandshakeOn legacyHandshakeMode = iota
+	legacyHandshakeOff
+)
+
+func (srv *Server) legacyHandshakeMode() legacyHandshakeMode {
+	switch srv.LegacyHandshakeMode {
+	case "off":
+		return legacyHandshakeOff
+	case "", "on":
+		return legacyHandshakeOn
+	}
+	srv.log.Warn("unknown --legacy-handshake value; defaulting to on", "value", srv.LegacyHandshakeMode)
+	return legacyHandshakeOn
+}
+
+// isV2Marker reports whether a decoded secp256k1 pubkey matches the
+// "this is a v2-native dial target" sentinel. The addrman package sets
+// the marker for entries with KeyType=0x00 when yielding them through
+// the enode iterator.
+func isV2Marker(pub *ecdsa.PublicKey) bool {
+	if pub == nil {
+		return true
+	}
+	// All-zero X with all-zero Y = not a real secp256k1 point.
+	return (pub.X == nil || pub.X.Sign() == 0) && (pub.Y == nil || pub.Y.Sign() == 0)
 }
 
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) error {
@@ -1290,10 +1548,17 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
 		return err
 	}
-	if dialDest != nil {
-		c.node = dialDest
-	} else {
+	// For v2 transports there is no persistent peer identity; we
+	// derive c.node from the remote ephemeral X25519 key via
+	// v2NodeFromConn, which uses enode.SignNull to assign a
+	// session-scoped ID. Any dialDest we started with is replaced so
+	// the run-loop's peers map is keyed by the real session identity.
+	if v2t, v2 := c.transport.(*v2Transport); v2 {
+		c.node = v2NodeFromConn(v2t.remoteEphem, c.fd)
+	} else if dialDest == nil {
 		c.node = nodeFromConn(remotePubkey, c.fd)
+	} else {
+		c.node = dialDest
 	}
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)

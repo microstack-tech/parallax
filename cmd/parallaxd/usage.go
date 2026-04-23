@@ -161,6 +161,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.ExperimentalAddrmanFlag,
 			utils.LegacyDiscoveryFlag,
 			utils.ExperimentalV2HandshakeFlag,
+			utils.LegacyHandshakeFlag,
 		},
 	},
 	{

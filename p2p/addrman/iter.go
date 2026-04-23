@@ -26,6 +26,80 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
+// V2Candidate is a v2-native dial target emitted by V2Iter. Unlike
+// NodeIter (which wraps KeyType=0x01 entries in enode.Node), the v2
+// path has no persistent identity, so we expose a bare net.TCPAddr.
+// The Server's v2 dial goroutine reads from a channel of these and
+// calls Server.DialV2 for each.
+type V2Candidate struct {
+	Addr NetAddr // IPv4/IPv6 routable, port != 0
+}
+
+// V2Iter iterates addrman entries with KeyType=0x00 (v2-native). It
+// draws candidates via Select() and skips non-v2 entries. Blocks
+// between draws with exponential backoff when the table has no v2
+// entries to offer, so callers can simply range-over Next().
+type V2Iter struct {
+	m          *AddrMan
+	current    V2Candidate
+	closed     chan struct{}
+	closeOnce  sync.Once
+	maxBackoff time.Duration
+}
+
+// NewV2Iter builds an iterator yielding only KeyType=0x00 entries.
+// Parallels NewNodeIter.
+func NewV2Iter(m *AddrMan, maxBackoff time.Duration) *V2Iter {
+	if maxBackoff <= 0 {
+		maxBackoff = 250 * time.Millisecond
+	}
+	return &V2Iter{m: m, closed: make(chan struct{}), maxBackoff: maxBackoff}
+}
+
+// Next advances to the next v2 dial candidate. Blocks until one is
+// available or Close is called.
+func (it *V2Iter) Next() bool {
+	backoff := 10 * time.Millisecond
+	for {
+		select {
+		case <-it.closed:
+			return false
+		default:
+		}
+		addr, _, ok := it.m.Select(false, nil)
+		if ok {
+			info := it.m.Lookup(addr)
+			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
+				it.current = V2Candidate{Addr: addr}
+				return true
+			}
+			// Wrong KeyType — spin; Select will eventually return
+			// a v2-native entry if one exists.
+			continue
+		}
+		t := time.NewTimer(backoff)
+		select {
+		case <-it.closed:
+			t.Stop()
+			return false
+		case <-t.C:
+		}
+		backoff *= 2
+		if backoff > it.maxBackoff {
+			backoff = it.maxBackoff
+		}
+	}
+}
+
+// Candidate returns the current v2 dial target. Only valid after a
+// successful Next().
+func (it *V2Iter) Candidate() V2Candidate { return it.current }
+
+// Close halts the iterator. Safe to call multiple times.
+func (it *V2Iter) Close() {
+	it.closeOnce.Do(func() { close(it.closed) })
+}
+
 // NodeIter is an enode.Iterator view on an AddrMan. Next() calls
 // AddrMan.Select() and reconstructs an *enode.Node using the stored
 // NodeID+IP+Port.

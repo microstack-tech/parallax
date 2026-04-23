@@ -661,6 +661,11 @@ var (
 		Name:  "experimental-v2-handshake",
 		Usage: "Enable the BIP324-style v2 RLPx handshake for dialing KeyType=0x00 peers on IP:port alone. Experimental; the listener accepts both handshake variants when this is set. Default off — incoming v2 handshakes are rejected until this flag is flipped.",
 	}
+	LegacyHandshakeFlag = cli.StringFlag{
+		Name:  "legacy-handshake",
+		Usage: "Whether to offer/accept the legacy RLPx ECIES handshake (on|off). Default on for v2.0 compatibility with v1.x peers. off opts into the v3.0-posture early: listener rejects anything that isn't the v2 magic byte, dialer refuses KeyType=0x01 entries, no ENR published. Requires --experimental-v2-handshake.",
+		Value: "on",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -1151,6 +1156,9 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	}
 	if ctx.GlobalBool(ExperimentalV2HandshakeFlag.Name) {
 		cfg.ExperimentalV2Handshake = true
+	}
+	if ctx.GlobalIsSet(LegacyHandshakeFlag.Name) {
+		cfg.LegacyHandshakeMode = ctx.GlobalString(LegacyHandshakeFlag.Name)
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {

@@ -69,6 +69,12 @@ type Conn struct {
 
 	recvMu    sync.Mutex
 	recvNonce uint64
+
+	// Session identity material. Set during Dial/AcceptHandshake;
+	// exposed via SessionKeys so upstream transports can derive a
+	// peer identity from the 32-byte X25519 keys.
+	localEphem  []byte
+	remoteEphem []byte
 }
 
 // NewConn wraps a net.Conn. Call DialHandshake (initiator) or
@@ -136,6 +142,8 @@ func (c *Conn) DialHandshake() error {
 	if err != nil {
 		return err
 	}
+	c.localEphem = append([]byte(nil), initPub...)
+	c.remoteEphem = append([]byte(nil), peerPub[:]...)
 	return nil
 }
 
@@ -179,7 +187,17 @@ func (c *Conn) AcceptHandshake() error {
 	if err != nil {
 		return err
 	}
+	c.localEphem = append([]byte(nil), respPub...)
+	c.remoteEphem = append([]byte(nil), initPub[:]...)
 	return nil
+}
+
+// SessionKeys returns (localEphem, remoteEphem) — the 32-byte X25519
+// public keys exchanged during the handshake. Valid only after a
+// successful Dial/AcceptHandshake. Both slices are copies; callers
+// may modify or retain them freely.
+func (c *Conn) SessionKeys() ([]byte, []byte) {
+	return append([]byte(nil), c.localEphem...), append([]byte(nil), c.remoteEphem...)
 }
 
 // Write sends one length-prefixed AEAD frame. Thread-safe.

@@ -427,6 +427,15 @@ Requires the node to be running with --experimental-addrman.`,
 		Category: "CLIENT COMMANDS",
 	}
 
+	dialV2Command = cli.Command{
+		Action:    utils.MigrateFlags(clientDialV2),
+		Name:      "dialv2",
+		Usage:     "Dial a remote node over the BIP324-style v2 RLPx handshake (requires --experimental-v2-handshake on the target daemon)",
+		ArgsUsage: "<ip:port>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+	}
+
 	addTrustedCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientAddTrusted),
 		Name:      "addtrusted",
@@ -715,6 +724,7 @@ var clientSugarCommands = []cli.Command{
 	removenodeCommand,
 	addrbookStatusCommand,
 	addrbookResetKeyCommand,
+	dialV2Command,
 	miningCommand,
 	startMiningCommand,
 	stopMiningCommand,
@@ -1646,6 +1656,25 @@ type addrbookStatus struct {
 	New       int            `json:"new"`
 	Tried     int            `json:"tried"`
 	PerSource map[string]int `json:"perSource"`
+}
+
+// clientDialV2 invokes admin_dialV2. Operator-testing helper for the
+// BIP324-style v2 handshake — useful when the target's addrman entry
+// can't be auto-selected (e.g., loopback in a single-host topology).
+func clientDialV2(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_dialV2", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_dialV2 returned false")
+	}
+	fmt.Println("v2 dial initiated")
+	return nil
 }
 
 // clientAddrbookResetKey invokes admin_addrbookResetKey. Destructive —

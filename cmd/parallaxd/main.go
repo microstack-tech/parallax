@@ -130,6 +130,7 @@ var (
 		utils.ExperimentalAddrmanFlag,
 		utils.LegacyDiscoveryFlag,
 		utils.ExperimentalV2HandshakeFlag,
+		utils.LegacyHandshakeFlag,
 		utils.DeveloperFlag,
 		utils.DeveloperPeriodFlag,
 		utils.DeveloperGasLimitFlag,
