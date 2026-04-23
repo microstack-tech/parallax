@@ -24,6 +24,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 // AddrmanBackend is the production Backend implementation. It routes
@@ -36,8 +37,13 @@ type AddrmanBackend struct {
 	Q   *Quorum
 	log logging.Logger
 
-	mu        sync.Mutex
+	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
+	// handshakeByID maps peer enode IDs to the human-readable
+	// handshake variant ("v2" / "legacy+v2") for admin.peers output.
+	// Populated on session start by TrackHandshake, purged on
+	// PeerDisconnected.
+	handshakeByID map[enode.ID]string
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
@@ -50,11 +56,34 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger) *Addrm
 		log = logging.Root()
 	}
 	return &AddrmanBackend{
-		m:           m,
-		Q:           q,
-		log:         log,
-		peerBuckets: make(map[PeerKey]*tokenBucket),
+		m:             m,
+		Q:             q,
+		log:           log,
+		peerBuckets:   make(map[PeerKey]*tokenBucket),
+		handshakeByID: make(map[enode.ID]string),
 	}
+}
+
+// TrackHandshake records the handshake variant used for this session.
+// Called by handler.Run once per peer on session start. Used by
+// PeerInfo to answer admin.peers' "is this peer v2-only or
+// legacy+v2".
+func (b *AddrmanBackend) TrackHandshake(peer *p2p.Peer, usingV2 bool) {
+	variant := "legacy+v2"
+	if usingV2 {
+		variant = "v2"
+	}
+	b.mu.Lock()
+	b.handshakeByID[peer.ID()] = variant
+	b.mu.Unlock()
+}
+
+// PeerHandshake returns the handshake variant previously recorded for
+// id, or the empty string if the peer is not currently tracked.
+func (b *AddrmanBackend) PeerHandshake(id enode.ID) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.handshakeByID[id]
 }
 
 func (b *AddrmanBackend) Log() logging.Logger { return b.log }
@@ -233,6 +262,7 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	key := peerKeyFor(peer)
 	b.mu.Lock()
 	delete(b.peerBuckets, key)
+	delete(b.handshakeByID, peer.ID())
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
 }

@@ -57,16 +57,11 @@ func MakeProtocol(backend Backend) p2p.Protocol {
 		NodeInfo: func() any {
 			return NodeInfo{Version: ProtocolVersion}
 		},
-		PeerInfo: func(_ enode.ID) any {
-			// Shape per-peer info mirror NodeInfo — the admin
-			// RPC aggregator falls back to the literal string
-			// "unknown" if this callback is absent, which is
-			// visibly wrong in admin.peers output. Once the
-			// handler starts carrying per-session state worth
-			// exposing (rate-limit bucket levels, Peers-message
-			// counters, quorum contributions), extend PeerInfo
-			// to surface it and look up by id.
-			return PeerInfo{Version: ProtocolVersion}
+		PeerInfo: func(id enode.ID) any {
+			return PeerInfo{
+				Version:   ProtocolVersion,
+				Handshake: backend.PeerHandshake(id),
+			}
 		},
 		Attributes: []enr.Entry{enrEntry{Version: ProtocolVersion}},
 	}
@@ -79,10 +74,19 @@ type NodeInfo struct {
 }
 
 // PeerInfo is the per-peer shape reported under admin.peers.protocols.
-// Minimal today; extend with per-session rate-limit/quorum counters
-// when that data is worth surfacing to operators.
+//
+// Handshake values:
+//
+//   "v2"        — session is authenticated via the BIP324-style v2
+//                 handshake. The remote definitely supports v2; we
+//                 can't tell whether it ALSO supports legacy RLPx
+//                 without trying.
+//   "legacy+v2" — session is on legacy RLPx AND the remote advertises
+//                 parallax-disc/1 in its capability list. Both
+//                 handshake variants work with this peer.
 type PeerInfo struct {
-	Version uint `json:"version"`
+	Version   uint   `json:"version"`
+	Handshake string `json:"handshake"`
 }
 
 // enrEntry is the ENR key/value pair advertised by nodes that support

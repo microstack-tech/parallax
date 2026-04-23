@@ -26,6 +26,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 // Backend is the host-integration surface. The handler calls into Backend
@@ -58,6 +59,17 @@ type Backend interface {
 	// no override is configured. listenPort is the TCP port we listen
 	// on (used when the quorum winner has port=0).
 	SelfEntry(listenPort uint16) (PeerEntry, bool)
+
+	// TrackHandshake records which handshake variant a peer session
+	// was established with. The handler calls this once on session
+	// start. Used by admin.peers to show whether a peer is
+	// v2-authenticated or legacy+v2.
+	TrackHandshake(peer *p2p.Peer, usingV2 bool)
+
+	// PeerHandshake returns the handshake variant recorded for a
+	// peer by TrackHandshake, or an empty string if the peer isn't
+	// known (connection torn down, never parallax-disc/1-negotiated).
+	PeerHandshake(id enode.ID) string
 
 	// Log returns the logger to use for protocol-level events.
 	Log() logging.Logger
@@ -103,6 +115,8 @@ type state struct {
 func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	log := backend.Log().New("peer", peer.ID())
 	log.Trace("parallax-disc/1 session starting")
+
+	backend.TrackHandshake(peer, peer.UsingV2Handshake())
 
 	st := &state{}
 

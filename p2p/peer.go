@@ -223,6 +223,17 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
+// UsingV2Handshake reports whether this session is authenticated via
+// the PIP-0006 Phase 2b BIP324-style v2 handshake (true) or the legacy
+// RLPx ECIES handshake (false). Callers use this to tell whether the
+// remote supports the v2 transport: a v2 session proves v2 support,
+// while a legacy session says nothing about whether the remote would
+// also accept v2 — it only tells us they accepted legacy from us.
+func (p *Peer) UsingV2Handshake() bool {
+	_, ok := p.rw.transport.(*v2Transport)
+	return ok
+}
+
 func newPeer(log logging.Logger, conn *conn, protocols []Protocol) *Peer {
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
