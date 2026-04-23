@@ -941,6 +941,93 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	return srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil)
 }
 
+// logStartup emits the node's starting address as plain ip:port
+// rather than a full enode URL. The URL form hard-couples to the v1.x
+// identity model, which misleads operators running in v2-only mode
+// (where the persistent secp256k1 key doesn't participate in any
+// handshake). For v1.x-compatible modes the enode URL is still worth
+// having — we emit it at debug level as a secondary line.
+func (srv *Server) logStartup() {
+	n := srv.localnode.Node()
+	srv.log.Info("Started P2P networking",
+		"ip", n.IP(), "port", n.TCP(),
+		"mode", srv.startupModeString())
+	if srv.legacyHandshakeMode() != legacyHandshakeOff {
+		srv.log.Debug("Legacy enode URL", "self", n.URLv4())
+	}
+}
+
+// startupModeString describes the handshake/discovery posture for the
+// startup banner.
+func (srv *Server) startupModeString() string {
+	switch srv.legacyDiscoveryMode() {
+	case legacyDiscoveryOff:
+		return "v2-only"
+	case legacyDiscoveryOn:
+		return "legacy+v2 (discv4-full)"
+	}
+	return "legacy+v2 (discv4-responder)"
+}
+
+// watchLocalAddrChanges polls the LocalNode's advertised IP/port and
+// logs a follow-up line when they change — typically when NAT/UPnP
+// resolves the public IP or the ENR is refreshed by a peer observation.
+// The poll cadence matches the LocalNode's internal refresh rate
+// closely enough; precise hooks would require a subscription API on
+// LocalNode that doesn't exist yet.
+func (srv *Server) watchLocalAddrChanges() {
+	prevIP := srv.localnode.Node().IP()
+	prevPort := srv.localnode.Node().TCP()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-srv.quit:
+			return
+		case <-tick.C:
+			n := srv.localnode.Node()
+			ip, port := n.IP(), n.TCP()
+			if !ip.Equal(prevIP) || port != prevPort {
+				srv.log.Info("P2P external address updated",
+					"old-ip", prevIP, "new-ip", ip,
+					"old-port", prevPort, "new-port", port)
+				prevIP, prevPort = ip, port
+			}
+		}
+	}
+}
+
+// LegacyHandshakeRefused reports whether this Server is in v2-only
+// mode (--legacy-discovery=off). Exposed for RPC handlers that want
+// to branch on the transport posture — e.g., admin_addPeer rejects
+// enode:// targets in this mode because the legacy handshake is
+// refused both inbound and outbound.
+func (srv *Server) LegacyHandshakeRefused() bool {
+	return srv.legacyHandshakeMode() == legacyHandshakeOff
+}
+
+// DisconnectByAddr finds the first connected peer whose RemoteAddr
+// matches the given TCP address and disconnects it. Returns true if
+// a matching peer was found. Used by admin_removePeer in v2 mode
+// because v2 peer identities are session-ephemeral and can't be used
+// as stable lookup keys.
+func (srv *Server) DisconnectByAddr(addr *net.TCPAddr) bool {
+	if addr == nil {
+		return false
+	}
+	for _, p := range srv.Peers() {
+		ra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if ra.Port == addr.Port && ra.IP.Equal(addr.IP) {
+			p.Disconnect(DiscRequested)
+			return true
+		}
+	}
+	return false
+}
+
 // AddrBook returns the server's address manager, or nil when
 // ExperimentalAddrMan is not enabled. Upstream packages register the
 // parallax-disc/1 subprotocol against this book — doing the
@@ -1072,7 +1159,8 @@ func (srv *Server) doPeerOp(fn peerOpFunc) {
 
 // run is the main loop of the server.
 func (srv *Server) run() {
-	srv.log.Info("Started P2P networking", "self", srv.localnode.Node().URLv4())
+	srv.logStartup()
+	go srv.watchLocalAddrChanges()
 	defer srv.loopWG.Done()
 	defer srv.nodedb.Close()
 	defer srv.discmix.Close()
@@ -1611,15 +1699,26 @@ func (srv *Server) runPeer(p *Peer) {
 }
 
 // NodeInfo represents a short summary of the information known about the host.
+//
+// Enode and ENR are pointer types so they marshal to JSON null when the
+// node is running in v2-only mode (--legacy-discovery=off) — the
+// persistent secp256k1 identity has no peer-visible use in that mode,
+// and emitting its URL as if it were a dialable identifier would
+// mislead operators.
 type NodeInfo struct {
-	ID    string `json:"id"`    // Unique node identifier (also the encryption key)
-	Name  string `json:"name"`  // Name of the node, including client type, version, OS, custom data
-	Enode string `json:"enode"` // Enode URL for adding this peer from remote peers
-	ENR   string `json:"enr"`   // Parallax Node Record
-	IP    string `json:"ip"`    // IP address of the node
+	ID    string  `json:"id"`    // Unique node identifier (also the encryption key)
+	Name  string  `json:"name"`  // Name of the node, including client type, version, OS, custom data
+	Enode *string `json:"enode"` // Enode URL for adding this peer from remote peers; null in v2-only mode
+	ENR   *string `json:"enr"`   // Parallax Node Record; null in v2-only mode
+	IP    string  `json:"ip"`    // IP address of the node
 	Ports struct {
-		Discovery int `json:"discovery"` // UDP listening port for discovery protocol
-		Listener  int `json:"listener"`  // TCP listening port for RLPx
+		// Discovery is the UDP listening port for legacy discv4. In
+		// v2-only mode (--legacy-discovery=off) there is no UDP
+		// socket, and this field reports the TCP listener port
+		// instead — discovery on a v2-only node happens entirely
+		// over TCP via parallax-disc/1 gossip.
+		Discovery int `json:"discovery"`
+		Listener  int `json:"listener"` // TCP listening port for RLPx
 	} `json:"ports"`
 	ListenAddr string         `json:"listenAddr"`
 	Protocols  map[string]any `json:"protocols"`
@@ -1631,15 +1730,23 @@ func (srv *Server) NodeInfo() *NodeInfo {
 	node := srv.Self()
 	info := &NodeInfo{
 		Name:       srv.Name,
-		Enode:      node.URLv4(),
 		ID:         node.ID().String(),
 		IP:         node.IP().String(),
 		ListenAddr: srv.ListenAddr,
 		Protocols:  make(map[string]any),
 	}
-	info.Ports.Discovery = node.UDP()
 	info.Ports.Listener = node.TCP()
-	info.ENR = node.String()
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+		// v2-only: no persistent identity is dialable, no UDP exists.
+		// Enode/ENR null, discovery port mirrors the TCP port.
+		info.Ports.Discovery = node.TCP()
+	} else {
+		enode := node.URLv4()
+		enr := node.String()
+		info.Enode = &enode
+		info.ENR = &enr
+		info.Ports.Discovery = node.UDP()
+	}
 
 	// Gather all the running protocol infos (only once per protocol type)
 	for _, proto := range srv.Protocols {

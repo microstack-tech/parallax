@@ -148,10 +148,10 @@ type ExecNode struct {
 
 // Addr returns the node's enode URL
 func (n *ExecNode) Addr() []byte {
-	if n.Info == nil {
+	if n.Info == nil || n.Info.Enode == nil {
 		return nil
 	}
-	return []byte(n.Info.Enode)
+	return []byte(*n.Info.Enode)
 }
 
 // Client returns an rpc.Client which can be used to communicate with the

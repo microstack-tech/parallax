@@ -344,9 +344,10 @@ func (sn *SimNode) SubscribeEvents(ch chan *p2p.PeerEvent) event.Subscription {
 func (sn *SimNode) NodeInfo() *p2p.NodeInfo {
 	server := sn.Server()
 	if server == nil {
+		enode := sn.Node().String()
 		return &p2p.NodeInfo{
 			ID:    sn.ID.String(),
-			Enode: sn.Node().String(),
+			Enode: &enode,
 		}
 	}
 	return server.NodeInfo()

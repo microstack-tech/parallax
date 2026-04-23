@@ -67,37 +67,94 @@ type privateAdminAPI struct {
 	node *Node // Node interfaced by this API
 }
 
-// AddPeer requests connecting to a remote node, and also maintaining the new
-// connection at all times, even reconnecting if it is lost.
+// AddPeer requests connecting to a remote node. Input is either
+//
+//   - enode://<hex>@ip:port — legacy RLPx path, registers a static
+//     dial task that auto-reconnects. Rejected when the node is
+//     running in v2-only mode (--legacy-discovery=off).
+//   - ip:port                — v2 path, opens a single BIP324-style
+//     handshake via Server.DialV2. Works in every mode.
+//
+// Operators who want a persistent auto-reconnecting v2 peer should
+// use admin_addnode instead (ingests into addrman with source=manual,
+// survives restarts, dialed ahead of any other source).
 func (api *privateAdminAPI) AddPeer(url string) (bool, error) {
-	// Make sure the server is running, fail otherwise
 	server := api.node.Server()
 	if server == nil {
 		return false, ErrNodeStopped
 	}
-	// Try to add the url as a static peer and return
-	node, err := enode.Parse(enode.ValidSchemes, url)
-	if err != nil {
-		return false, fmt.Errorf("invalid enode: %v", err)
+	url = strings.TrimSpace(url)
+	if strings.HasPrefix(url, "enode://") || strings.HasPrefix(url, "enr:") {
+		// Legacy RLPx path — v2-only mode refuses legacy targets.
+		if server.LegacyHandshakeRefused() {
+			return false, errors.New("node is running with --legacy-discovery=off; pass ip:port (v2) or use admin_addnode")
+		}
+		node, err := enode.Parse(enode.ValidSchemes, url)
+		if err != nil {
+			return false, fmt.Errorf("invalid enode: %v", err)
+		}
+		server.AddPeer(node)
+		return true, nil
 	}
-	server.AddPeer(node)
+	// ip:port → v2 dial (single-shot; use admin_addnode for persistence).
+	host, portStr, err := net.SplitHostPort(url)
+	if err != nil {
+		return false, fmt.Errorf("invalid address %q: expected enode://… or ip:port", url)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false, fmt.Errorf("invalid ip %q", host)
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return false, err
+	}
+	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
+	if err := server.DialV2(tcp); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
-// RemovePeer disconnects from a remote node if the connection exists
+// RemovePeer disconnects from a remote node. Symmetric with AddPeer:
+//
+//   - enode://<hex>@ip:port — legacy path, removes the static dial
+//     task and disconnects the matching peer.
+//   - ip:port                — scans current peers for one whose
+//     RemoteAddr matches and disconnects it. Useful for v2 peers
+//     whose node.ID is session-ephemeral and therefore not stable
+//     across reconnects.
 func (api *privateAdminAPI) RemovePeer(url string) (bool, error) {
-	// Make sure the server is running, fail otherwise
 	server := api.node.Server()
 	if server == nil {
 		return false, ErrNodeStopped
 	}
-	// Try to remove the url as a static peer and return
-	node, err := enode.Parse(enode.ValidSchemes, url)
-	if err != nil {
-		return false, fmt.Errorf("invalid enode: %v", err)
+	url = strings.TrimSpace(url)
+	if strings.HasPrefix(url, "enode://") || strings.HasPrefix(url, "enr:") {
+		if server.LegacyHandshakeRefused() {
+			return false, errors.New("node is running with --legacy-discovery=off; pass ip:port to remove a v2 peer")
+		}
+		node, err := enode.Parse(enode.ValidSchemes, url)
+		if err != nil {
+			return false, fmt.Errorf("invalid enode: %v", err)
+		}
+		server.RemovePeer(node)
+		return true, nil
 	}
-	server.RemovePeer(node)
-	return true, nil
+	// ip:port → disconnect the peer with a matching RemoteAddr.
+	host, portStr, err := net.SplitHostPort(url)
+	if err != nil {
+		return false, fmt.Errorf("invalid address %q: expected enode://… or ip:port", url)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false, fmt.Errorf("invalid ip %q", host)
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return false, err
+	}
+	return server.DisconnectByAddr(&net.TCPAddr{IP: ip, Port: int(port)}), nil
 }
 
 // AddTrustedPeer allows a remote node to always connect, even if slots are full
