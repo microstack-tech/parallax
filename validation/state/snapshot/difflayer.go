@@ -292,9 +292,15 @@ func (dl *diffLayer) Account(hash util.Hash) (*Account, error) {
 //
 // Note the returned account is not a copy, please don't modify it.
 func (dl *diffLayer) AccountRLP(hash util.Hash) ([]byte, error) {
+	// Staleness must be checked before the bloom shortcut; otherwise a
+	// flattened layer could still service reads via its cached disk origin.
+	dl.lock.RLock()
+	if dl.Stale() {
+		dl.lock.RUnlock()
+		return nil, ErrSnapshotStale
+	}
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
-	dl.lock.RLock()
 	hit := dl.diffed.Contains(accountBloomHasher(hash))
 	if !hit {
 		hit = dl.diffed.Contains(destructBloomHasher(hash))
@@ -358,9 +364,15 @@ func (dl *diffLayer) accountRLP(hash util.Hash, depth int) ([]byte, error) {
 //
 // Note the returned slot is not a copy, please don't modify it.
 func (dl *diffLayer) Storage(accountHash, storageHash util.Hash) ([]byte, error) {
+	// Staleness must be checked before the bloom shortcut; otherwise a
+	// flattened layer could still service reads via its cached disk origin.
+	dl.lock.RLock()
+	if dl.Stale() {
+		dl.lock.RUnlock()
+		return nil, ErrSnapshotStale
+	}
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
-	dl.lock.RLock()
 	hit := dl.diffed.Contains(storageBloomHasher{accountHash, storageHash})
 	if !hit {
 		hit = dl.diffed.Contains(destructBloomHasher(accountHash))
