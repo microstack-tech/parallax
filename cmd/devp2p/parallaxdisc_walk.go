@@ -71,6 +71,12 @@ var parallaxDiscCrawlerCommand = cli.Command{
 			Usage: "How often to flush state to disk during the run.",
 			Value: 5 * time.Minute,
 		},
+		cli.DurationFlag{
+			Name: "reprobe-interval",
+			Usage: "How long to wait after the queue drains before re-enqueueing all known nodes for another pass. " +
+				"Set to 0 to exit on the first drain (one-shot mode).",
+			Value: 30 * time.Second,
+		},
 	},
 	Action: parallaxDiscWalk,
 }
@@ -207,9 +213,10 @@ type walker struct {
 
 	outstanding int64 // atomic — pending probes (queued + in-flight)
 
-	parallelism  int
-	saveInterval time.Duration
-	stateFile    string
+	parallelism     int
+	saveInterval    time.Duration
+	reprobeInterval time.Duration // 0 = one-shot, exit on first drain
+	stateFile       string
 }
 
 // run executes the crawl. Returns when ctx is cancelled, the timeout
@@ -249,24 +256,53 @@ func (w *walker) run(ctx context.Context) error {
 			// the in-flight cycle; we just want to confirm the drain
 			// is real (not a transient race where a worker enqueues
 			// new work between the decrement and our read).
-			if atomic.LoadInt64(&w.outstanding) == 0 {
-				// Give workers a brief grace window in case the last
-				// reply enqueues new work.
-				select {
-				case <-ctx.Done():
-				case <-time.After(2 * time.Second):
-				}
-				if atomic.LoadInt64(&w.outstanding) == 0 {
-					// Drain confirmed. Cancel via close-equivalent —
-					// actually we can't cancel ctx here since it's
-					// shared. Instead, signal workers via channel
-					// close.
-					close(w.todoCh)
-					workersWG.Wait()
-					return w.flush()
-				}
+			if atomic.LoadInt64(&w.outstanding) != 0 {
+				continue
 			}
+			// Give workers a brief grace window in case the last
+			// reply enqueues new work.
+			select {
+			case <-ctx.Done():
+			case <-time.After(2 * time.Second):
+			}
+			if atomic.LoadInt64(&w.outstanding) != 0 {
+				continue
+			}
+			// Drain confirmed. In one-shot mode (reprobeInterval==0)
+			// exit now. Otherwise sleep for reprobeInterval, then
+			// re-seen-clear and re-enqueue every known node so the
+			// walker keeps probing for the full --timeout window.
+			if w.reprobeInterval <= 0 {
+				close(w.todoCh)
+				workersWG.Wait()
+				return w.flush()
+			}
+			_ = w.flush() // flush before the sleep so on-disk state is fresh
+			select {
+			case <-ctx.Done():
+				workersWG.Wait()
+				_ = w.flush()
+				return nil
+			case <-time.After(w.reprobeInterval):
+			}
+			w.requeueAll(ctx)
 		}
+	}
+}
+
+// requeueAll clears the per-run dedup set and re-enqueues every node
+// in state. Used by the run loop's drain path when reprobeInterval > 0
+// — keeps the walker probing until the timeout fires.
+func (w *walker) requeueAll(ctx context.Context) {
+	w.seen = sync.Map{}
+	w.stMu.Lock()
+	nodes := make([]*CrawlNode, 0, len(w.state.Nodes))
+	for _, n := range w.state.Nodes {
+		nodes = append(nodes, n)
+	}
+	w.stMu.Unlock()
+	for _, n := range nodes {
+		w.registerAndEnqueue(ctx, n)
 	}
 }
 
@@ -443,11 +479,12 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	}
 
 	w := &walker{
-		state:        state,
-		todoCh:       make(chan *CrawlNode, 65536),
-		parallelism:  ctx.Int("parallelism"),
-		saveInterval: ctx.Duration("save-interval"),
-		stateFile:    stateFile,
+		state:           state,
+		todoCh:          make(chan *CrawlNode, 65536),
+		parallelism:     ctx.Int("parallelism"),
+		saveInterval:    ctx.Duration("save-interval"),
+		reprobeInterval: ctx.Duration("reprobe-interval"),
+		stateFile:       stateFile,
 	}
 	if w.parallelism < 1 {
 		w.parallelism = 1
