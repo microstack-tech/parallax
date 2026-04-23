@@ -508,11 +508,14 @@ type PeerInfo struct {
 	// Enode is the peer's enode URL. Emitted for legacy peers;
 	// marshals as null for v2 peers for the same reason as ENR.
 	Enode *string `json:"enode"`
-	// ID is the peer's node identifier. Emitted for legacy peers;
-	// v2 peers' IDs are ephemeral per session and uninformative, so
-	// they marshal as null to avoid the illusion of a stable
-	// identity.
-	ID      *string  `json:"id"`
+	// ID is the peer's node identifier. For legacy peers it's the
+	// keccak256 of their persistent secp256k1 pubkey. For v2 peers
+	// it's derived from the session's ephemeral X25519 transcript —
+	// stable for the session lifetime, different on every
+	// reconnect. Combined with the parallax-disc.handshake field,
+	// operators can tell which kind of identifier they're looking
+	// at.
+	ID      string   `json:"id"`
 	Name    string   `json:"name"` // Name of the node, including client type, version, OS, custom data
 	Caps    []string `json:"caps"` // Protocols advertised by this peer
 	Network struct {
@@ -532,22 +535,27 @@ func (p *Peer) Info() *PeerInfo {
 	for _, cap := range p.Caps() {
 		caps = append(caps, cap.String())
 	}
-	// Assemble the generic peer metadata. v2 sessions don't have a
-	// meaningful persistent identity — the URLv4 for them is just
-	// "enode://null.<session-hex>@ip:port", the ID keccak-hashes
-	// ephemeral X25519 bytes, and there is no ENR. Marshal all
-	// three as null for v2 peers so operators aren't misled into
-	// thinking the displayed values are stable.
+	// Assemble the generic peer metadata.
+	//
+	// ID is always populated — for legacy peers it's the keccak256
+	// of the persistent pubkey; for v2 peers it's the session-scoped
+	// hash of the handshake transcript, stable for the session
+	// lifetime. Useful for telling simultaneous peers apart in
+	// logs/metrics even when there's no persistent identity.
+	//
+	// Enode and ENR, by contrast, advertise a DIALABLE address
+	// against a persistent pubkey; v2 peers have neither, so both
+	// marshal as null for them to avoid the illusion of a
+	// reconnectable URL.
 	info := &PeerInfo{
+		ID:        p.ID().String(),
 		Name:      p.Fullname(),
 		Caps:      caps,
 		Protocols: make(map[string]any),
 	}
 	if !p.UsingV2Handshake() {
 		url := p.Node().URLv4()
-		id := p.ID().String()
 		info.Enode = &url
-		info.ID = &id
 		if p.Node().Seq() > 0 {
 			enr := p.Node().String()
 			info.ENR = &enr
