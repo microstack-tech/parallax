@@ -386,6 +386,47 @@ scripts or in health probes.`,
 		Category:  "CLIENT COMMANDS",
 	}
 
+	addnodeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientAddnode),
+		Name:      "addnode",
+		Usage:     "Pin a peer into the addrbook (source=manual)",
+		ArgsUsage: "<ip:port | enode://…>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Adds an address to the addrman with source=manual. Manual entries persist
+across restarts, are exempt from source-aware bucket eviction, and are
+dialed before any other source. Accepts either plain ip:port (v2.0-native
+peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).
+
+Requires the node to be running with --experimental-addrman.`,
+	}
+
+	removenodeCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientRemovenode),
+		Name:      "removenode",
+		Usage:     "Remove a peer from the addrbook",
+		ArgsUsage: "<ip:port | enode://…>",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+	}
+
+	addrbookStatusCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientAddrbookStatus),
+		Name:     "addrbook-status",
+		Usage:    "Show addrbook size, per-source counts, and table occupancy",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+	}
+
+	addrbookResetKeyCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientAddrbookResetKey),
+		Name:     "addrbook-resetkey",
+		Usage:    "Regenerate the addrbook's nKey and clear the tried table (operator-only, for suspected nKey leaks)",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+	}
+
 	addTrustedCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientAddTrusted),
 		Name:      "addtrusted",
@@ -670,6 +711,10 @@ var clientSugarCommands = []cli.Command{
 	removePeerCommand,
 	addTrustedCommand,
 	removeTrustedCommand,
+	addnodeCommand,
+	removenodeCommand,
+	addrbookStatusCommand,
+	addrbookResetKeyCommand,
 	miningCommand,
 	startMiningCommand,
 	stopMiningCommand,
@@ -1539,6 +1584,83 @@ func clientAddTrusted(ctx *cli.Context) error {
 
 func clientRemoveTrusted(ctx *cli.Context) error {
 	return callPeerAdmin(ctx, "admin_removeTrustedPeer", "enode|host:port")
+}
+
+// clientAddnode invokes admin_addnode. Unlike admin_addPeer (which dials
+// immediately and keeps a static dial task), addnode just ingests into
+// the addrman with source=manual — the dialer picks it up on its next
+// Select() round.
+func clientAddnode(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port | enode://…")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_addnode", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_addnode returned false (address already present or invalid)")
+	}
+	return nil
+}
+
+func clientRemovenode(ctx *cli.Context) error {
+	addr, err := requireArg(ctx, "ip:port | enode://…")
+	if err != nil {
+		return err
+	}
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_removenode", addr); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_removenode returned false (address not in addrbook)")
+	}
+	return nil
+}
+
+// clientAddrbookStatus prints the current addrbook snapshot.
+func clientAddrbookStatus(ctx *cli.Context) error {
+	var status addrbookStatus
+	if err := callRPC(ctx, &status, "admin_addrbookStatus"); err != nil {
+		return err
+	}
+	fmt.Printf("total:  %d\n", status.Total)
+	fmt.Printf("new:    %d\n", status.New)
+	fmt.Printf("tried:  %d\n", status.Tried)
+	if len(status.PerSource) > 0 {
+		fmt.Println("per-source:")
+		for src, n := range status.PerSource {
+			fmt.Printf("  %-16s %d\n", src, n)
+		}
+	}
+	return nil
+}
+
+// addrbookStatus mirrors the wire shape of addrman.Status as emitted by
+// admin_addrbookStatus. Duplicated here so parallax-cli has no import on
+// p2p/addrman (keeps the CLI binary slim).
+type addrbookStatus struct {
+	Total     int            `json:"total"`
+	New       int            `json:"new"`
+	Tried     int            `json:"tried"`
+	PerSource map[string]int `json:"perSource"`
+}
+
+// clientAddrbookResetKey invokes admin_addrbookResetKey. Destructive —
+// clears the tried table — so emit a clear confirmation prompt on the
+// interactive path.
+func clientAddrbookResetKey(ctx *cli.Context) error {
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_addrbookResetKey"); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_addrbookResetKey returned false")
+	}
+	fmt.Println("addrbook nKey regenerated and tried table cleared")
+	return nil
 }
 
 // callPeerAdmin implements the shared body of all four peer-admin sugar
