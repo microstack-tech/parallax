@@ -678,6 +678,177 @@ func (m *AddrMan) FindAddressPosition(addr NetAddr) (AddressPosition, bool) {
 	}, true
 }
 
+// Remove deletes the entry for addr from both tables, regardless of
+// which one held it. Returns true if an entry was removed.
+//
+// Used by `parallax-cli removenode` (PIP-0006 Phase 6) — operator
+// intent to drop a pinned peer trumps the normal stochastic lifecycle.
+// Manual entries have no special exemption here; the caller is the
+// one that pinned them.
+func (m *AddrMan) Remove(addr NetAddr) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, info := m.findLocked(addr)
+	if info == nil {
+		return false
+	}
+	if info.InTried {
+		b := triedBucket(m.nKey, info.Addr)
+		p := bucketPosition(m.nKey, false, b, info.Addr)
+		if m.vvTried[b][p] == id {
+			m.vvTried[b][p] = -1
+		}
+		info.InTried = false
+		m.nTried--
+		c := m.networkCounts[info.Addr.Network]
+		c.tried--
+		m.networkCounts[info.Addr.Network] = c
+		// Direct vRandom swap-remove + map cleanup (Delete
+		// expects tried=false and refCount=0, which holds now).
+		m.swapRandomLocked(info.randomPos, len(m.vRandom)-1)
+		m.vRandom = m.vRandom[:len(m.vRandom)-1]
+		delete(m.mapAddr, string(info.Addr.serviceKey()))
+		delete(m.mapInfo, id)
+		m.sourceCounts[info.SourceTag]--
+		return true
+	}
+	// In the new table — walk all slots referencing id and clear.
+	startBucket := newBucket(m.nKey, info.Addr, info.Source)
+	for n := 0; n < newBucketCount && info.RefCount > 0; n++ {
+		bucket := (startBucket + n) % newBucketCount
+		pos := bucketPosition(m.nKey, true, bucket, info.Addr)
+		if m.vvNew[bucket][pos] == id {
+			m.vvNew[bucket][pos] = -1
+			info.RefCount--
+		}
+	}
+	if info.RefCount > 0 {
+		// Defensive — some slot assignment drifted. Force cleanup.
+		info.RefCount = 0
+	}
+	m.deleteLocked(id)
+	return true
+}
+
+// ResetKey regenerates nKey and clears the tried table in a single
+// critical section. New-table entries stay resident but get
+// re-bucketed implicitly on next Add. Operator-only: called via the
+// admin RPC when a credible nKey leak is suspected (PIP-0006 Phase 6).
+//
+// Not idempotent: after ResetKey, the on-disk addrbook.rlp is
+// structurally different and must be re-saved promptly to avoid a
+// stale nKey coming back after a crash.
+func (m *AddrMan) ResetKey() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.deterministic {
+		// Tests that seeded a deterministic nKey would lose that
+		// property. Refuse rather than silently divert.
+		return errors.New("addrman: ResetKey refused on deterministic instance")
+	}
+	var fresh [32]byte
+	if _, err := rand.Read(fresh[:]); err != nil {
+		return fmt.Errorf("addrman: read random for reset: %w", err)
+	}
+	m.nKey = fresh
+
+	// Evict the tried table: each entry either returns to the new
+	// table under the new nKey, or is dropped if its new-bucket slot
+	// is occupied. Callers will typically re-learn these from gossip
+	// within minutes.
+	for b := 0; b < triedBucketCount; b++ {
+		for p := 0; p < bucketSize; p++ {
+			id := m.vvTried[b][p]
+			if id == -1 {
+				continue
+			}
+			info := m.mapInfo[id]
+			m.vvTried[b][p] = -1
+			m.nTried--
+			c := m.networkCounts[info.Addr.Network]
+			c.tried--
+			m.networkCounts[info.Addr.Network] = c
+			info.InTried = false
+			// Attempt to re-home in the new table under the
+			// fresh nKey.
+			nb := newBucket(m.nKey, info.Addr, info.Source)
+			np := bucketPosition(m.nKey, true, nb, info.Addr)
+			if m.vvNew[nb][np] == -1 {
+				m.vvNew[nb][np] = id
+				info.RefCount = 1
+				m.nNew++
+				c2 := m.networkCounts[info.Addr.Network]
+				c2.new++
+				m.networkCounts[info.Addr.Network] = c2
+			} else {
+				// Slot busy; drop this entry entirely.
+				info.RefCount = 0
+				m.deleteLocked(id)
+			}
+		}
+	}
+	// The new-table entries were bucketed under the old nKey. They'd
+	// all be in the wrong positions now. Sweep and re-home.
+	m.rebucketNewLocked()
+	return nil
+}
+
+// rebucketNewLocked walks every new-table slot, moves occupants to
+// their new-nKey-derived bucket position, and drops entries whose new
+// slot is taken. Called after ResetKey.
+func (m *AddrMan) rebucketNewLocked() {
+	type refPair struct {
+		id    int64
+		count int
+	}
+	// Collect every (id, nRefCount) that currently sits in a new
+	// slot. We tear down vvNew completely, zero refCount, then
+	// reinsert each id up to its prior refcount worth of slots.
+	survivors := make(map[int64]*refPair)
+	for b := 0; b < newBucketCount; b++ {
+		for p := 0; p < bucketSize; p++ {
+			id := m.vvNew[b][p]
+			if id == -1 {
+				continue
+			}
+			m.vvNew[b][p] = -1
+			if sp, ok := survivors[id]; ok {
+				sp.count++
+			} else {
+				survivors[id] = &refPair{id: id, count: 1}
+			}
+		}
+	}
+	for id, sp := range survivors {
+		info := m.mapInfo[id]
+		info.RefCount = 0
+		start := newBucket(m.nKey, info.Addr, info.Source)
+		placed := 0
+		for n := 0; n < newBucketCount && placed < sp.count; n++ {
+			b := (start + n) % newBucketCount
+			p := bucketPosition(m.nKey, true, b, info.Addr)
+			if m.vvNew[b][p] == -1 {
+				m.vvNew[b][p] = id
+				info.RefCount++
+				placed++
+			}
+		}
+		if info.RefCount == 0 {
+			// No slot — drop entirely.
+			m.nNew--
+			c := m.networkCounts[info.Addr.Network]
+			c.new--
+			m.networkCounts[info.Addr.Network] = c
+			m.sourceCounts[info.SourceTag]--
+			m.swapRandomLocked(info.randomPos, len(m.vRandom)-1)
+			m.vRandom = m.vRandom[:len(m.vRandom)-1]
+			delete(m.mapAddr, string(info.Addr.serviceKey()))
+			delete(m.mapInfo, id)
+		}
+	}
+}
+
 // Lookup returns a copy of the AddrInfo for addr, or nil if not found.
 // The copy is safe to use after the call returns; callers should not
 // modify it. Used by the parallax-disc/1 handler to re-materialize wire
@@ -694,6 +865,33 @@ func (m *AddrMan) Lookup(addr NetAddr) *AddrInfo {
 		cp.NodeID = append([]byte(nil), info.NodeID...)
 	}
 	return &cp
+}
+
+// Status is a read-only snapshot used by `parallax-cli addrbook status`
+// and the admin_addrbookStatus RPC. Fields are stable output shape
+// consumed by tooling; changes require an RPC-version bump.
+type Status struct {
+	Total         int            `json:"total"`
+	New           int            `json:"new"`
+	Tried         int            `json:"tried"`
+	PerSource     map[string]int `json:"perSource"`
+	LastResetUnix int64          `json:"lastResetUnix,omitempty"`
+}
+
+// Snapshot returns a Status for the current addrbook state.
+func (m *AddrMan) Snapshot() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := Status{
+		Total:     len(m.vRandom),
+		New:       m.nNew,
+		Tried:     m.nTried,
+		PerSource: make(map[string]int, len(m.sourceCounts)),
+	}
+	for s, c := range m.sourceCounts {
+		out.PerSource[s.String()] = c
+	}
+	return out
 }
 
 // CountsBySource returns a shallow copy of the per-source entry counts.

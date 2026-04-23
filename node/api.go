@@ -18,7 +18,11 @@ package node
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -26,6 +30,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/internal/debug"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
@@ -108,6 +113,171 @@ func (api *privateAdminAPI) AddTrustedPeer(url string) (bool, error) {
 	}
 	server.AddTrustedPeer(node)
 	return true, nil
+}
+
+// Addnode ingests an address into the addrman as an operator-pinned
+// peer (source=manual). Accepts either plain `ip:port` (v2.0-native,
+// KeyType=0x00) or the legacy `enode://<nodeID>@ip:port` form (v1.x,
+// KeyType=0x01). Returns true if the entry was inserted or updated.
+//
+// PIP-0006 Phase 6 — mirrors Bitcoin Core's `addnode` RPC semantics.
+// Manual entries persist across restarts, are exempt from the
+// source-aware eviction, and are dialed before any other source in
+// Select() via the manual chanceMultiplier.
+func (api *privateAdminAPI) Addnode(address string) (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	book := server.AddrBook()
+	if book == nil {
+		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+	}
+	entry, err := parseAddrbookAddress(address)
+	if err != nil {
+		return false, err
+	}
+	return book.Add([]addrman.Entry{entry}, entry.Addr, addrman.SourceManual, 0), nil
+}
+
+// Removenode drops an address from the addrman, regardless of which
+// table holds it. PIP-0006 Phase 6 — inverse of Addnode.
+func (api *privateAdminAPI) Removenode(address string) (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	book := server.AddrBook()
+	if book == nil {
+		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+	}
+	entry, err := parseAddrbookAddress(address)
+	if err != nil {
+		return false, err
+	}
+	return book.Remove(entry.Addr), nil
+}
+
+// AddrbookStatus returns a Status snapshot for operator diagnostics.
+// Read-only; PIP-0006 Phase 6.
+func (api *privateAdminAPI) AddrbookStatus() (*addrman.Status, error) {
+	server := api.node.Server()
+	if server == nil {
+		return nil, ErrNodeStopped
+	}
+	book := server.AddrBook()
+	if book == nil {
+		return nil, errors.New("addrman is not enabled; start with --experimental-addrman")
+	}
+	s := book.Snapshot()
+	return &s, nil
+}
+
+// AddrbookResetKey regenerates the addrman's nKey and clears the tried
+// table atomically. Operator-only; intended for cases where an nKey
+// leak is credibly suspected. PIP-0006 Phase 6.
+func (api *privateAdminAPI) AddrbookResetKey() (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	book := server.AddrBook()
+	if book == nil {
+		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+	}
+	if err := book.ResetKey(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// parseAddrbookAddress accepts either a plain `ip:port` (v2.0-native)
+// or the legacy `enode://<hex>@ip:port` form. Branches on the enode://
+// prefix, matching the input format Bitcoin Core's addnode accepts.
+func parseAddrbookAddress(s string) (addrman.Entry, error) {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "enode://") {
+		n, err := enode.ParseV4(s)
+		if err != nil {
+			return addrman.Entry{}, fmt.Errorf("invalid enode: %w", err)
+		}
+		ip := n.IP()
+		if ip == nil || n.TCP() == 0 {
+			return addrman.Entry{}, errors.New("enode missing ip or tcp port")
+		}
+		var net addrman.NetID
+		var addrBytes []byte
+		if v4 := ip.To4(); v4 != nil {
+			net = addrman.NetIPv4
+			addrBytes = v4
+		} else {
+			net = addrman.NetIPv6
+			addrBytes = ip
+		}
+		naddr, err := addrman.NewNetAddr(net, addrBytes, uint16(n.TCP()))
+		if err != nil {
+			return addrman.Entry{}, err
+		}
+		pub := n.Pubkey()
+		if pub == nil {
+			return addrman.Entry{}, errors.New("enode missing pubkey")
+		}
+		return addrman.Entry{
+			Addr:     naddr,
+			KeyType:  0x01,
+			NodeID:   pubkeyToNodeID(pub),
+			LastSeen: time.Now(),
+		}, nil
+	}
+	// Plain ip:port form.
+	host, portStr, err := net.SplitHostPort(s)
+	if err != nil {
+		return addrman.Entry{}, fmt.Errorf("invalid address %q: %w", s, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return addrman.Entry{}, fmt.Errorf("invalid ip %q", host)
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return addrman.Entry{}, err
+	}
+	var netID addrman.NetID
+	var addrBytes []byte
+	if v4 := ip.To4(); v4 != nil {
+		netID = addrman.NetIPv4
+		addrBytes = v4
+	} else {
+		netID = addrman.NetIPv6
+		addrBytes = ip
+	}
+	naddr, err := addrman.NewNetAddr(netID, addrBytes, port)
+	if err != nil {
+		return addrman.Entry{}, err
+	}
+	return addrman.Entry{Addr: naddr, KeyType: 0x00, LastSeen: time.Now()}, nil
+}
+
+// pubkeyToNodeID returns the 64-byte (x || y) encoding used by discv4
+// and parallax-disc/1 for KeyType=0x01 entries. Matches the format
+// produced by elliptic.Marshal minus the 0x04 prefix.
+func pubkeyToNodeID(pub *ecdsa.PublicKey) []byte {
+	//nolint:staticcheck // elliptic.Marshal remains the canonical
+	// encoder for discv4/enode NodeIDs; secp256k1 is not provided by
+	// crypto/ecdh so the linter's suggested replacement doesn't apply.
+	b := elliptic.Marshal(pub.Curve, pub.X, pub.Y)
+	if len(b) != 65 || b[0] != 0x04 {
+		return nil
+	}
+	return b[1:]
+}
+
+func parsePort(s string) (uint16, error) {
+	var p uint16
+	if _, err := fmt.Sscanf(s, "%d", &p); err != nil || p == 0 {
+		return 0, fmt.Errorf("invalid port %q", s)
+	}
+	return p, nil
 }
 
 // RemoveTrustedPeer removes a remote node from the trusted peer set, but it
