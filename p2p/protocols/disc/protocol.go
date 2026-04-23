@@ -18,6 +18,7 @@ package disc
 
 import (
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 )
 
@@ -56,6 +57,17 @@ func MakeProtocol(backend Backend) p2p.Protocol {
 		NodeInfo: func() any {
 			return NodeInfo{Version: ProtocolVersion}
 		},
+		PeerInfo: func(_ enode.ID) any {
+			// Shape per-peer info mirror NodeInfo — the admin
+			// RPC aggregator falls back to the literal string
+			// "unknown" if this callback is absent, which is
+			// visibly wrong in admin.peers output. Once the
+			// handler starts carrying per-session state worth
+			// exposing (rate-limit bucket levels, Peers-message
+			// counters, quorum contributions), extend PeerInfo
+			// to surface it and look up by id.
+			return PeerInfo{Version: ProtocolVersion}
+		},
 		Attributes: []enr.Entry{enrEntry{Version: ProtocolVersion}},
 	}
 }
@@ -63,6 +75,13 @@ func MakeProtocol(backend Backend) p2p.Protocol {
 // NodeInfo is the admin-API surface for parallax-disc/1. Extended in
 // later phases with counts of gossiped addresses, quorum state, etc.
 type NodeInfo struct {
+	Version uint `json:"version"`
+}
+
+// PeerInfo is the per-peer shape reported under admin.peers.protocols.
+// Minimal today; extend with per-session rate-limit/quorum counters
+// when that data is worth surfacing to operators.
+type PeerInfo struct {
 	Version uint `json:"version"`
 }
 
