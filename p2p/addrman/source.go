@@ -65,7 +65,7 @@ func (s Source) valid() bool {
 // evicted, more likely to be selected. The values are tunables — the
 // ordering matters more than the magnitudes:
 //
-//   manual > self_advertised ≥ tcp_gossip > dns_seed > legacy_udp
+//	manual > self_advertised ≥ tcp_gossip > dns_seed > legacy_udp
 //
 // Rationale:
 //   - manual: operator intent, never overridable by gossip.

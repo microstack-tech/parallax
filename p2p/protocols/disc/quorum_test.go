@@ -132,9 +132,9 @@ func TestQuorumDisconnectRemovesVotes(t *testing.T) {
 // (all Winner-true addresses have ≥3 distinct non-empty groups); no
 // partial state leaks.
 func FuzzQuorumReports(f *testing.F) {
-	f.Add(uint8(NetIPv4), []byte{1, 2, 3, 4}, uint16(30303), "peer-1", []byte{NetIPv4, 1, 1})
-	f.Add(uint8(NetIPv4), []byte{1, 2, 3, 4}, uint16(30303), "peer-2", []byte{NetIPv4, 2, 2})
-	f.Add(uint8(NetIPv4), []byte{1, 2, 3, 4}, uint16(30303), "peer-3", []byte{NetIPv4, 3, 3})
+	f.Add(NetIPv4, []byte{1, 2, 3, 4}, uint16(30303), "peer-1", []byte{NetIPv4, 1, 1})
+	f.Add(NetIPv4, []byte{1, 2, 3, 4}, uint16(30303), "peer-2", []byte{NetIPv4, 2, 2})
+	f.Add(NetIPv4, []byte{1, 2, 3, 4}, uint16(30303), "peer-3", []byte{NetIPv4, 3, 3})
 
 	q := NewQuorum()
 	f.Fuzz(func(t *testing.T, net uint8, addr []byte, port uint16, peerKey string, group []byte) {

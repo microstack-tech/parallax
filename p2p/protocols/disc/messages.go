@@ -34,15 +34,6 @@ const (
 // attacker a larger single-message memory-amp ratio.
 const (
 	MaxPeersPerMessage = 1000
-
-	// Max address-byte length across all BIP155 networks. Tor v3 / I2P
-	// are 32 bytes; IPv6 / CJDNS are 16; IPv4 is 4. Cap at 32 and
-	// validate per-network in the decoder.
-	maxAddrLen = 32
-
-	// Max NodeID length — secp256k1 uncompressed (x || y). Reject
-	// anything larger at decode.
-	maxNodeIDLen = 64
 )
 
 // BIP155 network IDs. Kept here (rather than imported from p2p/addrman)

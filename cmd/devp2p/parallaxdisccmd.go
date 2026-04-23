@@ -58,13 +58,13 @@ var (
 // crawlResult mirrors discv4-crawl's nodeset output but with the
 // parallax-disc PeerEntry fields surfaced. One row per learned peer.
 type crawlResult struct {
-	Seed    string    `json:"seed"`
-	RanAt   time.Time `json:"ranAt"`
+	Seed    string       `json:"seed"`
+	RanAt   time.Time    `json:"ranAt"`
 	Entries []crawlEntry `json:"entries"`
 }
 
 type crawlEntry struct {
-	Network  uint8  `json:"network"`  // BIP155 tag
+	Network  uint8  `json:"network"` // BIP155 tag
 	IP       string `json:"ip"`
 	TCPPort  uint16 `json:"tcpPort"`
 	KeyType  uint8  `json:"keyType"`
@@ -145,11 +145,11 @@ func crawlOne(n *enode.Node) ([]crawlEntry, error) {
 	// [parallax/66, parallax-disc/1], parallax gets 16..16+17-1
 	// and parallax-disc gets the block right after.
 	hello := &devp2pHello{
-		Version: 5,
-		Name:    "parallax-disc-crawl",
-		Caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 1}},
+		Version:    5,
+		Name:       "parallax-disc-crawl",
+		Caps:       []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 1}},
 		ListenPort: 0,
-		ID:      crypto.FromECDSAPub(&ourKey.PublicKey)[1:],
+		ID:         crypto.FromECDSAPub(&ourKey.PublicKey)[1:],
 	}
 	if err := writeMsg(conn, helloCode, hello); err != nil {
 		return nil, fmt.Errorf("write hello: %w", err)

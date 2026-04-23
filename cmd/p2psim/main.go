@@ -330,7 +330,11 @@ func showNode(ctx *cli.Context) error {
 	fmt.Fprintf(w, "NAME\t%s\n", node.Name)
 	fmt.Fprintf(w, "PROTOCOLS\t%s\n", strings.Join(protocolList(node), ","))
 	fmt.Fprintf(w, "ID\t%s\n", node.ID)
-	fmt.Fprintf(w, "ENODE\t%s\n", node.Enode)
+	enode := ""
+	if node.Enode != nil {
+		enode = *node.Enode
+	}
+	fmt.Fprintf(w, "ENODE\t%s\n", enode)
 	for name, proto := range node.Protocols {
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "--- PROTOCOL INFO: %s\n", name)

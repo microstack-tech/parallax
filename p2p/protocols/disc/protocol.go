@@ -77,13 +77,13 @@ type NodeInfo struct {
 //
 // Handshake values:
 //
-//   "v2"        — session is authenticated via the BIP324-style v2
-//                 handshake. The remote definitely supports v2; we
-//                 can't tell whether it ALSO supports legacy RLPx
-//                 without trying.
-//   "legacy+v2" — session is on legacy RLPx AND the remote advertises
-//                 parallax-disc/1 in its capability list. Both
-//                 handshake variants work with this peer.
+//	"v2"        — session is authenticated via the BIP324-style v2
+//	              handshake. The remote definitely supports v2; we
+//	              can't tell whether it ALSO supports legacy RLPx
+//	              without trying.
+//	"legacy+v2" — session is on legacy RLPx AND the remote advertises
+//	              parallax-disc/1 in its capability list. Both
+//	              handshake variants work with this peer.
 type PeerInfo struct {
 	Version   uint   `json:"version"`
 	Handshake string `json:"handshake"`

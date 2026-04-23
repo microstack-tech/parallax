@@ -185,12 +185,6 @@ func (t *v2Transport) close(_ error) {
 	_ = t.conn.Close()
 }
 
-// newV2 is a test hook mirroring newRLPX. Always dialer-mode; tests
-// that need inbound wrap via newV2Inbound directly.
-var newV2 = func(conn net.Conn, _ *ecdsa.PublicKey) transport {
-	return newV2Outbound(conn)
-}
-
 // v2SessionIDBytes produces the 64-byte identity representation for a
 // given X25519 ephemeral pubkey. Used on both sides of the protocol:
 //   - Sender writes its local ephem's v2SessionIDBytes as phs.ID in

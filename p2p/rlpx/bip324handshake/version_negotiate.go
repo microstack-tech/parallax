@@ -17,7 +17,6 @@
 package bip324handshake
 
 import (
-	"bytes"
 	"io"
 	"net"
 	"sync"
@@ -100,12 +99,3 @@ func (p *PeekedConn) UnreadLen() int {
 
 // compile-time check: PeekedConn satisfies the net.Conn interface.
 var _ net.Conn = (*PeekedConn)(nil)
-
-// bytesLegacyMagics is referenced by tests to confirm the
-// dispatcher's legacy range stays in sync with the RLPx v4 format.
-// Exposed through a helper to keep the internal slice out of the API.
-func bytesLegacyMagics() [][]byte {
-	return [][]byte{{0xf8}, {0xf9}, {0xfa}}
-}
-
-var _ = bytes.Equal // retain "bytes" import if future dispatch grows richer

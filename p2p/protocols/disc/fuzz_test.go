@@ -34,9 +34,9 @@ func FuzzPeerEntryDecode(f *testing.F) {
 	_ = rlp.Encode(&vbuf, valid)
 	f.Add(vbuf.Bytes())
 	f.Add([]byte{})
-	f.Add([]byte{0xc0})                         // empty RLP list
-	f.Add([]byte{0xff, 0xff, 0xff})             // malformed
-	f.Add(bytes.Repeat([]byte{0xff}, 100_000))  // oversize
+	f.Add([]byte{0xc0})                          // empty RLP list
+	f.Add([]byte{0xff, 0xff, 0xff})              // malformed
+	f.Add(bytes.Repeat([]byte{0xff}, 100_000))   // oversize
 	f.Add(bytes.Repeat([]byte{0x00}, 1_000_000)) // all-zero mega-input
 
 	f.Fuzz(func(t *testing.T, data []byte) {

@@ -34,10 +34,10 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
@@ -809,7 +809,7 @@ func (srv *Server) setupDiscovery() error {
 		// as a dial candidate iterator.
 		mode := srv.legacyDiscoveryMode()
 		if mode == legacyDiscoveryOn {
-			src := enode.Iterator(ntab.RandomNodes())
+			src := ntab.RandomNodes()
 			if srv.addrbook != nil {
 				// Tee discv4 discoveries into addrman with
 				// source=legacy_udp. Original node passes
@@ -1619,12 +1619,6 @@ func (srv *Server) legacyHandshakeMode() legacyHandshakeMode {
 	}
 	return legacyHandshakeOn
 }
-
-// isV2Marker is retained as a no-op for backwards compatibility with
-// call sites that still reference it; in the current implementation
-// v2 dials are signalled via the v2DialedConn flag on the conn and
-// this predicate is never consulted.
-func isV2Marker(pub *ecdsa.PublicKey) bool { _ = pub; return false }
 
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) error {
 	// Prevent leftover pending conns from entering the handshake.

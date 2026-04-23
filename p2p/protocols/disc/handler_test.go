@@ -79,8 +79,8 @@ func (b *testBackend) SelfEntry(_ uint16) (PeerEntry, bool) {
 	return *b.self, true
 }
 
-func (b *testBackend) TrackHandshake(*p2p.Peer, bool)       {}
-func (b *testBackend) PeerHandshake(enode.ID) string        { return "" }
+func (b *testBackend) TrackHandshake(*p2p.Peer, bool) {}
+func (b *testBackend) PeerHandshake(enode.ID) string  { return "" }
 
 // runHandler spins up Run on one side of a MsgPipe and returns the other
 // end so the test can send messages. The session loop returns when the

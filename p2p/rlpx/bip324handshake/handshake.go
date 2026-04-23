@@ -85,13 +85,13 @@ func NewConn(c net.Conn) *Conn {
 
 // Initiator errors — exported so callers can branch cleanly.
 var (
-	ErrWrongMagic    = errors.New("bip324handshake: wrong version magic byte")
-	ErrShortRead     = errors.New("bip324handshake: short read during handshake")
-	ErrInvalidKey    = errors.New("bip324handshake: invalid ephemeral public key")
-	ErrHandshakeDone = errors.New("bip324handshake: Handshake already completed")
+	ErrWrongMagic     = errors.New("bip324handshake: wrong version magic byte")
+	ErrShortRead      = errors.New("bip324handshake: short read during handshake")
+	ErrInvalidKey     = errors.New("bip324handshake: invalid ephemeral public key")
+	ErrHandshakeDone  = errors.New("bip324handshake: Handshake already completed")
 	ErrNotEstablished = errors.New("bip324handshake: Read/Write before Handshake")
-	ErrFrameTooLarge = errors.New("bip324handshake: frame exceeds MaxFrameLen")
-	ErrBadFrame      = errors.New("bip324handshake: frame authentication failed")
+	ErrFrameTooLarge  = errors.New("bip324handshake: frame exceeds MaxFrameLen")
+	ErrBadFrame       = errors.New("bip324handshake: frame authentication failed")
 )
 
 // DialHandshake performs the v2 handshake as the initiator. The caller
