@@ -649,6 +649,12 @@ var (
 		Name:  "discovery.dns",
 		Usage: "Sets DNS discovery entry points (use \"\" to disable DNS)",
 	}
+	DNSSeedFlag = cli.StringFlag{
+		Name: "dnsseed",
+		Usage: "Comma-separated DNS hostnames resolved every 24h (Bitcoin parity) for plain A/AAAA peer bootstrap. " +
+			"Each resolved IP is paired with the default v2 listen port (32110) and ingested into addrman with source=dns_seed. " +
+			"Empty string disables. Defaults to netparams.MainnetDNSSeeds when unset. --nodiscover overrides to disable.",
+	}
 	LegacyDiscoveryFlag = cli.StringFlag{
 		Name: "legacy-discovery",
 		Usage: "Compatibility mode for the v1.x transport stack (auto|on|off). " +
@@ -896,6 +902,32 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		}
 		cfg.BootstrapNodes = append(cfg.BootstrapNodes, &net.TCPAddr{IP: ip, Port: int(port)})
 	}
+}
+
+// setDNSSeeds populates cfg.DNSSeeds from --dnsseed, falling back to
+// netparams.MainnetDNSSeeds (or testnet equivalent). --nodiscover
+// overrides everything and clears the slice. An empty --dnsseed=
+// (set to the empty string) also disables — operators who want zero
+// DNS lookups but full discovery otherwise have a knob.
+func setDNSSeeds(ctx *cli.Context, cfg *p2p.Config) {
+	if ctx.GlobalIsSet(NoDiscoverFlag.Name) && ctx.GlobalBool(NoDiscoverFlag.Name) {
+		cfg.DNSSeeds = nil
+		return
+	}
+	if ctx.GlobalIsSet(DNSSeedFlag.Name) {
+		raw := ctx.GlobalString(DNSSeedFlag.Name)
+		if raw == "" {
+			cfg.DNSSeeds = nil
+			return
+		}
+		cfg.DNSSeeds = SplitAndTrim(raw)
+		return
+	}
+	if ctx.GlobalBool(TestnetFlag.Name) {
+		cfg.DNSSeeds = netparams.TestnetDNSSeeds
+		return
+	}
+	cfg.DNSSeeds = netparams.MainnetDNSSeeds
 }
 
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
@@ -1146,6 +1178,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setListenAddress(ctx, cfg)
 	setBootstrapNodes(ctx, cfg)
 	setBootstrapNodesV5(ctx, cfg)
+	setDNSSeeds(ctx, cfg)
 
 	if ctx.GlobalIsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.GlobalInt(MaxPeersFlag.Name)

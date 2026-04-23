@@ -43,6 +43,21 @@ var MainnetBootnodes = []string{
 // test network.
 var TestnetBootnodes = []string{}
 
+// MainnetDNSSeeds are the DNS hostnames the node resolves at a 24h
+// cadence (Bitcoin parity) to bootstrap its addrbook with v2.0-native
+// (KeyType=0x00) peers on the default port 32110. Each A/AAAA record
+// returned is paired with the default port and ingested into addrman
+// with source=dns_seed. Plain DNS — no enrtree — so it works in
+// v2-only posture (`--legacy-discovery=off`) where enrtree's legacy
+// NodeIDs are useless.
+var MainnetDNSSeeds = []string{
+	"seed.prlxdisc.org",
+}
+
+// TestnetDNSSeeds is empty by default; testnet operators set their own
+// via --dnsseed flag.
+var TestnetDNSSeeds = []string{}
+
 var V5Bootnodes = []string{
 	// Teku team's bootnode
 	// "enr:-KG4QOtcP9X1FbIMOe17QNMKqDxCpm14jcX5tiOE4_TyMrFqbmhPZHK_ZPG2Gxb1GE2xdtodOfx9-cgvNtxnRyHEmC0ghGV0aDKQ9aX9QgAAAAD__________4JpZIJ2NIJpcIQDE8KdiXNlY3AyNTZrMaEDhpehBDbZjM_L9ek699Y7vhUJ-eAdMyQW_Fil522Y0fODdGNwgiMog3VkcIIjKA",

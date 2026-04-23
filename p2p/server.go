@@ -19,6 +19,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
@@ -110,6 +111,13 @@ type Config struct {
 	// with the rest of the network using the V5 discovery
 	// protocol.
 	BootstrapNodesV5 []*enode.Node `toml:",omitempty"`
+
+	// DNSSeeds are hostnames the node resolves at DNSSeedDefaultInterval
+	// (24h, Bitcoin parity) to bootstrap addrman with v2.0-native peers
+	// on DNSSeedDefaultPort. Empty disables the resolver loop entirely.
+	// Populated from netparams.MainnetDNSSeeds (or testnet equivalent)
+	// gated by --dnsseed / --nodiscover.
+	DNSSeeds []string `toml:",omitempty"`
 
 	// Static nodes are used as pre-configured connections which are always
 	// maintained and re-connected on disconnects.
@@ -645,6 +653,33 @@ func (srv *Server) setupAddrMan() error {
 			}
 		}
 	}()
+
+	// DNS-seed resolver loop. Plain A/AAAA at DNSSeedDefaultInterval,
+	// each IP paired with DNSSeedDefaultPort and ingested into addrman
+	// with source=dns_seed. Empty Config.DNSSeeds disables it (matches
+	// --nodiscover semantics).
+	if len(srv.DNSSeeds) > 0 {
+		seedCtx, seedCancel := context.WithCancel(context.Background())
+		srv.loopWG.Add(2)
+		go func() {
+			defer srv.loopWG.Done()
+			<-srv.quit
+			seedCancel()
+		}()
+		go func() {
+			defer srv.loopWG.Done()
+			dnsSeedLoop(
+				seedCtx,
+				net.DefaultResolver,
+				srv.DNSSeeds,
+				srv.addrbook,
+				DNSSeedDefaultPort,
+				DNSSeedDefaultInterval,
+				srv.log,
+			)
+		}()
+		srv.log.Info("DNS-seed resolver enabled", "hosts", srv.DNSSeeds, "interval", DNSSeedDefaultInterval, "port", DNSSeedDefaultPort)
+	}
 	return nil
 }
 
