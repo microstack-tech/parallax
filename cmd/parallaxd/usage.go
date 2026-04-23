@@ -159,6 +159,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.NodeKeyFileFlag,
 			utils.NodeKeyHexFlag,
 			utils.ExperimentalAddrmanFlag,
+			utils.LegacyDiscoveryFlag,
 		},
 	},
 	{

@@ -310,6 +310,18 @@ func (m *AddrMan) addSingleLocked(e Entry, lastSeen time.Time, source NetAddr, s
 			existing := m.mapInfo[m.vvNew[ubucket][upos]]
 			if existing.IsTerrible(now) || (existing.RefCount > 1 && pinfo.RefCount == 0) {
 				insert = true
+			} else if sourceTag.priority() > existing.SourceTag.priority() &&
+				existing.SourceTag != SourceManual {
+				// Source-aware eviction (PIP-0006 Phase 5):
+				// a higher-priority source may displace a
+				// lower-priority occupant even when the
+				// occupant is otherwise healthy. This is the
+				// mechanism that prevents a legacy_udp flood
+				// from monopolizing buckets that would
+				// otherwise hold tcp_gossip entries. Manual
+				// entries are always exempt — operator intent
+				// outranks gossip hygiene.
+				insert = true
 			}
 		}
 		if insert {
@@ -485,8 +497,14 @@ func (m *AddrMan) Select(newOnly bool, networks []NetID) (NetAddr, time.Time, bo
 		}
 		info := m.mapInfo[id]
 		// 30-bit precision, matches Bitcoin: randbits<30>() <
-		// chance_factor * chance * (1 << 30).
-		if float64(m.rng.Uint32N(1<<30)) < chanceFactor*info.chance(now)*float64(int64(1)<<30) {
+		// chance_factor * chance * (1 << 30). Source weighting is
+		// the Phase 5 addition — multiplies the drawn chance by a
+		// per-source multiplier (tcp_gossip > dns_seed > legacy_udp).
+		weighted := chanceFactor * info.chance(now) * info.SourceTag.chanceMultiplier()
+		if weighted > 1.0 {
+			weighted = 1.0
+		}
+		if float64(m.rng.Uint32N(1<<30)) < weighted*float64(int64(1)<<30) {
 			return info.Addr, info.LastTry, true
 		}
 		chanceFactor *= 1.2

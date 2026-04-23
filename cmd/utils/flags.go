@@ -650,7 +650,12 @@ var (
 	}
 	ExperimentalAddrmanFlag = cli.BoolFlag{
 		Name:  "experimental-addrman",
-		Usage: "Enable the Bitcoin Core-style address manager alongside discv4 (PIP-0006 Phase 3). Persists <datadir>/addrbook.rlp across restarts and feeds the dialer from a stochastic peer table. Experimental; will become the default in a later release.",
+		Usage: "Enable the Bitcoin Core-style address manager alongside discv4. Persists <datadir>/addrbook.rlp across restarts and feeds the dialer from a stochastic peer table. Experimental; will become the default in a later release.",
+	}
+	LegacyDiscoveryFlag = cli.StringFlag{
+		Name:  "legacy-discovery",
+		Usage: "Legacy discv4 usage mode when --experimental-addrman is active (auto|on|off). auto: respond to inbound but don't drive dialing. on: full v1.x compat, discv4 is a dial source. off: no UDP discovery at all.",
+		Value: "auto",
 	}
 
 	// ATM the url is left to the user and deployment to
@@ -1136,6 +1141,9 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 		// AddrBookPath is filled in by SetNodeConfig once DataDir is
 		// known — SetP2PConfig runs before SetNodeConfig's datadir
 		// hookup, so we defer the path join to the caller.
+	}
+	if ctx.GlobalIsSet(LegacyDiscoveryFlag.Name) {
+		cfg.LegacyDiscoveryMode = ctx.GlobalString(LegacyDiscoveryFlag.Name)
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {

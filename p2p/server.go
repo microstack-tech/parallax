@@ -158,6 +158,21 @@ type Config struct {
 	// discovery routing table during revalidation.
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
+	// LegacyDiscoveryMode controls whether this node issues legacy
+	// discv4 FINDNODE lookups. PIP-0006 Phase 5 values:
+	//   "off"  — never issue, respond only. Safest for v2.0+-only
+	//            networks; the node still answers FINDNODE so v1.x
+	//            peers can reach it.
+	//   "auto" — default. Issue FINDNODE only if peer count is below
+	//            the low-peers threshold (8) AND the addrman has no
+	//            tcp_gossip sources available. Minimizes UDP traffic
+	//            during normal operation.
+	//   "on"   — always issue. v1.x compatibility mode.
+	//
+	// Empty string is treated as "auto". Invalid values log a warning
+	// and fall back to "auto".
+	LegacyDiscoveryMode string `toml:",omitempty"`
+
 	// ExperimentalAddrMan enables the Bitcoin-style address manager
 	// alongside discv4. When true, Server wires an addrman instance
 	// into the dial path as an additional candidate source, tees
@@ -527,6 +542,7 @@ func (srv *Server) Start() (err error) {
 			return err
 		}
 	}
+	srv.applyLegacyDiscoveryMode()
 	if err := srv.setupAddrMan(); err != nil {
 		return err
 	}
@@ -578,23 +594,49 @@ func (srv *Server) setupAddrMan() error {
 	srv.addrbook = m
 	srv.log.Info("addrman enabled", "path", srv.AddrBookPath, "entries", m.Size(nil, nil))
 
-	// Periodic metrics refresh. Cheap — Size() is O(1) and sourceCounts
-	// is a small map. Tied to quit so Stop() tears it down cleanly.
+	// Periodic metrics refresh and legacy_udp dominance log. Cheap —
+	// Size() is O(1) and sourceCounts is a small map. Tied to quit so
+	// Stop() tears it down cleanly.
 	srv.loopWG.Add(1)
 	go func() {
 		defer srv.loopWG.Done()
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
+		metricsTick := time.NewTicker(5 * time.Second)
+		defer metricsTick.Stop()
+		dominanceTick := time.NewTicker(15 * time.Minute)
+		defer dominanceTick.Stop()
 		for {
 			select {
 			case <-srv.quit:
 				return
-			case <-tick.C:
+			case <-metricsTick.C:
 				srv.addrbook.RefreshMetrics()
+			case <-dominanceTick.C:
+				srv.warnOnLegacyUDPDominance()
 			}
 		}
 	}()
 	return nil
+}
+
+// warnOnLegacyUDPDominance logs at warn level if legacy_udp entries
+// account for more than 50% of the addrbook. PIP-0006 Phase 5 flags
+// this as a signal of poor v2.0 network share — the operator should
+// investigate whether they've partitioned onto v1.x peers only.
+func (srv *Server) warnOnLegacyUDPDominance() {
+	if srv.addrbook == nil {
+		return
+	}
+	total := srv.addrbook.Size(nil, nil)
+	if total < 20 {
+		// Too few entries for the ratio to be meaningful.
+		return
+	}
+	counts := srv.addrbook.CountsBySource()
+	legacy := counts[addrman.SourceLegacyUDP]
+	if legacy*2 > total {
+		srv.log.Warn("addrbook dominated by legacy_udp entries — v2.0 network share may be low",
+			"legacy_udp", legacy, "total", total)
+	}
 }
 
 func (srv *Server) setupLocalNode() error {
@@ -718,14 +760,29 @@ func (srv *Server) setupDiscovery() error {
 			return err
 		}
 		srv.ntab = ntab
-		src := enode.Iterator(ntab.RandomNodes())
-		if srv.addrbook != nil {
-			// Tee discv4 discoveries into addrman with
-			// source=legacy_udp. Original node passes through to
-			// the dialer unchanged.
-			src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
+		// PIP-0006 Phase 5: legacy discovery mode gates whether
+		// discv4 drives the dial path. Modes:
+		//   on    — discv4 is a full dial source (v1.x compat).
+		//   auto  — discv4 responds but is NOT plumbed to the
+		//           dialer; addrman is the source of truth.
+		//   off   — this branch isn't reached because NoDiscovery
+		//           is already true (see setLegacyDiscoveryDefaults).
+		//
+		// discv4's own periodic table refresh still runs in auto
+		// mode so inbound PING/FINDNODE continues to work and the
+		// routing table stays warm — we only skip using RandomNodes
+		// as a dial candidate iterator.
+		mode := srv.legacyDiscoveryMode()
+		if mode == legacyDiscoveryOn {
+			src := enode.Iterator(ntab.RandomNodes())
+			if srv.addrbook != nil {
+				// Tee discv4 discoveries into addrman with
+				// source=legacy_udp. Original node passes
+				// through to the dialer unchanged.
+				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
+			}
+			srv.discmix.AddSource(src)
 		}
-		srv.discmix.AddSource(src)
 	}
 
 	// Discovery V5
@@ -776,6 +833,39 @@ func (srv *Server) setupDialScheduler() {
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
 		srv.dialsched.addStatic(n)
+	}
+}
+
+// legacyDiscoveryMode parses Config.LegacyDiscoveryMode into a
+// stable enum. Unknown / empty values map to auto.
+type legacyDiscoveryMode int
+
+const (
+	legacyDiscoveryAuto legacyDiscoveryMode = iota
+	legacyDiscoveryOn
+	legacyDiscoveryOff
+)
+
+func (srv *Server) legacyDiscoveryMode() legacyDiscoveryMode {
+	switch srv.LegacyDiscoveryMode {
+	case "on":
+		return legacyDiscoveryOn
+	case "off":
+		return legacyDiscoveryOff
+	case "", "auto":
+		return legacyDiscoveryAuto
+	}
+	srv.log.Warn("unknown --legacy-discovery value; defaulting to auto", "value", srv.LegacyDiscoveryMode)
+	return legacyDiscoveryAuto
+}
+
+// applyLegacyDiscoveryMode rewrites NoDiscovery for mode=off. Must be
+// called before setupDiscovery. mode=auto/on leave NoDiscovery alone —
+// auto still listens to answer inbound, it just doesn't drive the
+// dial path (see setupDiscovery).
+func (srv *Server) applyLegacyDiscoveryMode() {
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
+		srv.NoDiscovery = true
 	}
 }
 
