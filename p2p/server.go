@@ -1827,10 +1827,17 @@ func (srv *Server) PeersInfo() []*PeerInfo {
 			infos = append(infos, peer.Info())
 		}
 	}
-	// Sort the result array alphabetically by node identifier.
+	// Sort the result array by node identifier where available,
+	// falling back to RemoteAddress for v2 peers (whose ID is nil).
+	keyOf := func(p *PeerInfo) string {
+		if p.ID != nil {
+			return *p.ID
+		}
+		return p.Network.RemoteAddress
+	}
 	for i := 0; i < len(infos); i++ {
 		for j := i + 1; j < len(infos); j++ {
-			if infos[i].ID > infos[j].ID {
+			if keyOf(infos[i]) > keyOf(infos[j]) {
 				infos[i], infos[j] = infos[j], infos[i]
 			}
 		}
