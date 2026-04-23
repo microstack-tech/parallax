@@ -46,9 +46,7 @@ var MainnetBootnodes = []string{
 // The Foundation bootnodes in MainnetBootnodes serve v1 RLPx only
 // and are intentionally omitted here — listing a v1-only endpoint
 // produces a TCP RST on every dial-scheduler tick.
-var MainnetBootnodesV2 = []string{
-	"72.61.137.32:32110",
-}
+var MainnetBootnodesV2 = []string{}
 
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
 // test network.
