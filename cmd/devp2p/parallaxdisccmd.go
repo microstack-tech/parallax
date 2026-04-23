@@ -89,11 +89,11 @@ type crawlEntry struct {
 // legacy RLPx with NodeID-derived pubkey. The stats are only populated
 // by the walker; single-shot probes leave them zero.
 type CrawlNode struct {
-	NetworkID uint8  `json:"network"`           // BIP155 tag (only IPv4/IPv6 are dialable)
-	IP        string `json:"ip"`                // text form ("1.2.3.4" / "2001:db8::1")
+	NetworkID uint8  `json:"network"` // BIP155 tag (only IPv4/IPv6 are dialable)
+	IP        string `json:"ip"`      // text form ("1.2.3.4" / "2001:db8::1")
 	TCPPort   uint16 `json:"tcpPort"`
 	KeyType   uint8  `json:"keyType"`
-	NodeID    string `json:"nodeId,omitempty"`  // hex, 64 bytes when KeyType=0x01; empty otherwise
+	NodeID    string `json:"nodeId,omitempty"` // hex, 64 bytes when KeyType=0x01; empty otherwise
 
 	FirstSeen    time.Time `json:"firstSeen,omitempty"`
 	LastSuccess  time.Time `json:"lastSuccess,omitempty"`
@@ -173,7 +173,7 @@ func parseSeed(s string) (*CrawlNode, error) {
 		}
 		return &CrawlNode{
 			NetworkID: net4,
-			IP:        net.IP(ipBytes).String(),
+			IP:        ipBytes.String(),
 			TCPPort:   uint16(n.TCP()),
 			KeyType:   disc.KeyTypeSecp256k1,
 			NodeID:    hex.EncodeToString(crypto.FromECDSAPub(n.Pubkey())[1:]),
@@ -200,7 +200,7 @@ func parseSeed(s string) (*CrawlNode, error) {
 	}
 	return &CrawlNode{
 		NetworkID: netID,
-		IP:        net.IP(ipBytes).String(),
+		IP:        ipBytes.String(),
 		TCPPort:   uint16(port),
 		KeyType:   disc.KeyTypeNone,
 	}, nil
@@ -494,15 +494,4 @@ func v2SessionIDBytes(ephem []byte) []byte {
 	copy(out[:32], ephem)
 	copy(out[32:], h[:])
 	return out
-}
-
-// writeMsg is kept for symmetry with the previous file's API; new code
-// should use wireConn.WriteMsg directly.
-func writeMsg(conn *rlpx.Conn, code uint64, v any) error {
-	payload, err := rlp.EncodeToBytes(v)
-	if err != nil {
-		return err
-	}
-	_, err = conn.Write(code, payload)
-	return err
 }

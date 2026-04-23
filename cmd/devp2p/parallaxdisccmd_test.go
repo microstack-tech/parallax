@@ -94,10 +94,10 @@ func TestParseSeedRejects(t *testing.T) {
 		"",
 		"   ",
 		"not-an-address",
-		"1.2.3.4",          // no port
-		"1.2.3.4:0",        // zero port
-		"1.2.3.4:99999999", // out of range
-		"hostname:80",      // hostnames not supported
+		"1.2.3.4",                // no port
+		"1.2.3.4:0",              // zero port
+		"1.2.3.4:99999999",       // out of range
+		"hostname:80",            // hostnames not supported
 		"enode://abc@1.2.3.4:80", // truncated pubkey
 	}
 	for _, in := range cases {
@@ -223,14 +223,14 @@ func TestIsDialableIP(t *testing.T) {
 		{"1.2.3.4", true},
 		{"8.8.8.8", true},
 		{"2001:db8::1", true},
-		{"127.0.0.1", false},  // loopback
-		{"0.0.0.0", false},    // unspecified
+		{"127.0.0.1", false},   // loopback
+		{"0.0.0.0", false},     // unspecified
 		{"169.254.1.1", false}, // link-local
-		{"224.0.0.1", false},  // multicast
-		{"::1", false},        // ipv6 loopback
-		{"::", false},         // ipv6 unspecified
-		{"fe80::1", false},    // ipv6 link-local
-		{"ff02::1", false},    // ipv6 multicast
+		{"224.0.0.1", false},   // multicast
+		{"::1", false},         // ipv6 loopback
+		{"::", false},          // ipv6 unspecified
+		{"fe80::1", false},     // ipv6 link-local
+		{"ff02::1", false},     // ipv6 multicast
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {

@@ -30,7 +30,6 @@ import (
 // fakeResolver is a deterministic stand-in for net.DefaultResolver.
 type fakeResolver struct {
 	mu      sync.Mutex
-	host    string
 	results map[string][]string
 	errOn   map[string]error
 	calls   int
