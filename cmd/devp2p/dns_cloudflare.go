@@ -101,6 +101,75 @@ func (c *cloudflareClient) checkZone(name string) error {
 	return nil
 }
 
+// deploySeedZone reconciles the SeedZone's A/AAAA records at the
+// zone's apex. One Cloudflare DNS record per (family, IP) — Cloudflare
+// returns multiple A/AAAA records as a round-robin set, which is what
+// clients of `seed.prlxdisc.org` will resolve. Stale apex A/AAAA
+// records (matching family, scoped to the zone apex) that are not in
+// the new SeedZone are deleted; this is the same idempotent reconcile
+// pattern as uploadRecords above, just specialized for A/AAAA at the
+// zone apex.
+func (c *cloudflareClient) deploySeedZone(z *SeedZone, ttl int) error {
+	if err := c.checkZone(z.Name); err != nil {
+		return err
+	}
+
+	// Build the desired set: name → list of (family, IP) entries.
+	type want struct {
+		family string
+		ip     string
+	}
+	desired := make(map[string]struct{}, len(z.Records))
+	wants := make([]want, 0, len(z.Records))
+	for _, r := range z.Records {
+		desired[r.Family+"|"+r.IP] = struct{}{}
+		wants = append(wants, want{family: r.Family, ip: r.IP})
+	}
+
+	// Pull existing A and AAAA records at the apex (Name == z.Name).
+	existing := map[string]cloudflare.DNSRecord{} // key = family+"|"+ip
+	for _, kind := range []string{"A", "AAAA"} {
+		entries, err := c.DNSRecords(context.Background(), c.zoneID, cloudflare.DNSRecord{Type: kind, Name: z.Name})
+		if err != nil {
+			return fmt.Errorf("list %s records: %w", kind, err)
+		}
+		for _, e := range entries {
+			if !strings.EqualFold(e.Name, z.Name) {
+				continue
+			}
+			existing[e.Type+"|"+e.Content] = e
+		}
+	}
+
+	// Create anything missing.
+	created, skipped := 0, 0
+	for _, w := range wants {
+		key := w.family + "|" + w.ip
+		if _, ok := existing[key]; ok {
+			skipped++
+			continue
+		}
+		rec := cloudflare.DNSRecord{Type: w.family, Name: z.Name, Content: w.ip, TTL: ttl}
+		if _, err := c.CreateDNSRecord(context.Background(), c.zoneID, rec); err != nil {
+			return fmt.Errorf("create %s %s: %w", w.family, w.ip, err)
+		}
+		created++
+	}
+	// Delete anything stale.
+	deleted := 0
+	for key, e := range existing {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		if err := c.DeleteDNSRecord(context.Background(), c.zoneID, e.ID); err != nil {
+			return fmt.Errorf("delete %s %s: %w", e.Type, e.Content, err)
+		}
+		deleted++
+	}
+	logging.Info("Cloudflare seed zone deployed", "name", z.Name, "created", created, "skipped", skipped, "deleted", deleted)
+	return nil
+}
+
 // uploadRecords updates the TXT records at a particular subdomain. All non-root records
 // will have a TTL of "infinity" and all existing records not in the new map will be
 // nuked!
