@@ -18,6 +18,7 @@ package addrman
 
 import (
 	"crypto/elliptic"
+	"net"
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
@@ -57,6 +58,35 @@ func (t *TeeIter) Next() bool {
 func (t *TeeIter) Node() *enode.Node { return t.upstream.Node() }
 
 func (t *TeeIter) Close() { t.upstream.Close() }
+
+// IngestV2Addr feeds a plain (ip, port) into m with KeyType=0x00 and
+// the supplied source tag. Used by bootnode ingest when the entry
+// comes from the v2-native ip:port shape rather than a legacy enode
+// URL. Returns true if the address was inserted or gained an
+// additional bucket reference.
+func IngestV2Addr(m *AddrMan, addr *net.TCPAddr, tag Source, lastSeen time.Time) bool {
+	if m == nil || addr == nil {
+		return false
+	}
+	ip := addr.IP
+	if ip == nil || addr.Port == 0 {
+		return false
+	}
+	var netID NetID
+	var addrBytes []byte
+	if v4 := ip.To4(); v4 != nil {
+		netID = NetIPv4
+		addrBytes = v4
+	} else {
+		netID = NetIPv6
+		addrBytes = ip.To16()
+	}
+	naddr, err := NewNetAddr(netID, addrBytes, uint16(addr.Port))
+	if err != nil {
+		return false
+	}
+	return m.AddOne(naddr, 0x00, nil, lastSeen, naddr, tag, 0)
+}
 
 // IngestNode feeds a single enode.Node into m with the given Source tag.
 // Exported so callers (e.g., bootnode ingest) can use it directly without

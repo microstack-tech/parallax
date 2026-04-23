@@ -23,6 +23,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	godebug "runtime/debug"
@@ -848,8 +849,15 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
-// setBootstrapNodes creates a list of bootstrap nodes from the command line
-// flags, reverting to pre-configured ones if none have been specified.
+// setBootstrapNodes creates a list of bootstrap nodes from the command
+// line flags, reverting to pre-configured ones if none have been
+// specified.
+//
+// Each entry must be plain "ip:port" form. Parallax v2.0 bootnodes
+// carry no NodeID on the wire — they authenticate via the BIP324-style
+// v2 handshake, which derives session identity from ephemeral X25519
+// keys rather than from a persistent secp256k1 pubkey. An enode://
+// URL passed to --bootnodes is rejected with a clear error.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	urls := netparams.MainnetBootnodes
 	switch {
@@ -861,16 +869,32 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		return // already set, don't apply defaults.
 	}
 
-	cfg.BootstrapNodes = make([]*enode.Node, 0, len(urls))
-	for _, url := range urls {
-		if url != "" {
-			node, err := enode.Parse(enode.ValidSchemes, url)
-			if err != nil {
-				logging.Crit("Bootstrap URL invalid", "enode", url, "err", err)
-				continue
-			}
-			cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
+	cfg.BootstrapNodes = make([]*net.TCPAddr, 0, len(urls))
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
 		}
+		if strings.HasPrefix(raw, "enode://") || strings.HasPrefix(raw, "enr:") {
+			logging.Crit("Bootstrap entry must be ip:port (Parallax v2.0 bootnodes carry no NodeID)", "entry", raw)
+			continue
+		}
+		host, portStr, err := net.SplitHostPort(raw)
+		if err != nil {
+			logging.Crit("Bootstrap entry invalid (expected ip:port)", "entry", raw, "err", err)
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			logging.Crit("Bootstrap entry has invalid IP", "entry", raw, "host", host)
+			continue
+		}
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil || port == 0 {
+			logging.Crit("Bootstrap entry has invalid port", "entry", raw, "port", portStr)
+			continue
+		}
+		cfg.BootstrapNodes = append(cfg.BootstrapNodes, &net.TCPAddr{IP: ip, Port: int(port)})
 	}
 }
 

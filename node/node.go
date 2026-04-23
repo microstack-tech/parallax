@@ -593,7 +593,7 @@ func (n *Node) setupAddrManAndDisc() error {
 		}
 	}
 	for _, bn := range n.config.P2P.BootstrapNodes {
-		addrman.IngestNode(m, bn, addrman.SourceDNSSeed, time.Now())
+		addrman.IngestV2Addr(m, bn, addrman.SourceDNSSeed, time.Now())
 	}
 	// Register the subprotocol. Append directly to Protocols — we're
 	// still in initializingState (Start's state machine has flipped

@@ -99,9 +99,12 @@ type Config struct {
 	// Use util.MakeName to create a name that follows existing conventions.
 	Name string `toml:"-"`
 
-	// BootstrapNodes are used to establish connectivity
-	// with the rest of the network.
-	BootstrapNodes []*enode.Node
+	// BootstrapNodes are the plain-ip:port bootstrap peers used to
+	// establish connectivity with the rest of the network. Starting
+	// with Parallax v2.0 all bootnodes run the BIP324-style v2
+	// handshake; no NodeID / enode URL is required to reach them.
+	// Feeds addrman with source=dns_seed and KeyType=0x00.
+	BootstrapNodes []*net.TCPAddr
 
 	// BootstrapNodesV5 are used to establish connectivity
 	// with the rest of the network using the V5 discovery
@@ -614,8 +617,8 @@ func (srv *Server) setupAddrMan() error {
 			}
 		}
 		now := time.Now()
-		for _, n := range srv.BootstrapNodes {
-			addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+		for _, addr := range srv.BootstrapNodes {
+			addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
 		}
 	}
 	srv.addrbook = m
@@ -774,10 +777,15 @@ func (srv *Server) setupDiscovery() error {
 			unhandled = make(chan discover.ReadPacket, 100)
 			sconn = &sharedUDPConn{conn, unhandled}
 		}
+		// discv4 is transitional; Parallax v2.0 bootnodes don't
+		// carry enode.Node shape (ip:port only), so discv4's routing
+		// table starts empty and populates through inbound PING
+		// traffic as v1.x-compatible peers find us. Operators who
+		// need to seed the v1.x routing table can do so at runtime
+		// via admin_addPeer with an enode:// URL.
 		cfg := discover.Config{
 			PrivateKey:  srv.PrivateKey,
 			NetRestrict: srv.NetRestrict,
-			Bootnodes:   srv.BootstrapNodes,
 			Unhandled:   unhandled,
 			Log:         srv.log,
 			NodeFilter:  srv.NodeFilter,
@@ -931,7 +939,19 @@ func (srv *Server) runV2Dialer() {
 // and hands the resulting peer to the normal run-loop checkpoints.
 // Called by the v2 dial goroutine and by admin_dialV2 for operator
 // testing.
+//
+// Skips the dial if any existing peer is already connected on the
+// same (IP, TCP port). v2 sessions derive node.ID from ephemeral
+// keys, so the Server's node.ID-keyed peer map can't dedupe on its
+// own — short-circuit here before the TCP connection spends kernel
+// resources on a duplicate handshake.
 func (srv *Server) DialV2(addr *net.TCPAddr) error {
+	if addr == nil {
+		return errors.New("v2 dial: nil address")
+	}
+	if srv.alreadyConnectedTo(addr) {
+		return fmt.Errorf("v2 dial %s: already connected", addr)
+	}
 	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
 	if err != nil {
 		return fmt.Errorf("v2 dial %s: %w", addr, err)
@@ -939,6 +959,22 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
 	return srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil)
+}
+
+// alreadyConnectedTo reports whether any current peer has a RemoteAddr
+// matching addr's (IP, port). Used by DialV2 to dedupe v2 targets
+// that can't be caught by node.ID-keyed matching.
+func (srv *Server) alreadyConnectedTo(addr *net.TCPAddr) bool {
+	for _, p := range srv.Peers() {
+		pra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if pra.Port == addr.Port && pra.IP.Equal(addr.IP) {
+			return true
+		}
+	}
+	return false
 }
 
 // logStartup emits the node's starting address as plain ip:port
@@ -1294,9 +1330,26 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 		return DiscAlreadyConnected
 	case c.node.ID() == srv.localnode.ID():
 		return DiscSelf
-	default:
-		return nil
 	}
+	// Phase 2b dedup: v2 sessions derive node.ID from ephemeral
+	// X25519 keys, so reconnecting to the same remote yields a
+	// fresh-looking ID that the map above can't flag. Fall back to
+	// (IP, TCP port) matching — if a peer on the same address is
+	// already connected, treat this as a duplicate.
+	if _, isV2 := c.transport.(*v2Transport); isV2 {
+		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			for _, p := range peers {
+				pra, ok := p.RemoteAddr().(*net.TCPAddr)
+				if !ok {
+					continue
+				}
+				if pra.Port == remote.Port && pra.IP.Equal(remote.IP) {
+					return DiscAlreadyConnected
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
