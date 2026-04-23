@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -174,6 +175,18 @@ func loadSeedZone(path string) (*SeedZone, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read seed zone %q: %w", path, err)
+	}
+	// Sniff the first non-whitespace byte so operators who hand us a
+	// BIND zone file (from `dns-seed to-zonefile`) get a useful hint
+	// instead of a raw JSON parse error.
+	head := bytes.TrimLeft(data, " \t\r\n")
+	if len(head) > 0 {
+		switch head[0] {
+		case ';', '$':
+			return nil, fmt.Errorf("parse seed zone %q: looks like a BIND zone file, not SeedZone JSON. to-cloudflare / to-route53 expect the compiled JSON produced by `dns-seed compile`; `dns-seed to-zonefile` output is for manual DNS management", path)
+		case '<':
+			return nil, fmt.Errorf("parse seed zone %q: looks like XML/HTML, not SeedZone JSON", path)
+		}
 	}
 	var z SeedZone
 	if err := json.Unmarshal(data, &z); err != nil {
