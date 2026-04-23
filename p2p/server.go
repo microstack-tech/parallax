@@ -950,11 +950,17 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 func (srv *Server) logStartup() {
 	n := srv.localnode.Node()
 	srv.log.Info("Started P2P networking",
-		"ip", n.IP(), "port", n.TCP(),
+		"address", formatAddr(n.IP(), n.TCP()),
 		"mode", srv.startupModeString())
 	if srv.legacyHandshakeMode() != legacyHandshakeOff {
 		srv.log.Debug("Legacy enode URL", "self", n.URLv4())
 	}
+}
+
+// formatAddr renders an ip/port pair as "ip:port", bracketing IPv6
+// to keep the colon separator unambiguous.
+func formatAddr(ip net.IP, port int) string {
+	return (&net.TCPAddr{IP: ip, Port: port}).String()
 }
 
 // startupModeString describes the handshake/discovery posture for the
@@ -988,7 +994,7 @@ func (srv *Server) watchLocalAddrChanges() {
 			n := srv.localnode.Node()
 			ip, port := n.IP(), n.TCP()
 			if !ip.Equal(prevIP) || port != prevPort {
-				srv.log.Info("P2P external address updated", "ip", ip, "port", port)
+				srv.log.Info("P2P external address updated", "address", formatAddr(ip, port))
 				prevIP, prevPort = ip, port
 			}
 		}
