@@ -988,9 +988,7 @@ func (srv *Server) watchLocalAddrChanges() {
 			n := srv.localnode.Node()
 			ip, port := n.IP(), n.TCP()
 			if !ip.Equal(prevIP) || port != prevPort {
-				srv.log.Info("P2P external address updated",
-					"old-ip", prevIP, "new-ip", ip,
-					"old-port", prevPort, "new-port", port)
+				srv.log.Info("P2P external address updated", "ip", ip, "port", port)
 				prevIP, prevPort = ip, port
 			}
 		}
