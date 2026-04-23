@@ -26,7 +26,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/cmd/pvm/internal/t8ntool"
 	"github.com/ParallaxProtocol/parallax/internal/cmdtest"
-	"github.com/docker/docker/pkg/reexec"
+	"github.com/moby/sys/reexec"
 )
 
 func TestMain(m *testing.M) {

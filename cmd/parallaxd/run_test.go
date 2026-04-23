@@ -25,7 +25,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/internal/cmdtest"
 	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/docker/docker/pkg/reexec"
+	"github.com/moby/sys/reexec"
 )
 
 type testprlx struct {
