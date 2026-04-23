@@ -17,10 +17,15 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/crypto"
@@ -28,35 +33,38 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"gopkg.in/urfave/cli.v1"
 )
 
-// parallax-disc crawl connects to a seed node via RLPx, negotiates
-// parallax-disc/1, and fetches its addrbook sample. Single-shot for
-// now; a multi-hop walk can be layered on top of this primitive. The
-// output schema matches discv4 crawl so downstream analysis keeps
-// working during the PIP-0006 Phase 6 transition.
+// parallax-disc crawl sits on top of a single probeOne primitive that
+// speaks parallax-disc/1 over either v2 (BIP324) or legacy RLPx,
+// branching on the seed's KeyType. The seed format is auto-detected:
+// `ip:port` → v2 dial (KeyType=0x00); `enode://...` → legacy dial
+// (KeyType=0x01) — matching admin_addPeer's convention.
 
 var (
 	parallaxDiscCommand = cli.Command{
 		Name:  "parallax-disc",
-		Usage: "Parallax PIP-0006 discovery tools (crawl, probe)",
+		Usage: "Parallax PIP-0006 discovery tools",
 		Subcommands: []cli.Command{
 			parallaxDiscCrawlCommand,
 		},
 	}
 
 	parallaxDiscCrawlCommand = cli.Command{
-		Name:      "crawl",
-		Usage:     "Probe a seed node over parallax-disc/1 and emit the returned Peers sample as JSON",
-		ArgsUsage: "<enode>",
+		Name: "crawl",
+		Usage: "Probe a seed node over parallax-disc/1 and emit the returned Peers sample as JSON. " +
+			"Accepts ip:port (v2) or enode://... (legacy).",
+		ArgsUsage: "<addr>",
 		Action:    parallaxDiscCrawl,
 	}
 )
 
 // crawlResult mirrors discv4-crawl's nodeset output but with the
 // parallax-disc PeerEntry fields surfaced. One row per learned peer.
+// Returned by `probe` (single-shot); the walker uses CrawlState.
 type crawlResult struct {
 	Seed    string       `json:"seed"`
 	RanAt   time.Time    `json:"ranAt"`
@@ -72,38 +80,51 @@ type crawlEntry struct {
 	LastSeen uint64 `json:"lastSeen"`
 }
 
+// CrawlNode identifies one peer the crawler probes. It carries enough
+// to dispatch the right handshake variant: KeyType=0x00 → v2 (BIP324),
+// KeyType=0x01 → legacy RLPx with NodeID-derived pubkey.
+type CrawlNode struct {
+	NetworkID uint8  // BIP155 tag (only IPv4/IPv6 are dialable)
+	IP        string // text form ("1.2.3.4" / "2001:db8::1")
+	TCPPort   uint16
+	KeyType   uint8
+	NodeID    string // hex, 64 bytes when KeyType=0x01; empty otherwise
+}
+
+func (n *CrawlNode) tcpAddr() string {
+	return net.JoinHostPort(n.IP, strconv.Itoa(int(n.TCPPort)))
+}
+
+// parallaxDiscCrawl is the `parallax-disc crawl <addr>` action: dial
+// once, ask GetPeers, write the response as JSON. <addr> is either
+// `ip:port` (v2 dial, KeyType=0x00) or `enode://...` (legacy dial,
+// KeyType=0x01) — same convention as admin_addPeer.
 func parallaxDiscCrawl(ctx *cli.Context) error {
 	if ctx.NArg() != 1 {
-		return fmt.Errorf("usage: parallax-disc crawl <enode>")
+		return fmt.Errorf("usage: parallax-disc crawl <addr>")
 	}
-	n, err := enode.Parse(enode.ValidSchemes, ctx.Args().First())
-	if err != nil {
-		return fmt.Errorf("invalid enode: %w", err)
-	}
-	if n.IP() == nil || n.TCP() == 0 {
-		return fmt.Errorf("enode missing ip or tcp port")
-	}
-
-	entries, err := crawlOne(n)
+	node, err := parseSeed(ctx.Args().First())
 	if err != nil {
 		return err
 	}
-
-	// Sort for stable output.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Network != entries[j].Network {
-			return entries[i].Network < entries[j].Network
+	entries, _, err := probeOne(context.Background(), node)
+	if err != nil {
+		return err
+	}
+	cells := translateEntries(entries)
+	sort.Slice(cells, func(i, j int) bool {
+		if cells[i].Network != cells[j].Network {
+			return cells[i].Network < cells[j].Network
 		}
-		if entries[i].IP != entries[j].IP {
-			return entries[i].IP < entries[j].IP
+		if cells[i].IP != cells[j].IP {
+			return cells[i].IP < cells[j].IP
 		}
-		return entries[i].TCPPort < entries[j].TCPPort
+		return cells[i].TCPPort < cells[j].TCPPort
 	})
-
 	out := crawlResult{
-		Seed:    n.URLv4(),
+		Seed:    node.tcpAddr(),
 		RanAt:   time.Now(),
-		Entries: entries,
+		Entries: cells,
 	}
 	enc, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -113,72 +134,221 @@ func parallaxDiscCrawl(ctx *cli.Context) error {
 	return nil
 }
 
-// crawlOne dials n, does the RLPx + devp2p handshake advertising only
-// the parallax-disc/1 capability, sends a YourAddr + GetPeers, reads
-// the Peers response, and returns the entries.
-//
-// Timeouts are short (20s total) because this is a one-shot probe —
-// crawlers running against many seeds layer concurrency on top.
-func crawlOne(n *enode.Node) ([]crawlEntry, error) {
-	deadline := time.Now().Add(20 * time.Second)
-	fd, err := net.DialTimeout("tcp", fmt.Sprintf("%v:%d", n.IP(), n.TCP()), 10*time.Second)
+// parseSeed accepts a seed in either `ip:port` (v2) or `enode://...`
+// (legacy) form and returns a CrawlNode populated with the right
+// KeyType and (for legacy) hex NodeID. Mirrors admin_addPeer's
+// branching so operators can paste either format anywhere a seed is
+// asked for.
+func parseSeed(s string) (*CrawlNode, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("empty seed")
+	}
+	if strings.HasPrefix(s, "enode://") {
+		n, err := enode.Parse(enode.ValidSchemes, s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid enode: %w", err)
+		}
+		if n.IP() == nil || n.TCP() == 0 {
+			return nil, fmt.Errorf("enode missing ip or tcp port")
+		}
+		net4 := disc.NetIPv4
+		ipBytes := n.IP().To4()
+		if ipBytes == nil {
+			net4 = disc.NetIPv6
+			ipBytes = n.IP().To16()
+		}
+		return &CrawlNode{
+			NetworkID: net4,
+			IP:        net.IP(ipBytes).String(),
+			TCPPort:   uint16(n.TCP()),
+			KeyType:   disc.KeyTypeSecp256k1,
+			NodeID:    hex.EncodeToString(crypto.FromECDSAPub(n.Pubkey())[1:]),
+		}, nil
+	}
+	// ip:port — v2.
+	host, portStr, err := net.SplitHostPort(s)
 	if err != nil {
-		return nil, fmt.Errorf("dial: %w", err)
+		return nil, fmt.Errorf("invalid address %q (expected ip:port or enode://...): %w", s, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP %q", host)
+	}
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil || port == 0 {
+		return nil, fmt.Errorf("invalid port %q", portStr)
+	}
+	netID := disc.NetIPv4
+	ipBytes := ip.To4()
+	if ipBytes == nil {
+		netID = disc.NetIPv6
+		ipBytes = ip.To16()
+	}
+	return &CrawlNode{
+		NetworkID: netID,
+		IP:        net.IP(ipBytes).String(),
+		TCPPort:   uint16(port),
+		KeyType:   disc.KeyTypeNone,
+	}, nil
+}
+
+// probeOne dials one node, runs the appropriate handshake, negotiates
+// parallax-disc/1, sends YourAddr + GetPeers, and returns the Peers
+// reply along with the peer's advertised capabilities. The capabilities
+// let callers tag the source node (the walker stores them per node so
+// the publisher can confirm parallax-disc/1 support).
+//
+// Total timeout is 20s — the walker layers concurrency (and a higher
+// per-run budget) on top.
+func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps []p2p.Cap, err error) {
+	deadline := time.Now().Add(20 * time.Second)
+	fd, err := net.DialTimeout("tcp", node.tcpAddr(), 10*time.Second)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial: %w", err)
 	}
 	defer fd.Close()
 	_ = fd.SetDeadline(deadline)
 
-	conn := rlpx.NewConn(fd, n.Pubkey())
-	ourKey, err := crypto.GenerateKey()
+	wc, ourID, err := dialAndAuth(fd, node)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := conn.Handshake(ourKey); err != nil {
-		return nil, fmt.Errorf("rlpx handshake: %w", err)
+		return nil, nil, err
 	}
 
-	// Send devp2p Hello advertising only parallax-disc/1 (plus a
-	// dummy parallax/66 cap so the remote doesn't immediately
-	// disconnect for lack of a shared base protocol). Base protocol
-	// codes occupy 0..15; subprotocol blocks start at 16, assigned
-	// in alphabetical order by name. With our cap set
-	// [parallax/66, parallax-disc/1], parallax gets 16..16+17-1
-	// and parallax-disc gets the block right after.
 	hello := &devp2pHello{
 		Version:    5,
 		Name:       "parallax-disc-crawl",
 		Caps:       []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 1}},
 		ListenPort: 0,
-		ID:         crypto.FromECDSAPub(&ourKey.PublicKey)[1:],
+		ID:         ourID,
 	}
-	if err := writeMsg(conn, helloCode, hello); err != nil {
-		return nil, fmt.Errorf("write hello: %w", err)
-	}
-	// Read their Hello to learn the negotiated offset.
-	code, data, _, err := conn.Read()
+	helloPayload, err := rlp.EncodeToBytes(hello)
 	if err != nil {
-		return nil, fmt.Errorf("read hello: %w", err)
+		return nil, nil, err
+	}
+	if err := wc.WriteMsg(helloCode, helloPayload); err != nil {
+		return nil, nil, fmt.Errorf("write hello: %w", err)
+	}
+	code, data, err := wc.ReadMsg()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read hello: %w", err)
 	}
 	if code != helloCode {
-		return nil, fmt.Errorf("expected Hello (code 0), got %d", code)
+		return nil, nil, fmt.Errorf("expected Hello (code 0), got %d", code)
 	}
 	var theirHello devp2pHello
 	if err := rlp.DecodeBytes(data, &theirHello); err != nil {
-		return nil, fmt.Errorf("decode hello: %w", err)
+		return nil, nil, fmt.Errorf("decode hello: %w", err)
 	}
-	if theirHello.Version >= 5 {
-		conn.SetSnappy(true)
+	// Snappy negotiation only applies to legacy. v2 frames are already
+	// AEAD-sealed and the framing carries no Snappy bit.
+	if lc, ok := wc.(*legacyWireConn); ok && theirHello.Version >= 5 {
+		lc.c.SetSnappy(true)
 	}
 
-	// Compute the parallax-disc subprotocol code offset. devp2p sorts
-	// (caps ∩ their caps) by name and assigns contiguous blocks
-	// starting at baseProtocolLength=16. parallax/66 has length 17,
-	// parallax-disc/1 has length 3. Alphabetical → parallax first.
+	discOffset, err := computeDiscOffset(theirHello.Caps)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// YourAddr is mandatory as the first parallax-disc/1 message after
+	// negotiation. Zero-filled — we are not dialable from the peer's
+	// perspective during a crawl.
+	yourAddrPayload, err := rlp.EncodeToBytes(disc.YourAddr{})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := wc.WriteMsg(uint64(discOffset)+disc.YourAddrMsg, yourAddrPayload); err != nil {
+		return nil, nil, fmt.Errorf("write YourAddr: %w", err)
+	}
+	getPeersPayload, err := rlp.EncodeToBytes(disc.GetPeers{})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := wc.WriteMsg(uint64(discOffset)+disc.GetPeersMsg, getPeersPayload); err != nil {
+		return nil, nil, fmt.Errorf("write GetPeers: %w", err)
+	}
+
+	for {
+		code, data, err := wc.ReadMsg()
+		if err != nil {
+			return nil, nil, fmt.Errorf("read reply: %w", err)
+		}
+		switch {
+		case code == uint64(discOffset)+disc.PeersMsg:
+			var pkt disc.Peers
+			if err := rlp.DecodeBytes(data, &pkt); err != nil {
+				return nil, nil, fmt.Errorf("decode Peers: %w", err)
+			}
+			return pkt.Entries, theirHello.Caps, nil
+		case code == disconnectCode:
+			return nil, nil, fmt.Errorf("peer disconnected during crawl")
+		default:
+			// YourAddr / Ping / Pong / other subprotocol messages —
+			// ignore.
+		}
+	}
+}
+
+// dialAndAuth runs the encryption handshake matching node.KeyType and
+// returns a wire-level conn plus the 64-byte ID we'll put in our Hello.
+// For v2 the ID is `ephem || sha256(ephem)` (matches v2Transport's
+// identity derivation in p2p/transport_v2.go); for legacy it's the
+// secp256k1 pubkey x||y (matches the rlpx Hello).
+func dialAndAuth(fd net.Conn, node *CrawlNode) (wireConn, []byte, error) {
+	switch node.KeyType {
+	case disc.KeyTypeNone:
+		bc := bip324handshake.NewConn(fd)
+		if err := bc.DialHandshake(); err != nil {
+			return nil, nil, fmt.Errorf("v2 handshake: %w", err)
+		}
+		localEphem, _ := bc.SessionKeys()
+		if len(localEphem) != 32 {
+			return nil, nil, fmt.Errorf("v2 handshake produced empty session key")
+		}
+		return &v2WireConn{c: bc}, v2SessionIDBytes(localEphem), nil
+
+	case disc.KeyTypeSecp256k1:
+		nodeIDBytes, err := hex.DecodeString(node.NodeID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid hex NodeID: %w", err)
+		}
+		if len(nodeIDBytes) != 64 {
+			return nil, nil, fmt.Errorf("legacy entry has wrong NodeID length: %d (want 64)", len(nodeIDBytes))
+		}
+		// SEC1 uncompressed prefix.
+		pub, err := crypto.UnmarshalPubkey(append([]byte{0x04}, nodeIDBytes...))
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode legacy NodeID into pubkey: %w", err)
+		}
+		conn := rlpx.NewConn(fd, pub)
+		ourKey, err := crypto.GenerateKey()
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err := conn.Handshake(ourKey); err != nil {
+			return nil, nil, fmt.Errorf("legacy handshake: %w", err)
+		}
+		// Hello.ID for legacy is the secp256k1 pubkey x||y (no 0x04 prefix).
+		return &legacyWireConn{c: conn, fd: fd}, crypto.FromECDSAPub(&ourKey.PublicKey)[1:], nil
+
+	default:
+		return nil, nil, fmt.Errorf("unknown KeyType: %d", node.KeyType)
+	}
+}
+
+// computeDiscOffset returns the parallax-disc subprotocol's message-code
+// base after devp2p capability negotiation against the peer's Hello.
+//
+// devp2p sorts (our caps ∩ their caps) by name and assigns contiguous
+// blocks starting at baseProtocolLength=16. parallax/66 has length 17,
+// parallax-disc/1 has length 3. Alphabetical → parallax first if both
+// matched.
+func computeDiscOffset(theirCaps []p2p.Cap) (int, error) {
 	const baseProtocolLength = 16
 	const parallaxProtocolLength = 17
-	discOffset := -1
 	var matched []p2p.Cap
-	for _, theirs := range theirHello.Caps {
+	for _, theirs := range theirCaps {
 		if theirs.Name == "parallax" || theirs.Name == "parallax-disc" {
 			matched = append(matched, theirs)
 		}
@@ -186,51 +356,14 @@ func crawlOne(n *enode.Node) ([]crawlEntry, error) {
 	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
 	off := uint64(baseProtocolLength)
 	for _, c := range matched {
-		if c.Name == "parallax-disc" {
-			discOffset = int(off)
-			break
-		}
-		if c.Name == "parallax" {
+		switch c.Name {
+		case "parallax-disc":
+			return int(off), nil
+		case "parallax":
 			off += parallaxProtocolLength
 		}
 	}
-	if discOffset == -1 {
-		return nil, fmt.Errorf("peer does not advertise parallax-disc/1 (got caps: %v)", theirHello.Caps)
-	}
-
-	// Send YourAddr — mandatory as the first parallax-disc/1 message
-	// after negotiation. Zero-filled since we aren't dialable from
-	// their perspective during a crawl.
-	yourAddr := disc.YourAddr{}
-	if err := writeMsg(conn, uint64(discOffset)+disc.YourAddrMsg, yourAddr); err != nil {
-		return nil, fmt.Errorf("write YourAddr: %w", err)
-	}
-	// Send GetPeers.
-	if err := writeMsg(conn, uint64(discOffset)+disc.GetPeersMsg, disc.GetPeers{}); err != nil {
-		return nil, fmt.Errorf("write GetPeers: %w", err)
-	}
-
-	// Read responses until we get Peers or time out. Drop anything
-	// else (their YourAddr or pings) silently.
-	for {
-		code, data, _, err := conn.Read()
-		if err != nil {
-			return nil, fmt.Errorf("read reply: %w", err)
-		}
-		switch {
-		case code == uint64(discOffset)+disc.PeersMsg:
-			var pkt disc.Peers
-			if err := rlp.DecodeBytes(data, &pkt); err != nil {
-				return nil, fmt.Errorf("decode Peers: %w", err)
-			}
-			return translateEntries(pkt.Entries), nil
-		case code == disconnectCode:
-			return nil, fmt.Errorf("peer disconnected during crawl")
-		default:
-			// YourAddr / Ping / Pong / other subprotocol
-			// messages — ignore.
-		}
-	}
+	return -1, fmt.Errorf("peer does not advertise parallax-disc/1 (got caps: %v)", theirCaps)
 }
 
 func translateEntries(entries []disc.PeerEntry) []crawlEntry {
@@ -247,8 +380,8 @@ func translateEntries(entries []disc.PeerEntry) []crawlEntry {
 		case disc.NetIPv6:
 			ip = net.IP(e.Addr).String()
 		default:
-			// Tor/I2P/CJDNS — emit as hex so downstream tooling
-			// can at least tag them.
+			// Tor/I2P/CJDNS — emit as hex so downstream tooling can
+			// at least tag them.
 			ip = fmt.Sprintf("%x", e.Addr)
 		}
 		ce := crawlEntry{
@@ -285,7 +418,73 @@ const (
 	disconnectCode = 1
 )
 
-// writeMsg RLP-encodes v and writes it at `code`.
+// wireConn abstracts the post-handshake message transport so probeOne
+// is identical for v2 and legacy paths. Both implementations return
+// the same (code, payload) pair where payload is whatever the peer put
+// after the RLP-encoded code prefix.
+type wireConn interface {
+	WriteMsg(code uint64, payload []byte) error
+	ReadMsg() (code uint64, payload []byte, err error)
+	Close() error
+}
+
+// legacyWireConn wraps an rlpx.Conn (legacy ECIES handshake established).
+type legacyWireConn struct {
+	c  *rlpx.Conn
+	fd net.Conn
+}
+
+func (l *legacyWireConn) WriteMsg(code uint64, payload []byte) error {
+	_, err := l.c.Write(code, payload)
+	return err
+}
+func (l *legacyWireConn) ReadMsg() (uint64, []byte, error) {
+	code, data, _, err := l.c.Read()
+	return code, data, err
+}
+func (l *legacyWireConn) Close() error { return l.fd.Close() }
+
+// v2WireConn wraps a bip324handshake.Conn. The wire shape inside each
+// AEAD frame matches what p2p/transport_v2.go produces:
+// `RLP(code) || raw_payload_bytes`. probeOne writes already-encoded
+// payloads and decodes the code via rlp.SplitUint64 on the way back.
+type v2WireConn struct {
+	c *bip324handshake.Conn
+}
+
+func (v *v2WireConn) WriteMsg(code uint64, payload []byte) error {
+	buf := rlp.AppendUint64(nil, code)
+	buf = append(buf, payload...)
+	return v.c.Write(buf)
+}
+func (v *v2WireConn) ReadMsg() (uint64, []byte, error) {
+	plain, err := v.c.Read()
+	if err != nil {
+		return 0, nil, err
+	}
+	code, rest, err := rlp.SplitUint64(plain)
+	if err != nil {
+		return 0, nil, fmt.Errorf("v2 invalid message code: %w", err)
+	}
+	return code, rest, nil
+}
+func (v *v2WireConn) Close() error { return v.c.Close() }
+
+// v2SessionIDBytes mirrors p2p/transport_v2.go's identity derivation:
+// the Hello.ID for a v2 peer is the local X25519 ephemeral pubkey
+// followed by SHA-256 of itself (32+32 = 64 bytes). The remote takes
+// keccak256 of this to derive the per-session enode.ID. We replicate
+// it here to keep cmd/devp2p free of a hard dep on the p2p package.
+func v2SessionIDBytes(ephem []byte) []byte {
+	h := sha256.Sum256(ephem)
+	out := make([]byte, 64)
+	copy(out[:32], ephem)
+	copy(out[32:], h[:])
+	return out
+}
+
+// writeMsg is kept for symmetry with the previous file's API; new code
+// should use wireConn.WriteMsg directly.
 func writeMsg(conn *rlpx.Conn, code uint64, v any) error {
 	payload, err := rlp.EncodeToBytes(v)
 	if err != nil {
