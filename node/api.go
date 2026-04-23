@@ -131,7 +131,7 @@ func (api *privateAdminAPI) Addnode(address string) (bool, error) {
 	}
 	book := server.AddrBook()
 	if book == nil {
-		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+		return false, errors.New("addrman is not initialized (is the server running?)")
 	}
 	entry, err := parseAddrbookAddress(address)
 	if err != nil {
@@ -149,7 +149,7 @@ func (api *privateAdminAPI) Removenode(address string) (bool, error) {
 	}
 	book := server.AddrBook()
 	if book == nil {
-		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+		return false, errors.New("addrman is not initialized (is the server running?)")
 	}
 	entry, err := parseAddrbookAddress(address)
 	if err != nil {
@@ -167,7 +167,7 @@ func (api *privateAdminAPI) AddrbookStatus() (*addrman.Status, error) {
 	}
 	book := server.AddrBook()
 	if book == nil {
-		return nil, errors.New("addrman is not enabled; start with --experimental-addrman")
+		return nil, errors.New("addrman is not initialized (is the server running?)")
 	}
 	s := book.Snapshot()
 	return &s, nil
@@ -210,7 +210,7 @@ func (api *privateAdminAPI) AddrbookResetKey() (bool, error) {
 	}
 	book := server.AddrBook()
 	if book == nil {
-		return false, errors.New("addrman is not enabled; start with --experimental-addrman")
+		return false, errors.New("addrman is not initialized (is the server running?)")
 	}
 	if err := book.ResetKey(); err != nil {
 		return false, err

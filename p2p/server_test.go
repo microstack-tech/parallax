@@ -101,12 +101,16 @@ func TestServerListen(t *testing.T) {
 	defer close(connected)
 	defer srv.Stop()
 
-	// dial the test server
+	// dial the test server. Send any non-0xA0 byte so the PIP-0006
+	// listener peek classifies as legacy and proceeds.
 	conn, err := net.DialTimeout("tcp", srv.ListenAddr, 5*time.Second)
 	if err != nil {
 		t.Fatalf("could not dial: %v", err)
 	}
 	defer conn.Close()
+	if _, err := conn.Write([]byte{0x01}); err != nil {
+		t.Fatalf("could not write peek byte: %v", err)
+	}
 
 	select {
 	case peer := <-connected:
@@ -533,10 +537,16 @@ func TestServerInboundThrottle(t *testing.T) {
 	}
 	defer srv.Stop()
 
-	// Dial the test server.
+	// Dial the test server. Send a legacy-RLPx-shaped first byte so
+	// the PIP-0006 peek dispatcher classifies the connection as
+	// legacy (0xf9 is the RLP list-length prefix for an ECIES auth
+	// packet) and proceeds into srv.newTransport.
 	conn, err := net.DialTimeout("tcp", srv.ListenAddr, timeout)
 	if err != nil {
 		t.Fatalf("could not dial: %v", err)
+	}
+	if _, err := conn.Write([]byte{0xf9}); err != nil {
+		t.Fatalf("could not write magic byte: %v", err)
 	}
 	select {
 	case <-newTransportCalled:

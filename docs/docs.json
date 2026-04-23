@@ -86,7 +86,8 @@
                 "group": "Networking Layer",
                 "pages": [
                   "parallax-protocol/advanced/networking/overview",
-                  "parallax-protocol/advanced/networking/addresses"
+                  "parallax-protocol/advanced/networking/addresses",
+                  "parallax-protocol/advanced/networking/pip-0006"
                 ]
               },
               {

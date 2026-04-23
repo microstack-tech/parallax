@@ -571,31 +571,26 @@ func (n *Node) RegisterProtocols(protocols []p2p.Protocol) {
 }
 
 // setupAddrManAndDisc constructs the address manager and registers the
-// parallax-disc/1 subprotocol against it. No-op when the feature flag
-// is off. Runs during openEndpoints, before Server.Start.
+// parallax-disc/1 subprotocol against it. Always runs — addrman is no
+// longer an opt-in feature. Done at the Node layer to avoid the import
+// cycle that would appear if p2p imported p2p/protocols/disc.
 //
-// Done at the Node layer (not inside p2p) to avoid the import cycle:
-// p2p/protocols/disc needs p2p.Peer / p2p.MsgReadWriter, so p2p cannot
-// in turn import disc.
+// When n.config.P2P.AddrBookPath is empty the addrman runs in-memory
+// only (no persistence). Test harnesses that preset server.AddrManager
+// are respected via the early-return below.
 func (n *Node) setupAddrManAndDisc() error {
-	if !n.config.P2P.ExperimentalAddrMan {
-		return nil
-	}
 	if n.server.AddrManager != nil {
 		// Already wired (test harness or double-Start).
-		return nil
-	}
-	if n.config.P2P.AddrBookPath == "" {
-		n.log.Warn("ExperimentalAddrMan enabled but AddrBookPath is empty; skipping addrman setup")
-		n.config.P2P.ExperimentalAddrMan = false
 		return nil
 	}
 	m, err := addrman.New()
 	if err != nil {
 		return err
 	}
-	if err := m.Load(n.config.P2P.AddrBookPath); err != nil {
-		n.log.Warn("addrbook load failed; proceeding empty", "path", n.config.P2P.AddrBookPath, "err", err)
+	if n.config.P2P.AddrBookPath != "" {
+		if err := m.Load(n.config.P2P.AddrBookPath); err != nil {
+			n.log.Warn("addrbook load failed; proceeding empty", "path", n.config.P2P.AddrBookPath, "err", err)
+		}
 	}
 	for _, bn := range n.config.P2P.BootstrapNodes {
 		addrman.IngestNode(m, bn, addrman.SourceDNSSeed, time.Now())

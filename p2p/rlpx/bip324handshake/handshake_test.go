@@ -358,9 +358,12 @@ func TestPeekVersionLegacy(t *testing.T) {
 	}
 }
 
-// TestPeekVersionUnknown — non-matching first byte returns
-// VariantUnknown; caller is expected to disconnect.
-func TestPeekVersionUnknown(t *testing.T) {
+// TestPeekVersionNonMagicIsLegacy — any byte other than VersionMagic
+// is classified as legacy. The legacy RLPx handshake itself validates
+// further. This is the "anything that isn't v2 is probably legacy"
+// rule; malformed junk gets caught a few bytes into the legacy
+// handshake.
+func TestPeekVersionNonMagicIsLegacy(t *testing.T) {
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
@@ -372,8 +375,8 @@ func TestPeekVersionUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != VariantUnknown {
-		t.Errorf("variant = %d, want VariantUnknown (%d)", v, VariantUnknown)
+	if v != VariantLegacy {
+		t.Errorf("variant = %d, want VariantLegacy (%d)", v, VariantLegacy)
 	}
 }
 
@@ -409,11 +412,9 @@ func FuzzPeekVersionDispatch(f *testing.F) {
 	})
 }
 
-// TestRandomBytesNotMisread — random first bytes map to Variant in a
-// well-defined way (V2 only for exactly 0xA0, Legacy only for the
-// documented ECIES range). Protects against accidental range widening
-// if someone adds a byte to isLegacyRLPxFirstByte.
-func TestRandomBytesNotMisread(t *testing.T) {
+// TestRandomBytesClassification — exhaustive sweep over 0x00..0xFF.
+// Exactly one byte (0xA0) maps to V2; all others map to Legacy.
+func TestRandomBytesClassification(t *testing.T) {
 	for i := 0; i < 256; i++ {
 		a, b := net.Pipe()
 		go func(v byte) {
@@ -423,19 +424,12 @@ func TestRandomBytesNotMisread(t *testing.T) {
 		_ = b.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		variant, _, _ := PeekVersion(b)
 		_ = b.Close()
-		switch byte(i) {
-		case VersionMagic:
+		if byte(i) == VersionMagic {
 			if variant != VariantV2 {
 				t.Errorf("0x%02x: got %d, want VariantV2", i, variant)
 			}
-		case 0xf8, 0xf9, 0xfa:
-			if variant != VariantLegacy {
-				t.Errorf("0x%02x: got %d, want VariantLegacy", i, variant)
-			}
-		default:
-			if variant != VariantUnknown {
-				t.Errorf("0x%02x: got %d, want VariantUnknown", i, variant)
-			}
+		} else if variant != VariantLegacy {
+			t.Errorf("0x%02x: got %d, want VariantLegacy", i, variant)
 		}
 	}
 }

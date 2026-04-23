@@ -158,10 +158,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.NetrestrictFlag,
 			utils.NodeKeyFileFlag,
 			utils.NodeKeyHexFlag,
-			utils.ExperimentalAddrmanFlag,
 			utils.LegacyDiscoveryFlag,
-			utils.ExperimentalV2HandshakeFlag,
-			utils.LegacyHandshakeFlag,
 		},
 	},
 	{

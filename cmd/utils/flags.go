@@ -648,23 +648,15 @@ var (
 		Name:  "discovery.dns",
 		Usage: "Sets DNS discovery entry points (use \"\" to disable DNS)",
 	}
-	ExperimentalAddrmanFlag = cli.BoolFlag{
-		Name:  "experimental-addrman",
-		Usage: "Enable the Bitcoin Core-style address manager alongside discv4. Persists <datadir>/addrbook.rlp across restarts and feeds the dialer from a stochastic peer table. Experimental; will become the default in a later release.",
-	}
 	LegacyDiscoveryFlag = cli.StringFlag{
-		Name:  "legacy-discovery",
-		Usage: "Legacy discv4 usage mode when --experimental-addrman is active (auto|on|off). auto: respond to inbound but don't drive dialing. on: full v1.x compat, discv4 is a dial source. off: no UDP discovery at all.",
+		Name: "legacy-discovery",
+		Usage: "Compatibility mode for the v1.x transport stack (auto|on|off). " +
+			"Controls UDP discv4 AND legacy RLPx handshake acceptance in lockstep — they share the same identity model. " +
+			"auto: discv4 responds to inbound but doesn't drive dialing, legacy RLPx accepted (default, v2.0 transitional posture). " +
+			"on: discv4 is a dial source, legacy RLPx accepted (pre-PIP-0006 v1.x compatibility). " +
+			"off: no UDP socket, legacy RLPx refused, enode URL becomes diagnostic-only — node is v2-only. " +
+			"The addrman and v2 handshake are always on; this flag only controls whether the v1.x surface is exposed alongside them.",
 		Value: "auto",
-	}
-	ExperimentalV2HandshakeFlag = cli.BoolFlag{
-		Name:  "experimental-v2-handshake",
-		Usage: "Enable the BIP324-style v2 RLPx handshake for dialing KeyType=0x00 peers on IP:port alone. Experimental; the listener accepts both handshake variants when this is set. Default off — incoming v2 handshakes are rejected until this flag is flipped.",
-	}
-	LegacyHandshakeFlag = cli.StringFlag{
-		Name:  "legacy-handshake",
-		Usage: "Whether to offer/accept the legacy RLPx ECIES handshake (on|off). Default on for v2.0 compatibility with v1.x peers. off opts into the v3.0-posture early: listener rejects anything that isn't the v2 magic byte, dialer refuses KeyType=0x01 entries, no ENR published. Requires --experimental-v2-handshake.",
-		Value: "on",
 	}
 
 	// ATM the url is left to the user and deployment to
@@ -1145,20 +1137,8 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.GlobalIsSet(DiscoveryV5Flag.Name) {
 		cfg.DiscoveryV5 = ctx.GlobalBool(DiscoveryV5Flag.Name)
 	}
-	if ctx.GlobalBool(ExperimentalAddrmanFlag.Name) {
-		cfg.ExperimentalAddrMan = true
-		// AddrBookPath is filled in by SetNodeConfig once DataDir is
-		// known — SetP2PConfig runs before SetNodeConfig's datadir
-		// hookup, so we defer the path join to the caller.
-	}
 	if ctx.GlobalIsSet(LegacyDiscoveryFlag.Name) {
 		cfg.LegacyDiscoveryMode = ctx.GlobalString(LegacyDiscoveryFlag.Name)
-	}
-	if ctx.GlobalBool(ExperimentalV2HandshakeFlag.Name) {
-		cfg.ExperimentalV2Handshake = true
-	}
-	if ctx.GlobalIsSet(LegacyHandshakeFlag.Name) {
-		cfg.LegacyHandshakeMode = ctx.GlobalString(LegacyHandshakeFlag.Name)
 	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {
@@ -1207,15 +1187,11 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setDataDir(ctx, cfg)
 	setSmartCard(ctx, cfg)
 
-	// Addrman requires a datadir-relative path. Fill it in now that
-	// cfg.DataDir is known; SetP2PConfig above set the enable bit.
-	if cfg.P2P.ExperimentalAddrMan && cfg.P2P.AddrBookPath == "" {
-		if cfg.DataDir == "" {
-			logging.Warn("--experimental-addrman requires a non-empty --datadir; addrman disabled")
-			cfg.P2P.ExperimentalAddrMan = false
-		} else {
-			cfg.P2P.AddrBookPath = filepath.Join(cfg.DataDir, "addrbook.rlp")
-		}
+	// Default the addrbook location to <datadir>/addrbook.rlp. An
+	// empty AddrBookPath keeps the addrman in-memory only (fine for
+	// ephemeral test nodes without a datadir).
+	if cfg.P2P.AddrBookPath == "" && cfg.DataDir != "" {
+		cfg.P2P.AddrBookPath = filepath.Join(cfg.DataDir, "addrbook.rlp")
 	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {

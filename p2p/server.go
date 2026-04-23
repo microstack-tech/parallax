@@ -159,57 +159,36 @@ type Config struct {
 	// discovery routing table during revalidation.
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
-	// ExperimentalV2Handshake enables the BIP324-style v2 RLPx
-	// handshake. When true:
-	//   - Listener accepts both legacy ECIES auth packets and v2
-	//     handshakes (dispatched via the version-negotiation byte).
-	//   - Dialer uses v2 for addrman entries with KeyType=0x00 and
-	//     legacy for KeyType=0x01.
-	// Default off — per PIP-0006 Phase 2b deprecation timeline.
-	ExperimentalV2Handshake bool `toml:",omitempty"`
-
-	// LegacyHandshakeMode controls whether legacy RLPx ECIES
-	// handshakes are offered or accepted. PIP-0006 deprecation
-	// timeline values (the plan's v2.0/v2.2 split exposed a release
-	// earlier):
-	//   "on"  — default for v2.0. Legacy listener, legacy dialer for
-	//           KeyType=0x01 entries. Node still loads a persistent
-	//           secp256k1 identity key and publishes an ENR/enode URL.
-	//   "off" — "v3.0 posture, early-opt-in". Listener rejects
-	//           anything that isn't the v2 magic byte. Dialer refuses
-	//           to dial KeyType=0x01 entries. No persistent secp256k1
-	//           key is loaded for legacy-inbound purposes, no ENR is
-	//           published, no enode URL is emitted. Implies
-	//           ExperimentalV2Handshake=true (flag combo validated at
-	//           Start).
-	// Empty or invalid → "on".
-	LegacyHandshakeMode string `toml:",omitempty"`
-
-	// LegacyDiscoveryMode controls whether this node issues legacy
-	// discv4 FINDNODE lookups. PIP-0006 Phase 5 values:
-	//   "off"  — never issue, respond only. Safest for v2.0+-only
-	//            networks; the node still answers FINDNODE so v1.x
-	//            peers can reach it.
-	//   "auto" — default. Issue FINDNODE only if peer count is below
-	//            the low-peers threshold (8) AND the addrman has no
-	//            tcp_gossip sources available. Minimizes UDP traffic
-	//            during normal operation.
-	//   "on"   — always issue. v1.x compatibility mode.
+	// LegacyDiscoveryMode is the single operator knob controlling
+	// this node's compatibility with the v1.x transport stack. It
+	// drives three subsystems in lockstep because they all reflect
+	// the same v1.x identity model (persistent secp256k1, enode/ENR,
+	// legacy RLPx, UDP discovery):
 	//
-	// Empty string is treated as "auto". Invalid values log a warning
-	// and fall back to "auto".
+	//   "auto" (default) — discv4 UDP responder-only (answers inbound
+	//                      PING/FINDNODE but doesn't drive dialing);
+	//                      both legacy and v2 handshakes accepted;
+	//                      addrman is the primary dial source.
+	//   "on"             — discv4 fully active as a dial candidate
+	//                      source; both handshakes accepted. Matches
+	//                      pre-PIP-0006 operator expectations.
+	//   "off"            — no UDP socket; listener rejects legacy
+	//                      RLPx; dialer refuses KeyType=0x01
+	//                      (legacy-enode) addrman entries. Every
+	//                      peer session uses the v2 handshake. The
+	//                      enode URL emitted on startup is
+	//                      diagnostic-only.
+	//
+	// Empty / invalid values fall back to "auto" with a warning.
+	// The v2 handshake code path and addrman are always present —
+	// this flag only controls whether the legacy v1.x surface is
+	// exposed alongside them.
 	LegacyDiscoveryMode string `toml:",omitempty"`
 
-	// ExperimentalAddrMan enables the Bitcoin-style address manager
-	// alongside discv4. When true, Server wires an addrman instance
-	// into the dial path as an additional candidate source, tees
-	// discv4 / bootnode results into it, and persists addrbook.rlp on
-	// shutdown. Default off.
-	ExperimentalAddrMan bool `toml:",omitempty"`
-
 	// AddrBookPath is where the addrbook persists across restarts.
-	// Required when ExperimentalAddrMan is true unless AddrManager is
-	// supplied directly. Usually <datadir>/addrbook.rlp.
+	// Defaults to <datadir>/addrbook.rlp via the node layer. If
+	// empty, the addrman still runs in-memory but nothing is
+	// persisted on shutdown — useful for ephemeral tests.
 	AddrBookPath string `toml:",omitempty"`
 
 	// AddrManager, when non-nil, is an already-initialized address
@@ -292,6 +271,12 @@ const (
 	staticDialedConn
 	inboundConn
 	trustedConn
+	// v2DialedConn marks a connection initiated via Server.DialV2.
+	// pickHandshakeVariant reads this bit to route outbound v2
+	// dials — the legacy dial path never sets it, so existing
+	// code paths keep their original semantics after the Phase 2b
+	// changes.
+	v2DialedConn
 )
 
 // conn wraps a network connection with information gathered
@@ -546,27 +531,20 @@ func (srv *Server) Start() (err error) {
 		srv.log.Warn("P2P server will be useless, neither dialing nor listening")
 	}
 
-	// Validate the LegacyHandshake / ExperimentalV2Handshake combination
-	// up front so operators get a clear error rather than a silent
-	// failure mode. LegacyHandshake=off requires ExperimentalV2Handshake
-	// because otherwise the listener/dialer have no handshake variant
-	// to use for any peer.
-	if srv.LegacyHandshakeMode == "off" && !srv.ExperimentalV2Handshake {
-		return errors.New("--legacy-handshake=off requires --experimental-v2-handshake")
-	}
-
 	// static fields
 	if srv.PrivateKey == nil {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
 	}
-	if srv.legacyHandshakeMode() == legacyHandshakeOff {
-		// The secp256k1 key is still loaded (used by crypto.FromECDSAPub
-		// to derive a stable placeholder for LocalNode), but no peer
-		// exchange depends on it: legacy RLPx is refused at the
-		// listener, and every outbound dial uses v2. The enode URL
-		// produced by Started-P2P-networking logs in this mode is a
-		// diagnostic artifact, not a dialable identifier.
-		srv.log.Info("LegacyHandshakeMode=off: legacy RLPx refused, enode URL diagnostic-only")
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
+		// --legacy-discovery=off implies v2-only: legacy RLPx is
+		// refused at the listener, dialer refuses KeyType=0x01
+		// entries, and the enode URL emitted on startup becomes a
+		// diagnostic artifact rather than a dialable identifier.
+		// The secp256k1 private key is still loaded because
+		// LocalNode uses it to derive a stable placeholder for
+		// logs and metrics; no peer handshake consumes it in this
+		// mode.
+		srv.log.Info("--legacy-discovery=off: legacy RLPx refused, enode URL diagnostic-only")
 	}
 	if srv.newTransport == nil {
 		srv.newTransport = newRLPX
@@ -605,34 +583,34 @@ func (srv *Server) Start() (err error) {
 	return nil
 }
 
-// setupAddrMan initializes the optional address manager. No-op when
-// ExperimentalAddrMan is false. On true:
+// setupAddrMan initializes the address manager. Always runs — the
+// addrman is the v2 design and is not operator-optional anymore.
 //
-//   - If Config.AddrManager is supplied, adopt it directly (the caller
-//     has already done Load + subprotocol wiring).
-//   - Otherwise construct an empty addrman, Load addrbook.rlp, and
-//     ingest BootstrapNodes with source=dns_seed.
+// Flow:
+//
+//   - If Config.AddrManager is supplied (the node layer's typical path,
+//     wired before Start so parallax-disc/1 can register), adopt it.
+//   - Otherwise construct an empty addrman, Load addrbook.rlp if
+//     Config.AddrBookPath is non-empty (skipping persistence when it's
+//     empty — useful for ephemeral tests), and ingest BootstrapNodes
+//     with source=dns_seed.
 func (srv *Server) setupAddrMan() error {
-	if !srv.ExperimentalAddrMan {
-		return nil
-	}
 	var m *addrman.AddrMan
 	if srv.AddrManager != nil {
 		m = srv.AddrManager
 	} else {
-		if srv.AddrBookPath == "" {
-			return errors.New("ExperimentalAddrMan: AddrBookPath must be set when AddrManager is not supplied")
-		}
 		var err error
 		m, err = addrman.New()
 		if err != nil {
 			return fmt.Errorf("addrman: new: %w", err)
 		}
-		if err := m.Load(srv.AddrBookPath); err != nil {
-			if errors.Is(err, addrman.ErrFutureSchema) {
-				srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
-			} else {
-				srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+		if srv.AddrBookPath != "" {
+			if err := m.Load(srv.AddrBookPath); err != nil {
+				if errors.Is(err, addrman.ErrFutureSchema) {
+					srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
+				} else {
+					srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+				}
 			}
 		}
 		now := time.Now()
@@ -878,16 +856,14 @@ func (srv *Server) setupDialScheduler() {
 	if srv.addrbook != nil {
 		srv.addrbookIter = addrman.NewNodeIter(srv.addrbook, 250*time.Millisecond)
 		srv.discmix.AddSource(srv.addrbookIter)
-		// Phase 2b: if v2 handshake is enabled, spawn a dedicated
-		// goroutine that drains v2-native addrman entries and dials
-		// them directly via Server.DialV2. The enode.Iterator
-		// abstraction can't carry "this is a v2 target" cleanly, so
-		// v2 dialing uses a side channel.
-		if srv.ExperimentalV2Handshake {
-			srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
-			srv.loopWG.Add(1)
-			go srv.runV2Dialer()
-		}
+		// v2 dialer is always spawned — v2 handshake is not
+		// operator-optional. V2Iter yields KeyType=0x00 entries;
+		// when the addrbook has none (e.g., a freshly-installed
+		// v1.x-only network), the goroutine idles on its internal
+		// backoff.
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
+		srv.loopWG.Add(1)
+		go srv.runV2Dialer()
 	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
@@ -954,19 +930,15 @@ func (srv *Server) runV2Dialer() {
 // DialV2 opens a v2-handshake TCP connection to the supplied address
 // and hands the resulting peer to the normal run-loop checkpoints.
 // Called by the v2 dial goroutine and by admin_dialV2 for operator
-// testing. Returns an error if the handshake fails or the peer set
-// is full. No-op when ExperimentalV2Handshake is false.
+// testing.
 func (srv *Server) DialV2(addr *net.TCPAddr) error {
-	if !srv.ExperimentalV2Handshake {
-		return errors.New("ExperimentalV2Handshake is disabled")
-	}
 	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
 	if err != nil {
 		return fmt.Errorf("v2 dial %s: %w", addr, err)
 	}
-	// Flags: dynDialedConn so the run loop slots it correctly. No
-	// inboundConn bit — this is outbound.
-	return srv.SetupConn(fd, dynDialedConn, nil)
+	// Flags: dynDialedConn so the run loop slots it correctly, plus
+	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
+	return srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil)
 }
 
 // AddrBook returns the server's address manager, or nil when
@@ -1330,17 +1302,12 @@ func (srv *Server) listenLoop() {
 // or the byte doesn't match a supported variant under the current
 // configuration.
 //
-// Rules:
-//   - !ExperimentalV2Handshake: all inbound treated as legacy. No peek
-//     is performed (zero-byte overhead on hot path).
-//   - ExperimentalV2Handshake: peek. If v2, proceed. If legacy AND
-//     LegacyHandshakeMode=on, proceed. If legacy AND
-//     LegacyHandshakeMode=off, reject. If unknown byte, reject.
+// Rules (v2 handshake is always available in this build):
+//   - Peek the first byte.
+//   - 0xA0 → v2 handshake (magic consumed by the peek).
+//   - Legacy RLPx magic → accepted only when legacyHandshakeMode == on.
+//   - Anything else → reject.
 func (srv *Server) dispatchInbound(fd net.Conn) net.Conn {
-	if !srv.ExperimentalV2Handshake {
-		// Legacy-only posture: no peek needed.
-		return fd
-	}
 	// Give the peek a short deadline so a silent client doesn't
 	// burn a goroutine forever.
 	_ = fd.SetReadDeadline(time.Now().Add(handshakeTimeout))
@@ -1474,25 +1441,26 @@ func (srv *Server) pickHandshakeVariant(fd net.Conn, flags connFlag, dialDest *e
 		}
 		return handshakeVariantLegacy
 	}
-	// Outbound: decide by target.
-	if !srv.ExperimentalV2Handshake {
-		return handshakeVariantLegacy
-	}
-	// If legacy is turned off, every outbound must be v2. A caller
-	// that couldn't build a v2 target shouldn't have reached here.
-	if srv.legacyHandshakeMode() == legacyHandshakeOff {
+	// Outbound: the v2 dial path sets v2DialedConn explicitly, so we
+	// key off that flag rather than guessing from dialDest. This
+	// preserves the legacy outbound contract (dialDest==nil still
+	// means "unspecified target, use legacy"), which existing tests
+	// and callers rely on.
+	if flags&v2DialedConn != 0 {
 		return handshakeVariantV2
 	}
-	// v2-native dial targets are signalled by a nil dialDest (the v2
-	// dial path bypasses the enode.Node abstraction) OR by a dialDest
-	// whose Pubkey is the v2 marker — see addrman.ZeroPubkeyMarker.
-	if dialDest == nil || isV2Marker(dialDest.Pubkey()) {
+	// --legacy-discovery=off forbids legacy outbound: anything that
+	// reaches here without the v2-dial flag is a bug, but we route it
+	// to v2 rather than silently use the legacy path.
+	if srv.legacyHandshakeMode() == legacyHandshakeOff {
 		return handshakeVariantV2
 	}
 	return handshakeVariantLegacy
 }
 
-// legacyHandshakeMode is the parsed LegacyHandshakeMode.
+// legacyHandshakeMode is a derived view of LegacyDiscoveryMode — UDP
+// discovery and legacy RLPx handshake are the two halves of the same
+// v1.x identity model, so they share a single operator knob.
 type legacyHandshakeMode int
 
 const (
@@ -1501,27 +1469,17 @@ const (
 )
 
 func (srv *Server) legacyHandshakeMode() legacyHandshakeMode {
-	switch srv.LegacyHandshakeMode {
-	case "off":
+	if srv.legacyDiscoveryMode() == legacyDiscoveryOff {
 		return legacyHandshakeOff
-	case "", "on":
-		return legacyHandshakeOn
 	}
-	srv.log.Warn("unknown --legacy-handshake value; defaulting to on", "value", srv.LegacyHandshakeMode)
 	return legacyHandshakeOn
 }
 
-// isV2Marker reports whether a decoded secp256k1 pubkey matches the
-// "this is a v2-native dial target" sentinel. The addrman package sets
-// the marker for entries with KeyType=0x00 when yielding them through
-// the enode iterator.
-func isV2Marker(pub *ecdsa.PublicKey) bool {
-	if pub == nil {
-		return true
-	}
-	// All-zero X with all-zero Y = not a real secp256k1 point.
-	return (pub.X == nil || pub.X.Sign() == 0) && (pub.Y == nil || pub.Y.Sign() == 0)
-}
+// isV2Marker is retained as a no-op for backwards compatibility with
+// call sites that still reference it; in the current implementation
+// v2 dials are signalled via the v2DialedConn flag on the conn and
+// this predicate is never consulted.
+func isV2Marker(pub *ecdsa.PublicKey) bool { _ = pub; return false }
 
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) error {
 	// Prevent leftover pending conns from entering the handshake.

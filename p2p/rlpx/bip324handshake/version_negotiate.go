@@ -54,30 +54,17 @@ func PeekVersion(conn net.Conn) (Variant, *PeekedConn, error) {
 	if _, err := io.ReadFull(conn, b[:]); err != nil {
 		return VariantUnknown, &PeekedConn{Conn: conn}, err
 	}
-	switch {
-	case b[0] == VersionMagic:
+	if b[0] == VersionMagic {
 		// v2: byte is version tag, not payload. Consume it.
 		return VariantV2, &PeekedConn{Conn: conn}, nil
-	case isLegacyRLPxFirstByte(b[0]):
-		// Legacy: byte is part of the ECIES auth packet. Replay.
-		return VariantLegacy, &PeekedConn{Conn: conn, prefix: []byte{b[0]}}, nil
 	}
-	return VariantUnknown, &PeekedConn{Conn: conn, prefix: []byte{b[0]}}, nil
-}
-
-// isLegacyRLPxFirstByte reports whether b is a plausible first byte of
-// a legacy RLPx v4 ECIES auth packet. The packet is RLP-encoded, so
-// the first byte is an RLP list-length prefix. Legacy auth packets
-// fall into the 307-byte range (v4 plaintext after encryption headroom),
-// which makes the first byte begin with 0xf9 followed by a two-byte
-// length. The bytes 0xf9..0xfa cover the relevant size range.
-//
-// VersionMagic (0xA0) is outside this range, so the two are disjoint.
-// If ever a future legacy format lands in the 0xA0 range, the
-// dispatcher must be revisited before the conflicting byte is
-// accepted.
-func isLegacyRLPxFirstByte(b byte) bool {
-	return b == 0xf8 || b == 0xf9 || b == 0xfa
+	// Legacy: RLPx v4 auth packets open with a 2-byte big-endian
+	// length prefix (typically 0x01xx for a ~300-byte packet). Any
+	// byte that isn't the v2 magic is treated as a legacy attempt;
+	// malformed or junk inputs get caught by the legacy handshake
+	// failing a few bytes later. The byte is replayed so the legacy
+	// path sees the original wire stream.
+	return VariantLegacy, &PeekedConn{Conn: conn, prefix: []byte{b[0]}}, nil
 }
 
 // PeekedConn is a net.Conn view that replays a small buffer of bytes

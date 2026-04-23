@@ -179,7 +179,7 @@ func TestV2TransportReadWriteRoundTrip(t *testing.T) {
 // classifies peeked-v2 and peeked-legacy inbound connections, and
 // defaults to legacy when no peek has happened.
 func TestPickHandshakeVariantInbound(t *testing.T) {
-	srv := &Server{Config: Config{ExperimentalV2Handshake: true}}
+	srv := &Server{}
 
 	// Plain net.Conn (no peek wrapper) → legacy.
 	a, _ := net.Pipe()
@@ -205,38 +205,37 @@ func TestPickHandshakeVariantInbound(t *testing.T) {
 	}
 }
 
-// TestLegacyHandshakeOffRefusesInbound — dispatchInbound rejects
-// legacy-magic-first-byte connections when LegacyHandshakeMode=off.
-func TestLegacyHandshakeOffRefusesInbound(t *testing.T) {
+// TestLegacyDiscoveryOffRefusesInbound — dispatchInbound rejects
+// legacy-magic-first-byte connections when LegacyDiscoveryMode=off.
+// (Handshake refusal is derived from the discovery mode in the
+// collapsed-flag world; UDP and legacy RLPx share one knob.)
+func TestLegacyDiscoveryOffRefusesInbound(t *testing.T) {
 	srv := &Server{
 		Config: Config{
-			ExperimentalV2Handshake: true,
-			LegacyHandshakeMode:     "off",
-			Logger:                  nopLogger,
+			LegacyDiscoveryMode: "off",
+			Logger:              nopLogger,
 		},
 	}
 	srv.log = srv.Config.Logger
 
 	a, b := net.Pipe()
 	defer a.Close()
-	// Write a legacy-shaped first byte.
 	go func() {
 		_, _ = a.Write([]byte{0xf9, 0x01, 0x32})
 	}()
 	wrapped := srv.dispatchInbound(b)
 	if wrapped != nil {
-		t.Fatalf("dispatchInbound should have refused legacy under LegacyHandshakeMode=off; got %v", wrapped)
+		t.Fatalf("dispatchInbound should have refused legacy under legacy-discovery=off; got %v", wrapped)
 	}
 }
 
-// TestLegacyHandshakeOnAcceptsInbound — dispatchInbound preserves
-// legacy inbound when LegacyHandshakeMode=on (or empty).
-func TestLegacyHandshakeOnAcceptsInbound(t *testing.T) {
+// TestLegacyDiscoveryAutoAcceptsInbound — dispatchInbound preserves
+// legacy inbound under the default auto/on modes.
+func TestLegacyDiscoveryAutoAcceptsInbound(t *testing.T) {
 	srv := &Server{
 		Config: Config{
-			ExperimentalV2Handshake: true,
-			LegacyHandshakeMode:     "on",
-			Logger:                  nopLogger,
+			LegacyDiscoveryMode: "auto",
+			Logger:              nopLogger,
 		},
 	}
 	srv.log = srv.Config.Logger
@@ -248,6 +247,6 @@ func TestLegacyHandshakeOnAcceptsInbound(t *testing.T) {
 	}()
 	wrapped := srv.dispatchInbound(b)
 	if wrapped == nil {
-		t.Fatal("dispatchInbound should accept legacy under LegacyHandshakeMode=on")
+		t.Fatal("dispatchInbound should accept legacy under legacy-discovery=auto")
 	}
 }
