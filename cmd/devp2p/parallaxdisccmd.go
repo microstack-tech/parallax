@@ -38,27 +38,29 @@ import (
 	"gopkg.in/urfave/cli.v1"
 )
 
-// parallax-disc crawl sits on top of a single probeOne primitive that
-// speaks parallax-disc/1 over either v2 (BIP324) or legacy RLPx,
-// branching on the seed's KeyType. The seed format is auto-detected:
-// `ip:port` → v2 dial (KeyType=0x00); `enode://...` → legacy dial
-// (KeyType=0x01) — matching admin_addPeer's convention.
+// parallax-disc {crawl,probe} sit on top of a single probeOne primitive
+// that speaks parallax-disc/1 over either v2 (BIP324) or legacy RLPx,
+// branching on the seed's KeyType. crawl is the multi-hop stateful
+// walker (see parallaxdisc_walk.go); probe is a single-shot diagnostic.
+// The seed format is auto-detected: `ip:port` → v2 dial (KeyType=0x00);
+// `enode://...` → legacy dial (KeyType=0x01) — matching admin_addPeer.
 
 var (
 	parallaxDiscCommand = cli.Command{
 		Name:  "parallax-disc",
-		Usage: "Parallax PIP-0006 discovery tools",
+		Usage: "Parallax PIP-0006 discovery tools (crawl, probe)",
 		Subcommands: []cli.Command{
-			parallaxDiscCrawlCommand,
+			parallaxDiscCrawlerCommand,
+			parallaxDiscProbeCommand,
 		},
 	}
 
-	parallaxDiscCrawlCommand = cli.Command{
-		Name: "crawl",
-		Usage: "Probe a seed node over parallax-disc/1 and emit the returned Peers sample as JSON. " +
-			"Accepts ip:port (v2) or enode://... (legacy).",
+	parallaxDiscProbeCommand = cli.Command{
+		Name: "probe",
+		Usage: "Single-shot probe of one node over parallax-disc/1 — emits the returned Peers " +
+			"sample as JSON. Accepts ip:port (v2) or enode://... (legacy).",
 		ArgsUsage: "<addr>",
-		Action:    parallaxDiscCrawl,
+		Action:    parallaxDiscProbe,
 	}
 )
 
@@ -80,28 +82,39 @@ type crawlEntry struct {
 	LastSeen uint64 `json:"lastSeen"`
 }
 
-// CrawlNode identifies one peer the crawler probes. It carries enough
-// to dispatch the right handshake variant: KeyType=0x00 → v2 (BIP324),
-// KeyType=0x01 → legacy RLPx with NodeID-derived pubkey.
+// CrawlNode identifies one peer the crawler probes and carries the
+// per-node statistics tracked across runs. The identity fields
+// (NetworkID, IP, TCPPort, KeyType, NodeID) are enough to dispatch the
+// right handshake variant: KeyType=0x00 → v2 (BIP324), KeyType=0x01 →
+// legacy RLPx with NodeID-derived pubkey. The stats are only populated
+// by the walker; single-shot probes leave them zero.
 type CrawlNode struct {
-	NetworkID uint8  // BIP155 tag (only IPv4/IPv6 are dialable)
-	IP        string // text form ("1.2.3.4" / "2001:db8::1")
-	TCPPort   uint16
-	KeyType   uint8
-	NodeID    string // hex, 64 bytes when KeyType=0x01; empty otherwise
+	NetworkID uint8  `json:"network"`           // BIP155 tag (only IPv4/IPv6 are dialable)
+	IP        string `json:"ip"`                // text form ("1.2.3.4" / "2001:db8::1")
+	TCPPort   uint16 `json:"tcpPort"`
+	KeyType   uint8  `json:"keyType"`
+	NodeID    string `json:"nodeId,omitempty"`  // hex, 64 bytes when KeyType=0x01; empty otherwise
+
+	FirstSeen    time.Time `json:"firstSeen,omitempty"`
+	LastSuccess  time.Time `json:"lastSuccess,omitempty"`
+	LastAttempt  time.Time `json:"lastAttempt,omitempty"`
+	SuccessCount uint64    `json:"successCount,omitempty"`
+	FailCount    uint64    `json:"failCount,omitempty"`
+	LastError    string    `json:"lastError,omitempty"`
+	Capabilities []string  `json:"capabilities,omitempty"`
 }
 
 func (n *CrawlNode) tcpAddr() string {
 	return net.JoinHostPort(n.IP, strconv.Itoa(int(n.TCPPort)))
 }
 
-// parallaxDiscCrawl is the `parallax-disc crawl <addr>` action: dial
+// parallaxDiscProbe is the `parallax-disc probe <addr>` action: dial
 // once, ask GetPeers, write the response as JSON. <addr> is either
 // `ip:port` (v2 dial, KeyType=0x00) or `enode://...` (legacy dial,
 // KeyType=0x01) — same convention as admin_addPeer.
-func parallaxDiscCrawl(ctx *cli.Context) error {
+func parallaxDiscProbe(ctx *cli.Context) error {
 	if ctx.NArg() != 1 {
-		return fmt.Errorf("usage: parallax-disc crawl <addr>")
+		return fmt.Errorf("usage: parallax-disc probe <addr>")
 	}
 	node, err := parseSeed(ctx.Args().First())
 	if err != nil {
