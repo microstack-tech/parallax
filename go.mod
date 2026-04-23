@@ -24,8 +24,8 @@ require (
 	github.com/fjl/gencodec v0.0.0-20220412091415-8bb9e558978c
 	github.com/gballet/go-libpcsclite v0.0.0-20190607065134-2772fd86a8ff
 	github.com/go-stack/stack v1.8.0
-	github.com/golang-jwt/jwt/v4 v4.3.0
-	github.com/golang/protobuf v1.4.3
+	github.com/golang-jwt/jwt/v4 v4.5.2
+	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/google/gofuzz v1.1.1-0.20200604201612-c04b05f3adfa
 	github.com/google/uuid v1.6.0
@@ -55,13 +55,13 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/tyler-smith/go-bip39 v1.0.1-0.20181017060643-dbb3b84ba2ef
-	golang.org/x/crypto v0.33.0
+	golang.org/x/crypto v0.45.0
 	golang.org/x/mobile v0.0.0-20190719004257-d2bd2a29d028
-	golang.org/x/sync v0.11.0
-	golang.org/x/sys v0.30.0
-	golang.org/x/text v0.22.0
+	golang.org/x/sync v0.18.0
+	golang.org/x/sys v0.38.0
+	golang.org/x/text v0.31.0
 	golang.org/x/time v0.8.0
-	golang.org/x/tools v0.30.0
+	golang.org/x/tools v0.38.0
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce
 	gopkg.in/urfave/cli.v1 v1.20.0
 )
@@ -95,9 +95,9 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/tklauser/go-sysconf v0.3.5 // indirect
 	github.com/tklauser/numcpus v0.2.2 // indirect
-	golang.org/x/mod v0.23.0 // indirect
-	golang.org/x/net v0.35.0 // indirect
-	google.golang.org/protobuf v1.23.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
