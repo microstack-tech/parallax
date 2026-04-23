@@ -648,6 +648,10 @@ var (
 		Name:  "discovery.dns",
 		Usage: "Sets DNS discovery entry points (use \"\" to disable DNS)",
 	}
+	ExperimentalAddrmanFlag = cli.BoolFlag{
+		Name:  "experimental-addrman",
+		Usage: "Enable the Bitcoin Core-style address manager alongside discv4 (PIP-0006 Phase 3). Persists <datadir>/addrbook.rlp across restarts and feeds the dialer from a stochastic peer table. Experimental; will become the default in a later release.",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -1127,6 +1131,12 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.GlobalIsSet(DiscoveryV5Flag.Name) {
 		cfg.DiscoveryV5 = ctx.GlobalBool(DiscoveryV5Flag.Name)
 	}
+	if ctx.GlobalBool(ExperimentalAddrmanFlag.Name) {
+		cfg.ExperimentalAddrMan = true
+		// AddrBookPath is filled in by SetNodeConfig once DataDir is
+		// known — SetP2PConfig runs before SetNodeConfig's datadir
+		// hookup, so we defer the path join to the caller.
+	}
 
 	if netrestrict := ctx.GlobalString(NetrestrictFlag.Name); netrestrict != "" {
 		list, err := netutil.ParseNetlist(netrestrict)
@@ -1173,6 +1183,17 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setNodeUserIdent(ctx, cfg)
 	setDataDir(ctx, cfg)
 	setSmartCard(ctx, cfg)
+
+	// Addrman requires a datadir-relative path. Fill it in now that
+	// cfg.DataDir is known; SetP2PConfig above set the enable bit.
+	if cfg.P2P.ExperimentalAddrMan && cfg.P2P.AddrBookPath == "" {
+		if cfg.DataDir == "" {
+			logging.Warn("--experimental-addrman requires a non-empty --datadir; addrman disabled")
+			cfg.P2P.ExperimentalAddrMan = false
+		} else {
+			cfg.P2P.AddrBookPath = filepath.Join(cfg.DataDir, "addrbook.rlp")
+		}
+	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {
 		cfg.JWTSecret = ctx.GlobalString(JWTSecretFlag.Name)

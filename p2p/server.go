@@ -31,6 +31,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -157,6 +158,19 @@ type Config struct {
 	// discovery routing table during revalidation.
 	NodeFilter func(*enode.Node) bool `toml:"-"`
 
+	// ExperimentalAddrMan enables the Bitcoin-style address manager
+	// alongside discv4. When true, Server wires an addrman instance
+	// into the dial path as an additional candidate source, tees
+	// discv4 / bootnode results into it, and persists addrbook.rlp on
+	// shutdown. Default off — PIP-0006 Phase 3 lands this behind a
+	// flag, Phase 5 flips the default.
+	ExperimentalAddrMan bool `toml:",omitempty"`
+
+	// AddrBookPath is where the addrbook persists across restarts.
+	// Required when ExperimentalAddrMan is true. Usually
+	// <datadir>/addrbook.rlp.
+	AddrBookPath string `toml:",omitempty"`
+
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger logging.Logger `toml:",omitempty"`
 
@@ -189,6 +203,13 @@ type Server struct {
 	DiscV5    *discover.UDPv5
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
+
+	// addrbook is the PIP-0006 address manager. Populated only when
+	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
+	// additional FairMix source and receives discv4/bootnode entries
+	// via teeIter wrappers.
+	addrbook     *addrman.AddrMan
+	addrbookIter *addrman.NodeIter
 
 	// Channels into the run loop.
 	quit                    chan struct{}
@@ -405,9 +426,23 @@ func (srv *Server) Stop() {
 		// this unblocks listener Accept
 		srv.listener.Close()
 	}
+	if srv.addrbookIter != nil {
+		srv.addrbookIter.Close()
+	}
 	close(srv.quit)
 	srv.lock.Unlock()
 	srv.loopWG.Wait()
+
+	// Persist addrbook on shutdown. Done after loopWG so no inflight
+	// Good/Attempt/Add calls race the Save. Failures are logged, not
+	// propagated — a save error on shutdown must not crash the node.
+	if srv.addrbook != nil && srv.AddrBookPath != "" {
+		if err := srv.addrbook.Save(srv.AddrBookPath); err != nil {
+			srv.log.Warn("addrbook save failed on shutdown", "path", srv.AddrBookPath, "err", err)
+		} else {
+			srv.log.Info("addrbook saved", "path", srv.AddrBookPath, "entries", srv.addrbook.Size(nil, nil))
+		}
+	}
 }
 
 // sharedUDPConn implements a shared connection. Write sends messages to the underlying connection while read returns
@@ -483,6 +518,9 @@ func (srv *Server) Start() (err error) {
 			return err
 		}
 	}
+	if err := srv.setupAddrMan(); err != nil {
+		return err
+	}
 	if err := srv.setupDiscovery(); err != nil {
 		return err
 	}
@@ -490,6 +528,57 @@ func (srv *Server) Start() (err error) {
 
 	srv.loopWG.Add(1)
 	go srv.run()
+	return nil
+}
+
+// setupAddrMan initializes the optional PIP-0006 address manager. No-op
+// when ExperimentalAddrMan is false; on true it loads addrbook.rlp (or
+// creates a fresh one) and ingests BootstrapNodes with source=dns_seed.
+// Discovery results are teed in later by setupDiscovery.
+func (srv *Server) setupAddrMan() error {
+	if !srv.ExperimentalAddrMan {
+		return nil
+	}
+	if srv.AddrBookPath == "" {
+		return errors.New("ExperimentalAddrMan: AddrBookPath must be set")
+	}
+	m, err := addrman.New()
+	if err != nil {
+		return fmt.Errorf("addrman: new: %w", err)
+	}
+	if err := m.Load(srv.AddrBookPath); err != nil {
+		if errors.Is(err, addrman.ErrFutureSchema) {
+			srv.log.Warn("addrbook schema is from a newer binary; proceeding with empty addrbook", "path", srv.AddrBookPath, "err", err)
+		} else {
+			srv.log.Warn("failed to load addrbook; proceeding empty", "path", srv.AddrBookPath, "err", err)
+		}
+	}
+	// Ingest bootnodes as one-shot dns_seed (Bitcoin `-seednode`
+	// equivalent). Manual-pinned peers from `addnode` are a separate
+	// source and land in Phase 6.
+	now := time.Now()
+	for _, n := range srv.BootstrapNodes {
+		addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
+	}
+	srv.addrbook = m
+	srv.log.Info("addrman enabled", "path", srv.AddrBookPath, "entries", m.Size(nil, nil))
+
+	// Periodic metrics refresh. Cheap — Size() is O(1) and sourceCounts
+	// is a small map. Tied to quit so Stop() tears it down cleanly.
+	srv.loopWG.Add(1)
+	go func() {
+		defer srv.loopWG.Done()
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-srv.quit:
+				return
+			case <-tick.C:
+				srv.addrbook.RefreshMetrics()
+			}
+		}
+	}()
 	return nil
 }
 
@@ -614,7 +703,14 @@ func (srv *Server) setupDiscovery() error {
 			return err
 		}
 		srv.ntab = ntab
-		srv.discmix.AddSource(ntab.RandomNodes())
+		src := enode.Iterator(ntab.RandomNodes())
+		if srv.addrbook != nil {
+			// Tee discv4 discoveries into addrman with
+			// source=legacy_udp. Original node passes through to
+			// the dialer unchanged.
+			src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
+		}
+		srv.discmix.AddSource(src)
 	}
 
 	// Discovery V5
@@ -653,6 +749,14 @@ func (srv *Server) setupDialScheduler() {
 	}
 	if config.dialer == nil {
 		config.dialer = tcpDialer{&net.Dialer{Timeout: defaultDialTimeout}}
+	}
+	// When addrman is enabled, add its NodeIter as an additional FairMix
+	// source. discmix hands the dialer candidates round-robin across
+	// sources, so this lets addrman feed dials without displacing
+	// discv4 during the transition window.
+	if srv.addrbook != nil {
+		srv.addrbookIter = addrman.NewNodeIter(srv.addrbook, 250*time.Millisecond)
+		srv.discmix.AddSource(srv.addrbookIter)
 	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {

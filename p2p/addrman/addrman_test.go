@@ -24,7 +24,7 @@ func TestAddNewEntryLandsInNewTable(t *testing.T) {
 	m := newTestMan(t)
 	addr := addr4(8, 8, 8, 8, 30303)
 	src := addr4(1, 2, 3, 4, 30303)
-	if !m.AddOne(addr, time.Now(), src, SourceTCPGossip, 0) {
+	if !m.AddOne(addr, 0, nil, time.Now(), src, SourceTCPGossip, 0) {
 		t.Fatal("AddOne returned false on fresh entry")
 	}
 	if got, want := m.Size(nil, nil), 1; got != want {
@@ -50,7 +50,7 @@ func TestAddNewEntryLandsInNewTable(t *testing.T) {
 func TestAddRejectsUnroutable(t *testing.T) {
 	m := newTestMan(t)
 	src := addr4(1, 2, 3, 4, 30303)
-	if m.AddOne(addr4(10, 0, 0, 1, 30303), time.Now(), src, SourceTCPGossip, 0) {
+	if m.AddOne(addr4(10, 0, 0, 1, 30303), 0, nil, time.Now(), src, SourceTCPGossip, 0) {
 		t.Fatal("unroutable address was accepted")
 	}
 	if m.Size(nil, nil) != 0 {
@@ -63,7 +63,7 @@ func TestGoodPromotesNewToTried(t *testing.T) {
 	m := newTestMan(t)
 	addr := addr4(9, 9, 9, 9, 30303)
 	src := addr4(2, 3, 4, 5, 30303)
-	m.AddOne(addr, time.Now(), src, SourceTCPGossip, 0)
+	m.AddOne(addr, 0, nil, time.Now(), src, SourceTCPGossip, 0)
 	if !m.Good(addr, time.Now()) {
 		t.Fatal("Good returned false")
 	}
@@ -99,7 +99,7 @@ func TestAttemptIncrementsCounter(t *testing.T) {
 	m := newTestMan(t)
 	addr := addr4(5, 6, 7, 8, 30303)
 	src := addr4(2, 3, 4, 5, 30303)
-	m.AddOne(addr, time.Now(), src, SourceTCPGossip, 0)
+	m.AddOne(addr, 0, nil, time.Now(), src, SourceTCPGossip, 0)
 	m.Good(addr, time.Now())
 	// Attempt counter should be 0 right after Good.
 	if info := findForTest(m, addr); info == nil || info.Attempts != 0 {
@@ -137,7 +137,7 @@ func TestSelectReturnsStoredAddress(t *testing.T) {
 	m := newTestMan(t)
 	src := addr4(2, 3, 4, 5, 30303)
 	for i := 0; i < 64; i++ {
-		m.AddOne(addr4(byte(i|0x80), byte(i), 1, 1, 30303), time.Now(), src, SourceTCPGossip, 0)
+		m.AddOne(addr4(byte(i|0x80), byte(i), 1, 1, 30303), 0, nil, time.Now(), src, SourceTCPGossip, 0)
 	}
 	if got := m.Size(nil, nil); got == 0 {
 		t.Fatal("table empty after population")
@@ -170,7 +170,7 @@ func TestGetAddrRespectsLimits(t *testing.T) {
 	src := addr4(2, 3, 4, 5, 30303)
 	now := time.Now()
 	for i := 0; i < 50; i++ {
-		m.AddOne(addr4(byte(0x80|i), 1, 2, 3, 30303), now, src, SourceTCPGossip, 0)
+		m.AddOne(addr4(byte(0x80|i), 1, 2, 3, 30303), 0, nil, now, src, SourceTCPGossip, 0)
 	}
 	out := m.GetAddr(10, 0, nil, true)
 	if len(out) > 10 {
@@ -190,7 +190,7 @@ func TestRoundTripSerialization(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	// Seed a mix of new and tried entries.
 	for i := 0; i < 30; i++ {
-		m.AddOne(addr4(byte(0x80|i), byte(i), 2, 3, 30303), now, src, SourceTCPGossip, 0)
+		m.AddOne(addr4(byte(0x80|i), byte(i), 2, 3, 30303), 0, nil, now, src, SourceTCPGossip, 0)
 	}
 	for i := 0; i < 5; i++ {
 		addr := addr4(byte(0x80|i), byte(i), 2, 3, 30303)

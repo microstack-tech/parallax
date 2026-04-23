@@ -27,7 +27,7 @@ func BenchmarkSelect10k(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		m.AddOne(addr, now, src, SourceTCPGossip, 0)
+		m.AddOne(addr, 0, nil, now, src, SourceTCPGossip, 0)
 	}
 	// Promote ~500 entries into tried so Select actually has tried
 	// table content to walk.
@@ -66,6 +66,6 @@ func BenchmarkAdd(b *testing.B) {
 			byte((i >> 24) & 0xFF),
 		}
 		addr, _ := NewNetAddr(NetIPv4, ip[:], 30303)
-		m.AddOne(addr, time.Now(), src, SourceTCPGossip, 0)
+		m.AddOne(addr, 0, nil, time.Now(), src, SourceTCPGossip, 0)
 	}
 }

@@ -73,6 +73,9 @@ type bodyV1 struct {
 // Unix seconds are stored unsigned because RLP's int support is uint-only
 // and the addrman never produces negative timestamps (anything before 1970
 // is clamped to the epoch in addSingleLocked).
+//
+// KeyType+NodeID carry the identity-key required to dial legacy (v1.x)
+// peers via RLPx auth. Empty NodeID for KeyType=0x00 (v2.0-native).
 type entryV1 struct {
 	Network          uint8
 	Addr             []byte
@@ -85,6 +88,8 @@ type entryV1 struct {
 	LastSuccess      uint64
 	LastCountAttempt uint64
 	Attempts         uint32
+	KeyType          uint8
+	NodeID           []byte
 }
 
 type bucketAssignmentV1 struct {
@@ -388,6 +393,8 @@ func toEntryV1(info *AddrInfo) entryV1 {
 		LastSuccess:      timeToUnix(info.LastSuccess),
 		LastCountAttempt: timeToUnix(info.LastCountAttempt),
 		Attempts:         uint32(info.Attempts),
+		KeyType:          info.KeyType,
+		NodeID:           append([]byte(nil), info.NodeID...),
 	}
 }
 
@@ -416,6 +423,20 @@ func fromEntryV1(e entryV1) (*AddrInfo, bool) {
 		// elevated to manual/self-advertised.
 		tag = SourceDNSSeed
 	}
+	// Refuse entries whose KeyType/NodeID length disagree — would crash
+	// at dial time.
+	switch e.KeyType {
+	case 0x00:
+		if len(e.NodeID) != 0 {
+			return nil, false
+		}
+	case 0x01:
+		if len(e.NodeID) != 64 {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
 	return &AddrInfo{
 		Addr:             addr,
 		LastSeen:         unixToTime(e.LastSeen),
@@ -425,6 +446,8 @@ func fromEntryV1(e entryV1) (*AddrInfo, bool) {
 		LastSuccess:      unixToTime(e.LastSuccess),
 		LastCountAttempt: unixToTime(e.LastCountAttempt),
 		Attempts:         int(e.Attempts),
+		KeyType:          e.KeyType,
+		NodeID:           append([]byte(nil), e.NodeID...),
 	}, true
 }
 

@@ -28,6 +28,22 @@ type AddrInfo struct {
 	// priority and Select() weighting. Bucket math does not consult it.
 	SourceTag Source
 
+	// KeyType tags the identity-key scheme for this entry, matching the
+	// parallax-disc/1 wire format:
+	//   0x00 (KeyTypeNone): v2.0-native; NodeID MUST be empty; dialed
+	//        on IP:port via the BIP324-style handshake (Phase 2b).
+	//   0x01 (KeyTypeSecp256k1): legacy enode; NodeID is 64 bytes
+	//        (x||y); dialed via legacy RLPx.
+	// Both KeyType and NodeID are removed at v3.0 alongside the legacy
+	// handshake path.
+	KeyType uint8
+
+	// NodeID is the identity-key bytes — length determined by KeyType.
+	// Empty for KeyType=0x00. For KeyType=0x01, exactly 64 bytes
+	// (uncompressed secp256k1 pubkey without the 0x04 prefix, matching
+	// the discv4 / enode encoding).
+	NodeID []byte
+
 	// LastTry is the last connect attempt time.
 	LastTry time.Time
 	// LastSuccess is the last successful connect time.

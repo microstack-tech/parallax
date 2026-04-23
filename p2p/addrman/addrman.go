@@ -178,43 +178,47 @@ func (m *AddrMan) sizeLocked(net *NetID, inNew *bool) int {
 	return c.tried
 }
 
-// Add inserts addrs, attributing them to source for bucket selection and
-// sourceTag for later eviction priority. timePenalty is applied to each
-// addr's LastSeen. Returns true if at least one address was newly added or
-// gained an additional bucket reference.
+// Entry is the ingest shape — a (NetAddr, identity-key) pair used by Add.
+// NodeID is optional: zero-length for v2.0-native peers (KeyType=0x00),
+// exactly 64 bytes for legacy enode peers (KeyType=0x01).
+type Entry struct {
+	Addr     NetAddr
+	KeyType  uint8
+	NodeID   []byte
+	LastSeen time.Time
+}
+
+// Add inserts entries, attributing them to source for bucket selection
+// and sourceTag for later eviction priority. timePenalty is applied to
+// each entry's LastSeen. Returns true if at least one entry was newly
+// added or gained an additional bucket reference.
 //
 // Mirrors AddrMan::Add (src/addrman.cpp:1177) plus AddSingle
 // (src/addrman.cpp:550-624).
-func (m *AddrMan) Add(addrs []NetAddr, addrTimes []time.Time, source NetAddr, sourceTag Source, timePenalty time.Duration) bool {
-	if len(addrs) == 0 {
+func (m *AddrMan) Add(entries []Entry, source NetAddr, sourceTag Source, timePenalty time.Duration) bool {
+	if len(entries) == 0 {
 		return false
-	}
-	if len(addrTimes) != 0 && len(addrTimes) != len(addrs) {
-		// Caller error — treat as empty LastSeen to avoid a panic.
-		addrTimes = nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	added := 0
 	now := time.Now()
-	for i, a := range addrs {
-		var t time.Time
-		if addrTimes != nil {
-			t = addrTimes[i]
-		} else {
+	for _, e := range entries {
+		t := e.LastSeen
+		if t.IsZero() {
 			t = now
 		}
-		if m.addSingleLocked(a, t, source, sourceTag, timePenalty, now) {
+		if m.addSingleLocked(e, t, source, sourceTag, timePenalty, now) {
 			added++
 		}
 	}
 	return added > 0
 }
 
-// AddOne is a convenience helper for single-address ingest.
-func (m *AddrMan) AddOne(addr NetAddr, lastSeen time.Time, source NetAddr, sourceTag Source, timePenalty time.Duration) bool {
-	return m.Add([]NetAddr{addr}, []time.Time{lastSeen}, source, sourceTag, timePenalty)
+// AddOne is a convenience helper for single-entry ingest.
+func (m *AddrMan) AddOne(addr NetAddr, keyType uint8, nodeID []byte, lastSeen time.Time, source NetAddr, sourceTag Source, timePenalty time.Duration) bool {
+	return m.Add([]Entry{{Addr: addr, KeyType: keyType, NodeID: nodeID, LastSeen: lastSeen}}, source, sourceTag, timePenalty)
 }
 
 // addSingleLocked mirrors AddrManImpl::AddSingle (src/addrman.cpp:550-624).
@@ -222,8 +226,26 @@ func (m *AddrMan) AddOne(addr NetAddr, lastSeen time.Time, source NetAddr, sourc
 // The stochastic-test branch ("2^N times harder to increase refcount") is
 // critical — without it, a single address source can push an address into
 // many new buckets and skew Select() toward it.
-func (m *AddrMan) addSingleLocked(addr NetAddr, lastSeen time.Time, source NetAddr, sourceTag Source, timePenalty time.Duration, now time.Time) bool {
+func (m *AddrMan) addSingleLocked(e Entry, lastSeen time.Time, source NetAddr, sourceTag Source, timePenalty time.Duration, now time.Time) bool {
+	addr := e.Addr
 	if !addr.Valid() {
+		return false
+	}
+	// Length-check NodeID against declared KeyType. A mismatch would
+	// crash later at dial time.
+	switch e.KeyType {
+	case 0x00:
+		if len(e.NodeID) != 0 {
+			return false
+		}
+	case 0x01:
+		if len(e.NodeID) != 64 {
+			return false
+		}
+	default:
+		// Unknown KeyType — refuse ingest. This is stricter than
+		// the wire-format skip rule (forward compat in disc/1)
+		// because addrman only stores entries it can dial.
 		return false
 	}
 
@@ -269,6 +291,10 @@ func (m *AddrMan) addSingleLocked(addr NetAddr, lastSeen time.Time, source NetAd
 		}
 	} else {
 		id, pinfo = m.createLocked(addr, source, sourceTag)
+		pinfo.KeyType = e.KeyType
+		if len(e.NodeID) > 0 {
+			pinfo.NodeID = append([]byte(nil), e.NodeID...)
+		}
 		penalized := lastSeen.Add(-timePenalty)
 		if penalized.Before(time.Unix(0, 0)) {
 			penalized = time.Unix(0, 0)
