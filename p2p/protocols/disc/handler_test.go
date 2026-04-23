@@ -35,6 +35,7 @@ type testBackend struct {
 	gotAddrs []YourAddr
 	gotPeers [][]PeerEntry
 	obsOK    bool
+	self     *PeerEntry // if non-nil, SelfEntry returns (*self, true)
 }
 
 func (b *testBackend) Log() logging.Logger { return logging.New("mod", "disc-test") }
@@ -69,11 +70,25 @@ func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 	return b.sample
 }
 
+func (b *testBackend) SelfEntry(_ uint16) (PeerEntry, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.self == nil {
+		return PeerEntry{}, false
+	}
+	return *b.self, true
+}
+
 // runHandler spins up Run on one side of a MsgPipe and returns the other
 // end so the test can send messages. The session loop returns when the
 // app side closes the pipe.
 func runHandler(t *testing.T, backend Backend) (app *p2p.MsgPipeRW, done <-chan error) {
 	t.Helper()
+	// Disable Poisson jitter for the duration of the test — a 2s
+	// mean per response wrecks suite runtime.
+	prev := peersResponseJitterMean
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prev) })
 	appRW, netRW := p2p.MsgPipe()
 	var id enode.ID
 	_, _ = rand.Read(id[:])
@@ -116,7 +131,7 @@ func TestHandlerAcceptsValidPeersMessage(t *testing.T) {
 	app, done := runHandler(t, b)
 
 	// Drain our outgoing YourAddr so the pipe isn't backpressured.
-	drainOne(t, app)
+	drainGreeting(t, app)
 
 	in := Peers{Entries: []PeerEntry{
 		{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 30303, KeyType: KeyTypeNone},
@@ -146,7 +161,7 @@ func TestHandlerAcceptsValidPeersMessage(t *testing.T) {
 func TestHandlerRejectsOversizedPeersMessage(t *testing.T) {
 	b := &testBackend{obsOK: true}
 	app, done := runHandler(t, b)
-	drainOne(t, app)
+	drainGreeting(t, app)
 
 	big := Peers{Entries: make([]PeerEntry, MaxPeersPerMessage+1)}
 	for i := range big.Entries {
@@ -173,7 +188,7 @@ func TestHandlerRejectsOversizedPeersMessage(t *testing.T) {
 func TestHandlerRejectsDoubleYourAddr(t *testing.T) {
 	b := &testBackend{obsOK: true}
 	app, done := runHandler(t, b)
-	drainOne(t, app) // drain outbound YourAddr
+	drainGreeting(t, app)
 
 	for range 2 {
 		if err := p2p.Send(app, YourAddrMsg, YourAddr{NetworkID: NetIPv4, Addr: []byte{5, 6, 7, 8}, TCPPort: 30303}); err != nil {
@@ -201,7 +216,7 @@ func TestHandlerAnswersGetPeers(t *testing.T) {
 		},
 	}
 	app, _ := runHandler(t, b)
-	drainOne(t, app)
+	drainGreeting(t, app)
 
 	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
 		t.Fatal(err)
@@ -230,7 +245,7 @@ func TestHandlerIgnoresRepeatGetPeers(t *testing.T) {
 		sample: []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone}},
 	}
 	app, _ := runHandler(t, b)
-	drainOne(t, app)
+	drainGreeting(t, app)
 
 	_ = p2p.Send(app, GetPeersMsg, GetPeers{})
 	drainOne(t, app) // first response
@@ -262,6 +277,16 @@ func drainOne(t *testing.T, rw p2p.MsgReader) {
 		t.Fatalf("ReadMsg: %v", err)
 	}
 	_ = msg.Discard()
+}
+
+// drainGreeting consumes the YourAddr + GetPeers that an outbound
+// handler writes on session start. (p2p.NewPeer yields conn flags of 0,
+// which Inbound() reports as false — so every test-harness handler takes
+// the outbound branch.)
+func drainGreeting(t *testing.T, rw p2p.MsgReader) {
+	t.Helper()
+	drainOne(t, rw) // YourAddr
+	drainOne(t, rw) // GetPeers
 }
 
 func waitForSample(t *testing.T, b *testBackend, want int, timeout time.Duration) {

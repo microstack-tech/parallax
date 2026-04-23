@@ -660,6 +660,24 @@ func (m *AddrMan) FindAddressPosition(addr NetAddr) (AddressPosition, bool) {
 	}, true
 }
 
+// Lookup returns a copy of the AddrInfo for addr, or nil if not found.
+// The copy is safe to use after the call returns; callers should not
+// modify it. Used by the parallax-disc/1 handler to re-materialize wire
+// entries with their stored KeyType/NodeID.
+func (m *AddrMan) Lookup(addr NetAddr) *AddrInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, info := m.findLocked(addr)
+	if info == nil {
+		return nil
+	}
+	cp := *info
+	if len(info.NodeID) > 0 {
+		cp.NodeID = append([]byte(nil), info.NodeID...)
+	}
+	return &cp
+}
+
 // CountsBySource returns a shallow copy of the per-source entry counts.
 // Used by Phase-3 metrics wiring; zero-alloc on the hot path is not a
 // concern because this is read infrequently.
