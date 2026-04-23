@@ -1,14 +1,14 @@
-# Parallax CLI
+# Parallax integration/staging tree
 
-[Website](https://parallaxprotocol.org) | [Documentation](https://docs.parallaxprotocol.org) | [Whitepaper](https://parallaxprotocol.org/introduction/whitepaper)
+<https://parallaxprotocol.org>
 
-Parallax CLI connects to the Parallax peer-to-peer network to download and fully validate blocks and transactions. It includes a full node, mining engine, and JSON-RPC server.
+Parallax connects to the Parallax peer-to-peer network to download and fully validate blocks and transactions. It includes a full node, mining engine, and JSON-RPC server.
 
-A peer-to-peer programmable cash system. See the [Whitepaper](https://parallaxprotocol.org/introduction/whitepaper) and [The Parallax Doctrine](https://github.com/ParallaxProtocol/parallax-doctrine).
+For an immediately usable, binary version of the Parallax software, see <https://parallaxprotocol.org/en/resources/parallax-client/>.
 
 ## Building from Source
 
-Parallax CLI requires **Go 1.26+** and a C compiler.
+Parallax requires **Go 1.26+** and a C compiler.
 
 ```bash
 make parallax
@@ -60,12 +60,12 @@ See the [getting started guide](https://docs.parallaxprotocol.org/parallax-clien
 Run the node in the background, detached from the terminal:
 
 ```bash
-./build/bin/parallax-cli --datadir ~/.parallax start
+./build/bin/parallax-cli start
 ```
 
 Under the hood, `parallax-cli start` execs the sibling `parallaxd` binary with `--daemon`. `parallaxd` installed next to `parallax-cli` is the default location; `$PATH` is the fallback. Logs redirect to `<datadir>/parallax.log`, a PID file is written, and the process survives terminal exit. See [Daemon mode](https://docs.parallaxprotocol.org/parallax-client/fundamentals/daemon-mode) for systemd integration and flag details.
 
-Invoking `parallaxd --daemon --datadir ~/.parallax` directly has the same effect.
+Invoking `parallaxd --daemon` directly has the same effect.
 
 ### Managing a running node
 
@@ -111,7 +111,7 @@ Or install under `~/.local/share/bash-completion/completions/` (bash) or any dir
 
 ## Architecture
 
-Parallax CLI uses a layered architecture:
+Parallax uses a layered architecture:
 
 ```
 kernel/         Consensus rules — no RPC, no networking, no I/O
@@ -152,7 +152,7 @@ Run the linter:
 make lint
 ```
 
-Parallax CLI is a security-critical project. Any mistake can cost users money. All changes must include appropriate test coverage and pass CI before merging.
+Parallax is a security-critical project. Any mistake can cost users money. All changes must include appropriate test coverage and pass CI before merging.
 
 ## Resources
 
