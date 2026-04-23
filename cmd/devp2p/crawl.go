@@ -54,6 +54,35 @@ func hasPipV2(n *enode.Node) bool {
 	return n.Load(&e) == nil
 }
 
+// logCrawlEntry emits a per-node info line describing the crawler's
+// decision for n. One line per processed entry so operators can see
+// the crawl unfold live rather than wait for the periodic status
+// ticker.
+func logCrawlEntry(status int, n *enode.Node) {
+	if n == nil {
+		return
+	}
+	action := "updated"
+	switch status {
+	case nodeAdded:
+		action = "added"
+	case nodeRemoved:
+		action = "removed"
+	case nodeSkipRecent:
+		action = "skip_recent"
+	case nodeSkipIncompat:
+		action = "skip_incompat"
+	}
+	logging.Info("Crawl entry",
+		"action", action,
+		"id", n.ID(),
+		"ip", n.IP(),
+		"tcp", n.TCP(),
+		"udp", n.UDP(),
+		"seq", n.Seq(),
+		"pipv2", hasPipV2(n))
+}
+
 type crawler struct {
 	input     nodeSet
 	output    nodeSet
@@ -131,7 +160,8 @@ func (c *crawler) run(timeout time.Duration, nthreads int) nodeSet {
 			for {
 				select {
 				case n := <-c.ch:
-					switch c.updateNode(n) {
+					status := c.updateNode(n)
+					switch status {
 					case nodeSkipIncompat:
 						atomic.AddUint64(&skipped, 1)
 					case nodeSkipRecent:
@@ -143,6 +173,7 @@ func (c *crawler) run(timeout time.Duration, nthreads int) nodeSet {
 					default:
 						atomic.AddUint64(&updated, 1)
 					}
+					logCrawlEntry(status, n)
 				case <-c.closed:
 					return
 				}
