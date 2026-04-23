@@ -100,21 +100,13 @@ type hasher func(dest []byte, data []byte)
 // be reused between hash runs instead of requiring new ones to be created. The returned
 // function is not thread safe!
 func makeHasher(h hash.Hash) hasher {
-	// sha3.state supports Read to get the sum, use it to avoid the overhead of Sum.
-	// Read alters the state but we reset the hash before every operation.
-	type readerHash interface {
-		hash.Hash
-		Read([]byte) (int, error)
-	}
-	rh, ok := h.(readerHash)
-	if !ok {
-		panic("can't find Read method on hash")
-	}
-	outputLen := rh.Size()
+	// Sum appends the digest to its argument. Passing dest[:0] writes the digest
+	// into dest's backing array in place as long as cap(dest) >= Size(), which
+	// the callers guarantee.
 	return func(dest []byte, data []byte) {
-		rh.Reset()
-		rh.Write(data)
-		rh.Read(dest[:outputLen])
+		h.Reset()
+		h.Write(data)
+		h.Sum(dest[:0])
 	}
 }
 
