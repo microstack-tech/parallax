@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -351,6 +352,10 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	cur.LastAttempt = now
 	w.stMu.Unlock()
 
+	logging.Info("parallax-disc probe",
+		"addr", n.tcpAddr(),
+		"keyType", n.KeyType,
+		"id", n.NodeID)
 	peers, caps, err := probeOne(ctx, n)
 
 	w.stMu.Lock()
@@ -358,7 +363,11 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	if err != nil {
 		cur.FailCount++
 		cur.LastError = err.Error()
+		failCount := cur.FailCount
 		w.stMu.Unlock()
+		logging.Info("parallax-disc probe failed",
+			"addr", n.tcpAddr(), "id", n.NodeID,
+			"failCount", failCount, "err", err)
 		return
 	}
 	cur.SuccessCount++
@@ -373,15 +382,28 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	}
 	w.stMu.Unlock()
 
+	logging.Info("parallax-disc probe ok",
+		"addr", n.tcpAddr(), "id", n.NodeID,
+		"peers", len(peers), "caps", len(caps))
+
+	enqueued, skipped := 0, 0
 	for _, e := range peers {
 		cn, ok := peerEntryToCrawlNode(e)
 		if !ok {
+			skipped++
 			continue
 		}
 		if !isDialableIP(net.ParseIP(cn.IP)) {
+			skipped++
 			continue
 		}
 		w.registerAndEnqueue(ctx, cn)
+		enqueued++
+	}
+	if enqueued+skipped > 0 {
+		logging.Info("parallax-disc fanout",
+			"from", n.tcpAddr(),
+			"enqueued", enqueued, "skipped", skipped)
 	}
 }
 
