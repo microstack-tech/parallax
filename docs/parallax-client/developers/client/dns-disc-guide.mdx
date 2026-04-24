@@ -14,10 +14,12 @@ DNS-based node lists can serve as a fallback option when connectivity to the dis
 go get github.com/ParallaxProtocol/parallax/cmd/devp2p
 ```
 
-To create a signing key, the `parallaxkey` utility is needed.
+To create a signing key, the `parallax-wallet` utility is needed. It ships
+with the release package and replaces the older standalone `parallaxkey`
+tool.
 
 ```sh
-go get github.com/ParallaxProtocol/parallax/cmd/parallaxkey
+go get github.com/ParallaxProtocol/parallax/cmd/parallax-wallet
 ```
 
 ## Crawling the v4 DHT
@@ -54,10 +56,10 @@ The following filter flags are available:
 
 ## Creating DNS trees
 
-To turn a node list into a DNS node tree, the list needs to be signed. To do this, a key pair is required. To create the key file in the correct format, the `cmd/parallaxkey` utility should be used. Choose a strong password to encrypt the key on disk!
+To turn a node list into a DNS node tree, the list needs to be signed. To do this, a key pair is required. To create the key file in the correct format, the `cmd/parallax-wallet` utility should be used. Choose a strong password to encrypt the key on disk!
 
 ```sh
-parallaxkey generate dnskey.json
+parallax-wallet generate dnskey.json
 ```
 
 Now use `devp2p dns sign` to update the signature of the node list. If the list's directory name differs from the name it will be published at, specify the DNS name using the `-domain` flag. This command will prompt for the key file password and update the tree signature.

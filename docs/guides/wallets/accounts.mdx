@@ -43,7 +43,7 @@ There are several ways to create a Parallax account:
     You can also create an account directly with the Parallax client:
 
     ```bash
-    ./parallaxd account new
+    ./parallax-wallet new
     ```
 
     You’ll be asked to set a password.  
@@ -55,8 +55,14 @@ There are several ways to create a Parallax account:
     ⚠️ **Important:** Always back up your keystore file and password securely.
   </Step>
 
-  <Step title="Using parallaxkey (advanced)">
-    Advanced users can use the `parallaxkey` utility included in the release package to generate keys manually. This is usually not necessary for beginners.
+  <Step title="Standalone keyfiles (advanced)">
+    Advanced users can produce a single, portable keyfile (outside the keystore) with:
+
+    ```bash
+    ./parallax-wallet generate my-key.json
+    ```
+
+    Use this for air-gapped cold-signing workflows. Regular users should prefer `parallax-wallet new`.
   </Step>
 </Steps>
 

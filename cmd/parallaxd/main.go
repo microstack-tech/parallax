@@ -212,8 +212,6 @@ func init() {
 		removedbCommand,
 		dumpCommand,
 		dumpGenesisCommand,
-		// See accountcmd.go:
-		accountCommand,
 		// See consolecmd.go:
 		consoleCommand,
 		attachCommand,

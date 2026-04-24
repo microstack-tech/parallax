@@ -69,6 +69,7 @@ var (
 		"COPYING",
 		executablePath("parallaxd"),
 		executablePath("parallax-cli"),
+		executablePath("parallax-wallet"),
 		executablePath("parallax"),
 	}
 
@@ -80,6 +81,7 @@ var (
 		executablePath("pvm"),
 		executablePath("parallaxd"),
 		executablePath("parallax-cli"),
+		executablePath("parallax-wallet"),
 		executablePath("parallax"),
 		executablePath("rlpdump"),
 		executablePath("clef"),
@@ -108,8 +110,12 @@ var (
 			Description: "Parallax JSON-RPC command-line client.",
 		},
 		{
+			BinaryName:  "parallax-wallet",
+			Description: "Parallax offline wallet management tool.",
+		},
+		{
 			BinaryName:  "parallax",
-			Description: "Parallax multi-call wrapper dispatching to parallaxd and parallax-cli.",
+			Description: "Parallax multi-call wrapper dispatching to parallaxd, parallax-cli and parallax-wallet.",
 		},
 		{
 			BinaryName:  "rlpdump",
@@ -117,7 +123,7 @@ var (
 		},
 		{
 			BinaryName:  "clef",
-			Description: "Parallax account management tool.",
+			Description: "Parallax long-running signer daemon with a rule engine and interactive approval UI.",
 		},
 	}
 

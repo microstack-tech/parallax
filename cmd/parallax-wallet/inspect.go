@@ -33,13 +33,6 @@ type outputInspect struct {
 	PrivateKey string
 }
 
-var (
-	privateFlag = cli.BoolFlag{
-		Name:  "private",
-		Usage: "include the private key in the output",
-	}
-)
-
 var commandInspect = cli.Command{
 	Name:      "inspect",
 	Usage:     "inspect a keyfile",
@@ -57,25 +50,21 @@ make sure to use this feature with great caution!`,
 	Action: func(ctx *cli.Context) error {
 		keyfilepath := ctx.Args().First()
 
-		// Read key from file.
 		keyjson, err := os.ReadFile(keyfilepath)
 		if err != nil {
 			utils.Fatalf("Failed to read the keyfile at '%s': %v", keyfilepath, err)
 		}
 
-		// Decrypt key with passphrase.
 		passphrase := getPassphrase(ctx, false)
 		key, err := keystore.DecryptKey(keyjson, passphrase)
 		if err != nil {
 			utils.Fatalf("Error decrypting key: %v", err)
 		}
 
-		// Output all relevant information we can retrieve.
 		showPrivate := ctx.Bool(privateFlag.Name)
 		out := outputInspect{
-			Address: key.Address.Hex(),
-			PublicKey: hex.EncodeToString(
-				crypto.FromECDSAPub(&key.PrivateKey.PublicKey)),
+			Address:   key.Address.Hex(),
+			PublicKey: hex.EncodeToString(crypto.FromECDSAPub(&key.PrivateKey.PublicKey)),
 		}
 		if showPrivate {
 			out.PrivateKey = hex.EncodeToString(crypto.FromECDSA(key.PrivateKey))

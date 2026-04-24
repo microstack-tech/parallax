@@ -1,8 +1,9 @@
 # zsh completion for the parallax multi-call wrapper.
 #
-# The wrapper's first argument is always a subcommand name; `node` and `rpc`
-# delegate further completion to parallaxd / parallax-cli respectively via
-# urfave/cli v1's --generate-bash-completion hook.
+# The wrapper's first argument is always a subcommand name; `node`, `rpc`
+# and `wallet` delegate further completion to parallaxd / parallax-cli /
+# parallax-wallet respectively via urfave/cli v1's
+# --generate-bash-completion hook.
 #
 # Install:
 #   source build/completion/parallax.zsh
@@ -13,7 +14,7 @@ _parallax() {
     local cur="${words[CURRENT]}"
 
     if (( CURRENT == 2 )); then
-        _describe 'subcommand' '(node:"run the parallaxd daemon" rpc:"send an RPC via parallax-cli" help:"show wrapper help" version:"print version")'
+        _describe 'subcommand' '(node:"run the parallaxd daemon" rpc:"send an RPC via parallax-cli" wallet:"run an offline wallet command via parallax-wallet" help:"show wrapper help" version:"print version")'
         return
     fi
 
@@ -33,6 +34,13 @@ _parallax() {
                 opts=( ${(f)"$(parallax-cli ${rest[@]} $cur --generate-bash-completion 2>/dev/null)"} )
             else
                 opts=( ${(f)"$(parallax-cli ${rest[@]} --generate-bash-completion 2>/dev/null)"} )
+            fi
+            ;;
+        wallet)
+            if [[ "$cur" == "-"* ]]; then
+                opts=( ${(f)"$(parallax-wallet ${rest[@]} $cur --generate-bash-completion 2>/dev/null)"} )
+            else
+                opts=( ${(f)"$(parallax-wallet ${rest[@]} --generate-bash-completion 2>/dev/null)"} )
             fi
             ;;
     esac

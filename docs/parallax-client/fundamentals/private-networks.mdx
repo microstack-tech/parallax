@@ -41,7 +41,7 @@ Below is an example of a `genesis.json` file for a PoA network. The config secti
 The signer account keys can be generated using the [Parallax account](../fundamentals/account-management) command (this command can be run multiple times to create more than one signer key).
 
 ```sh
-parallaxd account new --datadir data
+parallax-wallet new --datadir data
 ```
 
 The Parallax address printed by this command should be recorded. To encode the signer addresses in `extradata`, concatenate 32 zero bytes, all signer addresses and 65 further zero bytes. The result of this concatenation is then used as the value accompanying the `extradata` key in `genesis.json`. In the example below, `extradata` contains a single initial signer address, `0x7df9a875a174b3bc565e6424a0050ebc1b2d1d82`.
@@ -217,7 +217,7 @@ This section will run through the commands for setting up a simple private netwo
 Each node will have an associated account that will receive some ether at launch. The following command creates an account for Node 1:
 
 ```sh
-parallaxd --datadir node1 account new
+parallax-wallet --datadir node1 new
 ```
 
 This command returns a request for a password. Once a password has been provided the following information is returned to the terminal:

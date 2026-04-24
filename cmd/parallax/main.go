@@ -15,12 +15,14 @@
 // along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
 // parallax is a multi-call wrapper that dispatches to parallaxd (the node
-// daemon) or parallax-cli (the JSON-RPC client), mirroring the `bitcoin`
-// wrapper binary in Bitcoin Core. Users can either invoke the companion
-// binaries directly or go through the wrapper:
+// daemon), parallax-cli (the JSON-RPC client) or parallax-wallet (the
+// offline wallet tool), mirroring the `bitcoin` wrapper binary in
+// Bitcoin Core. Users can either invoke the companion binaries directly
+// or go through the wrapper:
 //
-//	parallax node --datadir /var/lib/parallax --daemon   (equivalent to parallaxd …)
-//	parallax rpc  info                                   (equivalent to parallax-cli info)
+//	parallax node   --datadir /var/lib/parallax --daemon   (equivalent to parallaxd …)
+//	parallax rpc    info                                   (equivalent to parallax-cli info)
+//	parallax wallet list                                   (equivalent to parallax-wallet list)
 //
 // The wrapper carries no domain logic of its own. It just resolves the
 // right companion binary — preferring one installed next to itself and
@@ -37,14 +39,15 @@ import (
 const usage = `parallax: multi-call wrapper for the Parallax client suite.
 
 Usage:
-    parallax node [args...]   run the parallaxd full-node daemon
-    parallax rpc  [args...]   send an RPC command via parallax-cli
-    parallax help             show this help
-    parallax version          print version information
+    parallax node   [args...]   run the parallaxd full-node daemon
+    parallax rpc    [args...]   send an RPC command via parallax-cli
+    parallax wallet [args...]   run an offline wallet command via parallax-wallet
+    parallax help               show this help
+    parallax version            print version information
 
 Each subcommand forwards the remaining arguments to the companion binary
-unchanged. See 'parallax node --help' and 'parallax rpc --help' for the
-full set of flags and commands.
+unchanged. See 'parallax node --help', 'parallax rpc --help' and
+'parallax wallet --help' for the full set of flags and commands.
 `
 
 func main() {
@@ -57,6 +60,8 @@ func main() {
 		dispatch("parallaxd", os.Args[2:])
 	case "rpc":
 		dispatch("parallax-cli", os.Args[2:])
+	case "wallet":
+		dispatch("parallax-wallet", os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	case "-v", "--version", "version":

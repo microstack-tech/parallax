@@ -21,14 +21,16 @@ import (
 	"testing"
 )
 
+// TestMessageSignVerify drives the full generate -> signmessage ->
+// verifymessage cycle through the compiled binary, exercising stdin
+// prompting and the EIP-191 signature path end-to-end.
 func TestMessageSignVerify(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	keyfile := filepath.Join(tmpdir, "the-keyfile")
 	message := "test message"
 
-	// Create the key.
-	generate := runParallaxkey(t, "generate", "--lightkdf", keyfile)
+	generate := runParallaxWallet(t, "generate", "--lightkdf", keyfile)
 	generate.Expect(`
 !! Unsupported terminal, password will be echoed.
 Password: {{.InputLine "foobar"}}
@@ -38,8 +40,7 @@ Repeat password: {{.InputLine "foobar"}}
 	address := matches[1]
 	generate.ExpectExit()
 
-	// Sign a message.
-	sign := runParallaxkey(t, "signmessage", keyfile, message)
+	sign := runParallaxWallet(t, "signmessage", keyfile, message)
 	sign.Expect(`
 !! Unsupported terminal, password will be echoed.
 Password: {{.InputLine "foobar"}}
@@ -48,8 +49,7 @@ Password: {{.InputLine "foobar"}}
 	signature := matches[1]
 	sign.ExpectExit()
 
-	// Verify the message.
-	verify := runParallaxkey(t, "verifymessage", address, signature, message)
+	verify := runParallaxWallet(t, "verifymessage", address, signature, message)
 	_, matches = verify.ExpectRegexp(`
 Signature verification successful!
 Recovered public key: [0-9a-f]+

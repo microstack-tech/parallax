@@ -14,11 +14,12 @@ Parallax requires **Go 1.26+** and a C compiler.
 make parallax
 ```
 
-This builds the three binaries of the Parallax suite into `build/bin/`:
+This builds the four binaries of the Parallax suite into `build/bin/`:
 
 - **`parallaxd`** — the full-node daemon.
 - **`parallax-cli`** — the JSON-RPC command-line client.
-- **`parallax`** — a multi-call wrapper that dispatches to either companion.
+- **`parallax-wallet`** — offline wallet management tool (create/list/import accounts, sign messages and raw transactions).
+- **`parallax`** — a multi-call wrapper that dispatches to any of the companions.
 
 To build the full suite of tools (adds `clef`, `abigen`, `pvm`, `rlpdump`, `devp2p`):
 
@@ -34,8 +35,9 @@ For detailed build instructions including cross-compilation, Docker builds, and 
 |---------|-------------|
 | **`parallaxd`** | Full-node daemon. Runs full or archive nodes; serves JSON-RPC over HTTP, WebSocket, and IPC. |
 | **`parallax-cli`** | JSON-RPC client with ergonomic sugar subcommands (`info`, `peers`, `balance`, `sendraw`, …). |
-| **`parallax`** | Multi-call wrapper. `parallax node …` dispatches to `parallaxd`; `parallax rpc …` to `parallax-cli`. |
-| `clef` | Standalone transaction signer for secure account operations. |
+| **`parallax-wallet`** | Offline wallet tool. Creates/lists/imports accounts, signs messages and transactions, and produces/restores structured keystore dumps. Never talks to a running node. |
+| **`parallax`** | Multi-call wrapper. `parallax node …` → `parallaxd`; `parallax rpc …` → `parallax-cli`; `parallax wallet …` → `parallax-wallet`. |
+| `clef` | Long-running external signer daemon with a rule engine and interactive approval UI. Unlike `parallax-wallet`, it's a service that other processes call into over IPC. |
 | `devp2p` | Networking utilities to inspect and interact at the P2P layer. |
 | `abigen` | Generates type-safe Go bindings from contract ABIs. |
 | `pvm` | Execute and debug PVM bytecode in isolation. |
@@ -95,6 +97,7 @@ Runtime-driven bash and zsh completion scripts ship under `build/completion/`:
 ```bash
 source build/completion/parallaxd.bash
 source build/completion/parallax-cli.bash
+source build/completion/parallax-wallet.bash
 source build/completion/parallax.bash
 ```
 

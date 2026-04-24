@@ -138,12 +138,12 @@ which returns:
 
 ### Import a keyfile
 
-It is also possible to create an account by importing an existing private key. For example, a user might already have some Laxes at an address they created using a browser wallet and now wish to use a new Parallax node to interact with their funds. In this case, the private key can be exported from the browser wallet and imported into the Parallax client. It is possible to do this using Clef, but currently the method is not externally exposed and requires implementing a UI. There is a Python UI on the Parallax GitHub that could be used as an example or it can be done using the default console UI. However, for now, the most straightforward way to import an account from a private key is to use Parallax client's `account import`.
+It is also possible to create an account by importing an existing private key. For example, a user might already have some Laxes at an address they created using a browser wallet and now wish to use a new Parallax node to interact with their funds. In this case, the private key can be exported from the browser wallet and imported into the Parallax client. It is possible to do this using Clef, but currently the method is not externally exposed and requires implementing a UI. There is a Python UI on the Parallax GitHub that could be used as an example or it can be done using the default console UI. However, for now, the most straightforward way to import an account from a private key is to use `parallax-wallet import`.
 
-The Parallax client requires the private key to be stored as a file which contains the private key as unencrypted canonical elliptic curve bytes encoded into hex (i.e. plain text key without leading 0x). The new account is then saved in encrypted format, protected by a passphrase the user provides on request. As always, this passphrase must be securely and safely backed up - there is no way to retrieve or reset it if it is forgotten!
+`parallax-wallet` requires the private key to be stored as a file which contains the private key as unencrypted canonical elliptic curve bytes encoded into hex (i.e. plain text key without leading 0x). The new account is then saved in encrypted format, protected by a passphrase the user provides on request. As always, this passphrase must be securely and safely backed up - there is no way to retrieve or reset it if it is forgotten!
 
 ```sh
-parallaxd account import --datadir /some-dir ./keyfile
+parallax-wallet import --datadir /some-dir ./keyfile
 ```
 
 The following information will be displayed in the terminal, indicating a successful import:
@@ -160,7 +160,7 @@ This import/export process is **not necessary** for users transferring accounts 
 It is also possible to import an account in non-interactive mode by saving the account password as plaintext in a `.txt` file and passing its path with the `--password` flag on startup.
 
 ```sh
-parallaxd account import --password path/password.txt path/keyfile
+parallax-wallet import --password path/password.txt path/keyfile
 ```
 
 In this case, it is important to ensure the password file is not readable by anyone but the intended user. This can be achieved by changing the file permissions. On Linux, the following commands update the file permissions so only the current user has access:
@@ -181,19 +181,19 @@ clef setpw a94f5374fce5edbc8e2a8697c15331677e6ebf0b
 
 This will cause Clef to prompt for a new password, twice, and then the Clef master password to decrypt the keyfile.
 
-The Parallax client's `account update` subcommand can also be used to update the account password:
+The `parallax-wallet update` subcommand can also be used to update the account password:
 
 ```sh
-parallaxd account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b
+parallax-wallet update a94f5374fce5edbc8e2a8697c15331677e6ebf0b
 ```
 
 Alternatively, in non-interactive mode the path to a password file containing the account password in unencrypted plaintext can be passed with the `--password` flag:
 
 ```sh
-parallaxd account update a94f5374fce5edbc8e2a8697c15331677e6ebf0b --password path/password.txt
+parallax-wallet update a94f5374fce5edbc8e2a8697c15331677e6ebf0b --password path/password.txt
 ```
 
-Updating the account using `parallaxd account update` replaces the original file with a new one - this means the original file is no longer available after it has been updated. This can be used to update a key file to the latest format.
+Updating the account using `parallax-wallet update` replaces the original file with a new one - this means the original file is no longer available after it has been updated. This can be used to update a key file to the latest format.
 
 ## Unlocking accounts
 

@@ -26,17 +26,13 @@ import (
 	"gopkg.in/urfave/cli.v1"
 )
 
-var newPassphraseFlag = cli.StringFlag{
-	Name:  "newpasswordfile",
-	Usage: "the file that contains the new password for the keyfile",
-}
-
 var commandChangePassphrase = cli.Command{
 	Name:      "changepassword",
 	Usage:     "change the password on a keyfile",
 	ArgsUsage: "<keyfile>",
 	Description: `
-Change the password of a keyfile.`,
+Change the password of a keyfile. Use --newpasswordfile to point to a
+file containing the new password.`,
 	Flags: []cli.Flag{
 		passphraseFlag,
 		newPassphraseFlag,
@@ -44,20 +40,17 @@ Change the password of a keyfile.`,
 	Action: func(ctx *cli.Context) error {
 		keyfilepath := ctx.Args().First()
 
-		// Read key from file.
 		keyjson, err := os.ReadFile(keyfilepath)
 		if err != nil {
 			utils.Fatalf("Failed to read the keyfile at '%s': %v", keyfilepath, err)
 		}
 
-		// Decrypt key with passphrase.
 		passphrase := getPassphrase(ctx, false)
 		key, err := keystore.DecryptKey(keyjson, passphrase)
 		if err != nil {
 			utils.Fatalf("Error decrypting key: %v", err)
 		}
 
-		// Get a new passphrase.
 		fmt.Println("Please provide a new password")
 		var newPhrase string
 		if passFile := ctx.String(newPassphraseFlag.Name); passFile != "" {
@@ -70,19 +63,14 @@ Change the password of a keyfile.`,
 			newPhrase = utils.GetPassPhrase("", true)
 		}
 
-		// Encrypt the key with the new passphrase.
 		newJson, err := keystore.EncryptKey(key, newPhrase, keystore.StandardScryptN, keystore.StandardScryptP)
 		if err != nil {
 			utils.Fatalf("Error encrypting with new password: %v", err)
 		}
 
-		// Then write the new keyfile in place of the old one.
-		if err := os.WriteFile(keyfilepath, newJson, 0600); err != nil {
+		if err := os.WriteFile(keyfilepath, newJson, 0o600); err != nil {
 			utils.Fatalf("Error writing new keyfile to disk: %v", err)
 		}
-
-		// Don't print anything.  Just return successfully,
-		// producing a positive exit code.
 		return nil
 	},
 }

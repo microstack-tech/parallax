@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: parallax parallaxd parallax-cli android ios pvm all test clean devtools lint cross package darwin-universal release
+.PHONY: parallax parallaxd parallax-cli parallax-wallet android ios pvm all test clean devtools lint cross package darwin-universal release
 
 GOBIN      = ./build/bin
 GO        ?= latest
@@ -13,12 +13,12 @@ VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 # -------- existing targets --------
 
 # `make parallax` is kept as the umbrella target so established muscle
-# memory still works; it now builds all three binaries in the suite:
-# the node daemon (parallaxd), the JSON-RPC client (parallax-cli) and the
-# multi-call wrapper (parallax).
-parallax: parallaxd parallax-cli parallax-wrapper
+# memory still works; it now builds the full binary suite: the node
+# daemon (parallaxd), the JSON-RPC client (parallax-cli), the offline
+# wallet tool (parallax-wallet) and the multi-call wrapper (parallax).
+parallax: parallaxd parallax-cli parallax-wallet parallax-wrapper
 	@echo "Done building parallax suite."
-	@echo "Binaries under $(GOBIN)/: parallaxd, parallax-cli, parallax"
+	@echo "Binaries under $(GOBIN)/: parallaxd, parallax-cli, parallax-wallet, parallax"
 
 parallaxd:
 	$(GORUN) build/ci.go install ./cmd/parallaxd
@@ -27,6 +27,10 @@ parallaxd:
 parallax-cli:
 	$(GORUN) build/ci.go install ./cmd/parallax-cli
 	@echo "Done building parallax-cli."
+
+parallax-wallet:
+	$(GORUN) build/ci.go install ./cmd/parallax-wallet
+	@echo "Done building parallax-wallet."
 
 # Internal: builds the wrapper only. Most users should invoke `make
 # parallax` (the umbrella target above) which also builds the companions
@@ -84,7 +88,7 @@ USE_DLGO ?= 1
 DLGO_FLAG := $(if $(filter 1 true yes,$(USE_DLGO)),-dlgo,)
 BUNDLE_PREFIX ?= parallax
 LICENSE_FILES ?= COPYING LICENSE
-CMDS_RELEASE := parallaxd parallax-cli parallax
+CMDS_RELEASE := parallaxd parallax-cli parallax-wallet parallax
 
 # Build the helper once for the host
 $(CICMD): build/ci.go

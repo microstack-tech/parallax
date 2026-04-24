@@ -34,27 +34,19 @@ type outputGenerate struct {
 	AddressEIP55 string
 }
 
-var (
-	privateKeyFlag = cli.StringFlag{
-		Name:  "privatekey",
-		Usage: "file containing a raw private key to encrypt",
-	}
-	lightKDFFlag = cli.BoolFlag{
-		Name:  "lightkdf",
-		Usage: "use less secure scrypt parameters",
-	}
-)
-
 var commandGenerate = cli.Command{
 	Name:      "generate",
-	Usage:     "generate new keyfile",
+	Usage:     "generate a new standalone keyfile",
 	ArgsUsage: "[ <keyfile> ]",
 	Description: `
-Generate a new keyfile.
+Generate a new keyfile at the given path (default ./keyfile.json).
 
-If you want to encrypt an existing private key, it can be specified by setting
---privatekey with the location of the file containing the private key.
-`,
+This produces a single, self-contained keyfile — it does NOT touch the
+keystore directory. To create an account directly in your keystore,
+use "new" instead.
+
+To encrypt an existing raw private key instead of generating a new one,
+pass --privatekey with the path to a hex-encoded private key file.`,
 	Flags: []cli.Flag{
 		passphraseFlag,
 		jsonFlag,
@@ -62,7 +54,6 @@ If you want to encrypt an existing private key, it can be specified by setting
 		lightKDFFlag,
 	},
 	Action: func(ctx *cli.Context) error {
-		// Check if keyfile path given and make sure it doesn't already exist.
 		keyfilepath := ctx.Args().First()
 		if keyfilepath == "" {
 			keyfilepath = defaultKeyfileName
@@ -76,20 +67,17 @@ If you want to encrypt an existing private key, it can be specified by setting
 		var privateKey *ecdsa.PrivateKey
 		var err error
 		if file := ctx.String(privateKeyFlag.Name); file != "" {
-			// Load private key from file.
 			privateKey, err = crypto.LoadECDSA(file)
 			if err != nil {
 				utils.Fatalf("Can't load private key: %v", err)
 			}
 		} else {
-			// If not loaded, generate random.
 			privateKey, err = crypto.GenerateKey()
 			if err != nil {
 				utils.Fatalf("Failed to generate random private key: %v", err)
 			}
 		}
 
-		// Create the keyfile object with a random UUID.
 		UUID, err := uuid.NewRandom()
 		if err != nil {
 			utils.Fatalf("Failed to generate random uuid: %v", err)
@@ -100,29 +88,21 @@ If you want to encrypt an existing private key, it can be specified by setting
 			PrivateKey: privateKey,
 		}
 
-		// Encrypt key with passphrase.
 		passphrase := getPassphrase(ctx, true)
-		scryptN, scryptP := keystore.StandardScryptN, keystore.StandardScryptP
-		if ctx.Bool(lightKDFFlag.Name) {
-			scryptN, scryptP = keystore.LightScryptN, keystore.LightScryptP
-		}
+		scryptN, scryptP := scryptParams(ctx)
 		keyjson, err := keystore.EncryptKey(key, passphrase, scryptN, scryptP)
 		if err != nil {
 			utils.Fatalf("Error encrypting key: %v", err)
 		}
 
-		// Store the file to disk.
-		if err := os.MkdirAll(filepath.Dir(keyfilepath), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(keyfilepath), 0o700); err != nil {
 			utils.Fatalf("Could not create directory %s", filepath.Dir(keyfilepath))
 		}
-		if err := os.WriteFile(keyfilepath, keyjson, 0600); err != nil {
+		if err := os.WriteFile(keyfilepath, keyjson, 0o600); err != nil {
 			utils.Fatalf("Failed to write keyfile to %s: %v", keyfilepath, err)
 		}
 
-		// Output some information.
-		out := outputGenerate{
-			Address: key.Address.Hex(),
-		}
+		out := outputGenerate{Address: key.Address.Hex()}
 		if ctx.Bool(jsonFlag.Name) {
 			mustPrintJSON(out)
 		} else {

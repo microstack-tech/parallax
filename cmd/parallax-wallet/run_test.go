@@ -25,28 +25,27 @@ import (
 	"github.com/moby/sys/reexec"
 )
 
-type testParallaxkey struct {
+type testParallaxWallet struct {
 	*cmdtest.TestCmd
 }
 
-// spawns parallaxkey with the given command line args.
-func runParallaxkey(t *testing.T, args ...string) *testParallaxkey {
-	tt := new(testParallaxkey)
+// runParallaxWallet re-execs the test binary as if it were the
+// parallax-wallet command, forwarding args through cmdtest.
+func runParallaxWallet(t *testing.T, args ...string) *testParallaxWallet {
+	tt := new(testParallaxWallet)
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
-	tt.Run("parallaxkey-test", args...)
+	tt.Run("parallax-wallet-test", args...)
 	return tt
 }
 
 func TestMain(m *testing.M) {
-	// Run the app if we've been exec'd as "parallaxkey-test" in runParallaxkey.
-	reexec.Register("parallaxkey-test", func() {
+	reexec.Register("parallax-wallet-test", func() {
 		if err := app.Run(os.Args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		os.Exit(0)
 	})
-	// check if we have been reexec'd
 	if reexec.Init() {
 		return
 	}

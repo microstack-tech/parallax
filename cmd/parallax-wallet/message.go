@@ -32,20 +32,14 @@ type outputSign struct {
 	Signature string
 }
 
-var msgfileFlag = cli.StringFlag{
-	Name:  "msgfile",
-	Usage: "file containing the message to sign/verify",
-}
-
 var commandSignMessage = cli.Command{
 	Name:      "signmessage",
-	Usage:     "sign a message",
+	Usage:     "sign a message with a keyfile",
 	ArgsUsage: "<keyfile> <message>",
 	Description: `
-Sign the message with a keyfile.
+Sign the message with a keyfile (EIP-191 personal_sign).
 
-To sign a message contained in a file, use the --msgfile flag.
-`,
+To sign a message contained in a file, use the --msgfile flag.`,
 	Flags: []cli.Flag{
 		passphraseFlag,
 		jsonFlag,
@@ -54,14 +48,12 @@ To sign a message contained in a file, use the --msgfile flag.
 	Action: func(ctx *cli.Context) error {
 		message := getMessage(ctx, 1)
 
-		// Load the keyfile.
 		keyfilepath := ctx.Args().First()
 		keyjson, err := os.ReadFile(keyfilepath)
 		if err != nil {
 			utils.Fatalf("Failed to read the keyfile at '%s': %v", keyfilepath, err)
 		}
 
-		// Decrypt key with passphrase.
 		passphrase := getPassphrase(ctx, false)
 		key, err := keystore.DecryptKey(keyjson, passphrase)
 		if err != nil {
@@ -93,8 +85,8 @@ var commandVerifyMessage = cli.Command{
 	Usage:     "verify the signature of a signed message",
 	ArgsUsage: "<address> <signature> <message>",
 	Description: `
-Verify the signature of the message.
-It is possible to refer to a file containing the message.`,
+Verify the signature of a message.
+It is possible to refer to a file containing the message via --msgfile.`,
 	Flags: []cli.Flag{
 		jsonFlag,
 		msgfileFlag,
