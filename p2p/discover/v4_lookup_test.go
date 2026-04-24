@@ -279,23 +279,6 @@ func (tn *preminedTestnet) nodesAtDistance(dist int) []v4wire.Node {
 	return result
 }
 
-func (tn *preminedTestnet) neighborsAtDistances(base *enode.Node, distances []uint, elems int) []*enode.Node {
-	var result []*enode.Node
-	for d := range lookupTestnet.dists {
-		for i := range lookupTestnet.dists[d] {
-			n := lookupTestnet.node(d, i)
-			d := enode.LogDist(base.ID(), n.ID())
-			if containsUint(uint(d), distances) {
-				result = append(result, n)
-				if len(result) >= elems {
-					return result
-				}
-			}
-		}
-	}
-	return result
-}
-
 func (tn *preminedTestnet) closest(n int) (nodes []*enode.Node) {
 	for d := range tn.dists {
 		for i := range tn.dists[d] {
@@ -344,13 +327,4 @@ func (tn *preminedTestnet) mine() {
 	}
 	fmt.Printf("	},\n")
 	fmt.Printf("}\n")
-}
-
-func containsUint(x uint, xs []uint) bool {
-	for _, v := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
