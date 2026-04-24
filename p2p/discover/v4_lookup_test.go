@@ -345,3 +345,12 @@ func (tn *preminedTestnet) mine() {
 	fmt.Printf("	},\n")
 	fmt.Printf("}\n")
 }
+
+func containsUint(x uint, xs []uint) bool {
+	for _, v := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

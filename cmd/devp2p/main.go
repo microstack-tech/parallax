@@ -60,7 +60,6 @@ func init() {
 		enrdumpCommand,
 		keyCommand,
 		discv4Command,
-		discv5Command,
 		dnsCommand,
 		dnsSeedCommand,
 		nodesetCommand,

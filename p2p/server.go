@@ -104,10 +104,6 @@ type Config struct {
 	// Disabling is useful for protocol debugging (manual topology).
 	NoDiscovery bool
 
-	// DiscoveryV5 specifies whether the new topic-discovery based V5 discovery
-	// protocol should be started or not.
-	DiscoveryV5 bool `toml:",omitempty"`
-
 	// Name sets the node name of this server.
 	// Use util.MakeName to create a name that follows existing conventions.
 	Name string `toml:"-"`
@@ -124,11 +120,6 @@ type Config struct {
 	// whoever answered on that ip:port. Ingested into addrman with
 	// source=dns_seed and KeyType=0x00 via IngestV2Addr.
 	BootstrapNodesV2 []*net.TCPAddr
-
-	// BootstrapNodesV5 are used to establish connectivity
-	// with the rest of the network using the V5 discovery
-	// protocol.
-	BootstrapNodesV5 []*enode.Node `toml:",omitempty"`
 
 	// DNSSeeds are hostnames the node resolves at DNSSeedDefaultInterval
 	// (24h, Bitcoin parity) to bootstrap addrman with v2.0-native peers
@@ -257,7 +248,6 @@ type Server struct {
 	nodedb    *enode.DB
 	localnode *enode.LocalNode
 	ntab      *discover.UDPv4
-	DiscV5    *discover.UDPv5
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
 
@@ -542,32 +532,6 @@ func (srv *Server) Stop() {
 	}
 }
 
-// sharedUDPConn implements a shared connection. Write sends messages to the underlying connection while read returns
-// messages that were found unprocessable and sent to the unhandled channel by the primary listener.
-type sharedUDPConn struct {
-	*net.UDPConn
-	unhandled chan discover.ReadPacket
-}
-
-// ReadFromUDP implements discover.UDPConn
-func (s *sharedUDPConn) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
-	packet, ok := <-s.unhandled
-	if !ok {
-		return 0, nil, errors.New("connection was closed")
-	}
-	l := len(packet.Data)
-	if l > len(b) {
-		l = len(b)
-	}
-	copy(b[:l], packet.Data[:l])
-	return l, packet.Addr, nil
-}
-
-// Close implements discover.UDPConn
-func (s *sharedUDPConn) Close() error {
-	return nil
-}
-
 // Start starts running the server.
 // Servers can not be re-used after stopping.
 func (srv *Server) Start() (err error) {
@@ -828,7 +792,7 @@ func (srv *Server) setupDiscovery() error {
 	}
 
 	// Don't listen on UDP endpoint if DHT is disabled.
-	if srv.NoDiscovery && !srv.DiscoveryV5 {
+	if srv.NoDiscovery {
 		return nil
 	}
 
@@ -867,72 +831,44 @@ func (srv *Server) setupDiscovery() error {
 	srv.localnode.SetFallbackUDP(realaddr.Port)
 
 	// Discovery V4
-	var unhandled chan discover.ReadPacket
-	var sconn *sharedUDPConn
-	if !srv.NoDiscovery {
-		if srv.DiscoveryV5 {
-			unhandled = make(chan discover.ReadPacket, 100)
-			sconn = &sharedUDPConn{conn, unhandled}
-		}
-		// discv4 seeds its routing table with BootstrapNodes (NodeID-
-		// carrying entries). BootstrapNodesV2 (ip:port only) are not
-		// usable here — discv4 is NodeID-keyed — and reach the v2
-		// handshake path through addrman ingest in setupAddrMan.
-		cfg := discover.Config{
-			PrivateKey:  srv.PrivateKey,
-			NetRestrict: srv.NetRestrict,
-			Bootnodes:   srv.BootstrapNodes,
-			Unhandled:   unhandled,
-			Log:         srv.log,
-			NodeFilter:  srv.NodeFilter,
-		}
-		ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
-		if err != nil {
-			return err
-		}
-		srv.ntab = ntab
-		// PIP-0006 Phase 5: legacy discovery mode gates whether
-		// discv4 drives the dial path. Modes:
-		//   on    — discv4 is a full dial source (v1.x compat).
-		//   auto  — discv4 responds but is NOT plumbed to the
-		//           dialer; addrman is the source of truth.
-		//   off   — this branch isn't reached because NoDiscovery
-		//           is already true (see setLegacyDiscoveryDefaults).
-		//
-		// discv4's own periodic table refresh still runs in auto
-		// mode so inbound PING/FINDNODE continues to work and the
-		// routing table stays warm — we only skip using RandomNodes
-		// as a dial candidate iterator.
-		mode := srv.legacyDiscoveryMode()
-		if mode == legacyDiscoveryOn {
-			src := ntab.RandomNodes()
-			if srv.addrbook != nil {
-				// Tee discv4 discoveries into addrman with
-				// source=legacy_udp. Original node passes
-				// through to the dialer unchanged.
-				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
-			}
-			srv.discmix.AddSource(src)
-		}
+	// discv4 seeds its routing table with BootstrapNodes (NodeID-
+	// carrying entries). BootstrapNodesV2 (ip:port only) are not
+	// usable here — discv4 is NodeID-keyed — and reach the v2
+	// handshake path through addrman ingest in setupAddrMan.
+	cfg := discover.Config{
+		PrivateKey:  srv.PrivateKey,
+		NetRestrict: srv.NetRestrict,
+		Bootnodes:   srv.BootstrapNodes,
+		Log:         srv.log,
+		NodeFilter:  srv.NodeFilter,
 	}
-
-	// Discovery V5
-	if srv.DiscoveryV5 {
-		cfg := discover.Config{
-			PrivateKey:  srv.PrivateKey,
-			NetRestrict: srv.NetRestrict,
-			Bootnodes:   srv.BootstrapNodesV5,
-			Log:         srv.log,
+	ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
+	if err != nil {
+		return err
+	}
+	srv.ntab = ntab
+	// PIP-0006 Phase 5: legacy discovery mode gates whether
+	// discv4 drives the dial path. Modes:
+	//   on    — discv4 is a full dial source (v1.x compat).
+	//   auto  — discv4 responds but is NOT plumbed to the
+	//           dialer; addrman is the source of truth.
+	//   off   — this branch isn't reached because NoDiscovery
+	//           is already true (see setLegacyDiscoveryDefaults).
+	//
+	// discv4's own periodic table refresh still runs in auto
+	// mode so inbound PING/FINDNODE continues to work and the
+	// routing table stays warm — we only skip using RandomNodes
+	// as a dial candidate iterator.
+	mode := srv.legacyDiscoveryMode()
+	if mode == legacyDiscoveryOn {
+		src := ntab.RandomNodes()
+		if srv.addrbook != nil {
+			// Tee discv4 discoveries into addrman with
+			// source=legacy_udp. Original node passes
+			// through to the dialer unchanged.
+			src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceLegacyUDP)
 		}
-		var err error
-		if sconn != nil {
-			srv.DiscV5, err = discover.ListenV5(sconn, srv.localnode, cfg)
-		} else {
-			srv.DiscV5, err = discover.ListenV5(conn, srv.localnode, cfg)
-		}
-		if err != nil {
-			return err
-		}
+		srv.discmix.AddSource(src)
 	}
 	return nil
 }
@@ -1553,9 +1489,6 @@ running:
 	// Terminate discovery. If there is a running lookup it will terminate soon.
 	if srv.ntab != nil {
 		srv.ntab.Close()
-	}
-	if srv.DiscV5 != nil {
-		srv.DiscV5.Close()
 	}
 	// Disconnect all peers.
 	for _, p := range peers {
