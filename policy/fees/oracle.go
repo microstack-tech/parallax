@@ -308,7 +308,7 @@ func NewOracle(backend OracleBackend, txPool TxPoolAccessor, params Config) *Ora
 		oracle.recentlyConfirmed = make(map[util.Hash]uint64)
 		oracle.cachedEstimates = make(map[int]cachedSmartEstimate)
 
-		logging.Info("Gas price oracle initialized (Bitcoin Core smart fee algorithm)",
+		logging.Info("Gas price oracle initialized (smart fee)",
 			"buckets", len(bucketBounds),
 			"spacing", feeSpacing,
 			"minBucket", minBucketFee,
@@ -318,7 +318,7 @@ func NewOracle(backend OracleBackend, txPool TxPoolAccessor, params Config) *Ora
 			"longPeriods", longBlockPeriods,
 		)
 	} else {
-		logging.Info("Gas price oracle initialized (legacy percentile algorithm)",
+		logging.Info("Gas price oracle initialized (legacy)",
 			"blocks", blocks, "percentile", percent,
 			"maxPrice", maxPrice, "ignorePrice", ignorePrice,
 		)
