@@ -205,13 +205,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Flags: metricsFlags,
 	},
 	{
-		Name: "ALIASED (deprecated)",
-		Flags: []cli.Flag{
-			utils.NoUSBFlag,
-			utils.LegacyWhitelistFlag,
-		},
-	},
-	{
 		Name:  "DAEMON",
 		Flags: daemonFlags,
 	},
@@ -240,17 +233,10 @@ func init() {
 					categorized[flag.String()] = struct{}{}
 				}
 			}
-			deprecated := make(map[string]struct{})
-			for _, flag := range utils.DeprecatedFlags {
-				deprecated[flag.String()] = struct{}{}
-			}
-			// Only add uncategorized flags if they are not deprecated
 			var uncategorized []cli.Flag
 			for _, flag := range data.(*cli.App).Flags {
 				if _, ok := categorized[flag.String()]; !ok {
-					if _, ok := deprecated[flag.String()]; !ok {
-						uncategorized = append(uncategorized, flag)
-					}
+					uncategorized = append(uncategorized, flag)
 				}
 			}
 			if len(uncategorized) > 0 {

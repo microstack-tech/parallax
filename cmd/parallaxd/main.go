@@ -66,7 +66,6 @@ var (
 		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,
-		utils.NoUSBFlag,
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.XHashCacheDirFlag,
@@ -95,7 +94,6 @@ var (
 		utils.TxLookupLimitFlag,
 		utils.LightKDFFlag,
 		utils.PrlRequiredBlocksFlag,
-		utils.LegacyWhitelistFlag,
 		utils.BloomFilterSizeFlag,
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
@@ -113,7 +111,6 @@ var (
 		utils.MiningEnabledFlag,
 		utils.MinerThreadsFlag,
 		utils.MinerNotifyFlag,
-		utils.LegacyMinerGasTargetFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
 		utils.MinerCoinbaseFlag,
@@ -226,8 +223,6 @@ func init() {
 		dumpConfigCommand,
 		// see dbcmd.go
 		dbCommand,
-		// See cmd/utils/flags_legacy.go
-		utils.ShowDeprecated,
 		// See snapshot.go
 		snapshotCommand,
 	}

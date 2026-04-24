@@ -229,7 +229,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			configdirFlag,
 			chainIdFlag,
 			utils.LightKDFFlag,
-			utils.NoUSBFlag,
 			utils.SmartCardDaemonPathFlag,
 			utils.HTTPListenAddrFlag,
 			utils.HTTPVirtualHostsFlag,
@@ -258,7 +257,6 @@ func init() {
 		configdirFlag,
 		chainIdFlag,
 		utils.LightKDFFlag,
-		utils.NoUSBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.HTTPListenAddrFlag,
 		utils.HTTPVirtualHostsFlag,
@@ -623,7 +621,7 @@ func signer(c *cli.Context) error {
 		ksLoc    = c.GlobalString(keystoreFlag.Name)
 		lightKdf = c.GlobalBool(utils.LightKDFFlag.Name)
 		advanced = c.GlobalBool(advancedMode.Name)
-		nousb    = c.GlobalBool(utils.NoUSBFlag.Name)
+		nousb    = true
 		scpath   = c.GlobalString(utils.SmartCardDaemonPathFlag.Name)
 	)
 	logging.Info("Starting signer", "chainid", chainId, "keystore", ksLoc,

@@ -232,10 +232,6 @@ var (
 		Name:  "prl.requiredblocks",
 		Usage: "Comma separated block number-to-hash mappings to require for peering (<number>=<hash>)",
 	}
-	LegacyWhitelistFlag = cli.StringFlag{
-		Name:  "whitelist",
-		Usage: "Comma separated block number-to-hash mappings to enforce (<number>=<hash>) (deprecated in favor of --prl.requiredblocks)",
-	}
 	BloomFilterSizeFlag = cli.Uint64Flag{
 		Name:  "bloomfilter.size",
 		Usage: "Megabytes of memory allocated to bloom-filter for pruning",
@@ -1295,9 +1291,6 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if ctx.GlobalIsSet(LightKDFFlag.Name) {
 		cfg.UseLightweightKDF = ctx.GlobalBool(LightKDFFlag.Name)
 	}
-	if ctx.GlobalIsSet(NoUSBFlag.Name) || cfg.NoUSB {
-		logging.Warn("Option nousb is deprecated and USB is deactivated by default. Use --usb to enable")
-	}
 	if ctx.GlobalIsSet(USBFlag.Name) {
 		cfg.USB = ctx.GlobalBool(USBFlag.Name)
 	}
@@ -1445,20 +1438,12 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	if ctx.GlobalIsSet(MinerNoVerifyFlag.Name) {
 		cfg.Noverify = ctx.GlobalBool(MinerNoVerifyFlag.Name)
 	}
-	if ctx.GlobalIsSet(LegacyMinerGasTargetFlag.Name) {
-		logging.Warn("The generic --miner.gastarget flag is deprecated and will be removed in the future!")
-	}
 }
 
 func setRequiredBlocks(ctx *cli.Context, cfg *nodeconfig.Config) {
 	requiredBlocks := ctx.GlobalString(PrlRequiredBlocksFlag.Name)
 	if requiredBlocks == "" {
-		if ctx.GlobalIsSet(LegacyWhitelistFlag.Name) {
-			logging.Warn("The flag --whitelist is deprecated and will be removed, please use --prl.requiredblocks")
-			requiredBlocks = ctx.GlobalString(LegacyWhitelistFlag.Name)
-		} else {
-			return
-		}
+		return
 	}
 	cfg.RequiredBlocks = make(map[uint64]util.Hash)
 	for _, entry := range strings.Split(requiredBlocks, ",") {
