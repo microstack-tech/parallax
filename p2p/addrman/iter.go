@@ -36,6 +36,12 @@ type V2Candidate struct {
 	Addr NetAddr // IPv4/IPv6 routable, port != 0
 }
 
+// IsSelfFunc reports whether addr matches the local node's own
+// advertised endpoint. V2Iter calls it for each candidate before
+// emit; matching entries are skipped so the v2 dialer doesn't
+// burn cycles on a guarded self-dial. nil disables the check.
+type IsSelfFunc func(addr *net.TCPAddr) bool
+
 // V2Iter iterates addrman entries with KeyType=0x00 (v2-native). It
 // draws candidates via Select() and skips non-v2 entries. Blocks
 // between draws with exponential backoff when the table has no v2
@@ -46,15 +52,18 @@ type V2Iter struct {
 	closed     chan struct{}
 	closeOnce  sync.Once
 	maxBackoff time.Duration
+	isSelf     IsSelfFunc
 }
 
 // NewV2Iter builds an iterator yielding only KeyType=0x00 entries.
-// Parallels NewNodeIter.
-func NewV2Iter(m *AddrMan, maxBackoff time.Duration) *V2Iter {
+// Parallels NewNodeIter. isSelf may be nil when the caller has no
+// notion of self (e.g., unit tests against a bare AddrMan); when
+// supplied, candidates that match are silently skipped.
+func NewV2Iter(m *AddrMan, maxBackoff time.Duration, isSelf IsSelfFunc) *V2Iter {
 	if maxBackoff <= 0 {
 		maxBackoff = 250 * time.Millisecond
 	}
-	return &V2Iter{m: m, closed: make(chan struct{}), maxBackoff: maxBackoff}
+	return &V2Iter{m: m, closed: make(chan struct{}), maxBackoff: maxBackoff, isSelf: isSelf}
 }
 
 // Next advances to the next v2 dial candidate. Blocks until one is
@@ -76,6 +85,25 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
+				// Skip the local node's own endpoint. The
+				// disc-protocol quorum can ingest our own
+				// observed external IP into addrman; without
+				// this gate the iterator re-emits it every
+				// cycle and the v2 dial guard burns cycles
+				// rejecting it. Cheap to test, cheap to skip.
+				if it.isSelf != nil {
+					if ap, apOk := addr.AddrPort(); apOk {
+						tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
+						if it.isSelf(tcp) {
+							logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
+							skips++
+							if skips >= maxSkipsBeforeBackoff {
+								goto idleBackoff
+							}
+							continue
+						}
+					}
+				}
 				// Skip entries addrman already considers dead.
 				// Without this gate a single stale KeyType=0x00
 				// entry — persisted in addrbook.rlp from a prior

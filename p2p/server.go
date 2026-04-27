@@ -903,7 +903,7 @@ func (srv *Server) setupDialScheduler() {
 		// when the addrbook has none (e.g., a freshly-installed
 		// v1.x-only network), the goroutine idles on its internal
 		// backoff.
-		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.isSelfEndpoint)
 		srv.loopWG.Add(1)
 		go srv.runV2Dialer()
 	}
