@@ -317,6 +317,7 @@ func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(ann); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	// Mark the hashes as present at the remote node
 	for _, block := range *ann {
 		peer.markBlock(block.Hash)
@@ -334,6 +335,7 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	if err := ann.sanityCheck(); err != nil {
 		return err
 	}
+	peer.MarkBlockRx()
 	if hash := types.DeriveSha(ann.Block.Transactions(), trie.NewStackTrie(nil)); hash != ann.Block.TxHash() {
 		logging.Warn("Propagated block has invalid body", "have", hash, "exp", ann.Block.TxHash())
 		return nil // TODO(karalabe): return error eventually, but wait a few releases
@@ -353,6 +355,7 @@ func handleBlockHeaders66(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(res); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	metadata := func() any {
 		hashes := make([]util.Hash, len(res.BlockHeadersPacket))
 		for i, header := range res.BlockHeadersPacket {
@@ -373,6 +376,7 @@ func handleBlockBodies66(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(res); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	metadata := func() any {
 		txsHashes := make([]util.Hash, len(res.BlockBodiesPacket))
 		hasher := trie.NewStackTrie(nil)
@@ -487,6 +491,7 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkTxRx()
 	for i, tx := range txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
@@ -507,6 +512,7 @@ func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error 
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkTxRx()
 	for i, tx := range txs.PooledTransactionsPacket {
 		// Validate and mark the remote transaction
 		if tx == nil {
