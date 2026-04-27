@@ -105,7 +105,7 @@ jobs:
         env:
           # Same default set as `release: export CMDS := $(CMDS_RELEASE)`
           # in the Makefile. Keep these two in sync.
-          CMDS: "clef parallaxkey parallaxd parallax-cli parallax"
+          CMDS: "parallaxd parallax-cli parallax-wallet parallax"
         run: |
           make package TARGETS="${{ matrix.target }}"
           ls -lh build/package/
