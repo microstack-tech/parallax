@@ -1696,11 +1696,23 @@ running:
 }
 
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
+	// Saturation handling for inbound: instead of hard-rejecting,
+	// run the Bitcoin-Core-style eviction algorithm to free a slot
+	// by dropping the lowest-quality existing inbound peer. If
+	// eviction succeeds, accept the new peer optimistically — the
+	// run loop processes the loser's delpeer asynchronously, so
+	// inboundCount transiently exceeds the cap.
+	//
+	// MaxPeers (total) saturation still hard-rejects: total cap is
+	// a system-resource ceiling, not subject to eviction. Inbound-
+	// only is what the algorithm targets.
 	switch {
 	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
 		return DiscTooManyPeers
 	case !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns():
-		return DiscTooManyPeers
+		if !srv.evictInbound(peers) {
+			return DiscTooManyPeers
+		}
 	case peers[c.node.ID()] != nil:
 		return DiscAlreadyConnected
 	case c.node.ID() == srv.localnode.ID():
