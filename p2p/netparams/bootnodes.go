@@ -28,15 +28,7 @@ import (
 //
 // The v2 handshake bootstrap path does not use this slice; it uses
 // MainnetBootnodesV2 instead.
-var MainnetBootnodes = []string{
-	// Parallax Foundation Go Bootnodes
-	// us-boston
-	"enode://34957ea19a9c8170892a41633f7ec05c3ca7d13d64fd155c485985c850f8cad72d5fa6ffcba62038580671565b76bd38b61cbc8145a203aa174f1069a3e10eb2@168.231.74.175:32110",
-	// eu-frankfurt
-	"enode://2060e01e74e46fd944e172373dc18eb1478ec050d9c2d66a4486347c215c5fc5a8f72cb8549419828d61e4f9ff75d31ced7977fc89967546e389ff821a5dc10e@72.61.186.233:32110",
-	// br-sao-paulo
-	"enode://7fcacf55ab8ffb8bd7bc722ba2336b6a4b304a2fc76fa65aadab4e17d196261793287f2cac80d10a25a351f06a038e73cca1170b2007af076bf82eb33e85d2f3@69.62.94.166:32110",
-}
+var MainnetBootnodes = []string{}
 
 // MainnetBootnodesV2 are the addresses of P2P bootstrap nodes on the
 // main Parallax network, in plain "ip:port" form. Consumed by the
@@ -46,7 +38,11 @@ var MainnetBootnodes = []string{
 // The Foundation bootnodes in MainnetBootnodes serve v1 RLPx only
 // and are intentionally omitted here — listing a v1-only endpoint
 // produces a TCP RST on every dial-scheduler tick.
-var MainnetBootnodesV2 = []string{}
+var MainnetBootnodesV2 = []string{
+	"168.231.74.175:32110",
+	"72.61.186.233:32110",
+	"69.62.94.166:32110",
+}
 
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
 // test network.
