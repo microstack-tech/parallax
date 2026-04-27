@@ -25,6 +25,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
@@ -329,5 +330,95 @@ func TestEvictInboundReturnsFalseWhenEverythingProtected(t *testing.T) {
 	)
 	if srv.evictInbound(peers) {
 		t.Fatal("evictInbound returned true with only trusted/static peers")
+	}
+}
+
+// TestPostHandshakeChecksTriggersEviction — when the inbound pool
+// is saturated, postHandshakeChecks triggers evictInbound instead
+// of hard-rejecting, and accepts the new peer optimistically when
+// eviction succeeds.
+func TestPostHandshakeChecksTriggersEviction(t *testing.T) {
+	srv := &Server{
+		log:    testlog.Logger(t, logging.LvlTrace),
+		Config: Config{MaxPeers: 50, NoDiscovery: true, NoDial: true},
+	}
+
+	// Build 40 inbound candidates so the eviction pipeline can
+	// land on a victim.
+	peers := map[enode.ID]*Peer{}
+	for i := range 40 {
+		p := makeEvictionPeer(t, evictionOpts{
+			inbound:    true,
+			createdAge: time.Duration(60+i) * time.Second,
+			ip:         net.IPv4(byte(10+i), 0, 0, 1),
+			minPing:    int64(i + 1),
+			lastBlock:  int64(1000 + i),
+			relayTxs:   true,
+		})
+		peers[p.ID()] = p
+	}
+
+	// Set localnode so the c.node.ID() == localnode.ID() comparison
+	// has a valid lhs. We don't need an actual local key; just a
+	// non-nil localnode.
+	if err := srv.initHelloNonce(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Synthesize a new inbound conn that triggers saturation.
+	// maxInboundConns by default returns MaxPeers - dialedConns
+	// = 50 - 16 (default DialRatio=3, so 16 outbound). But the
+	// test config explicitly drives saturation by passing a high
+	// inboundCount.
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: net.IPv4(99, 99, 99, 99), Port: 32110}}
+	defer fake.Close()
+	newConn := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      enode.SignNull(new(enr.Record), randomID()),
+		flags:     inboundConn,
+	}
+
+	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), newConn)
+	if err != nil {
+		t.Fatalf("postHandshakeChecks returned %v; expected nil after successful eviction", err)
+	}
+}
+
+// TestPostHandshakeChecksHardRejectsWhenEvictionFails — when the
+// inbound pool is saturated AND every peer is protected from
+// eviction (trusted/static), postHandshakeChecks falls through to
+// DiscTooManyPeers.
+func TestPostHandshakeChecksHardRejectsWhenEvictionFails(t *testing.T) {
+	srv := &Server{
+		log:    testlog.Logger(t, logging.LvlTrace),
+		Config: Config{MaxPeers: 4, NoDiscovery: true, NoDial: true},
+	}
+	if err := srv.initHelloNonce(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two trusted inbound peers — neither is evictable.
+	peers := peerSet(
+		makeEvictionPeer(t, evictionOpts{inbound: true, trusted: true, createdAge: time.Minute}),
+		makeEvictionPeer(t, evictionOpts{inbound: true, trusted: true, createdAge: time.Minute}),
+	)
+
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: net.IPv4(99, 99, 99, 99), Port: 32110}}
+	defer fake.Close()
+	newConn := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      enode.SignNull(new(enr.Record), randomID()),
+		flags:     inboundConn,
+	}
+
+	// Pass inboundCount >= maxInboundConns to force the saturation
+	// branch.
+	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), newConn)
+	if err != DiscTooManyPeers {
+		t.Fatalf("postHandshakeChecks = %v, want DiscTooManyPeers", err)
 	}
 }
