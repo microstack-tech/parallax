@@ -642,7 +642,7 @@ func syncAddPeer(srv *Server, node *enode.Node) bool {
 
 // newSelfEndpointServer builds a minimal Server whose localnode
 // advertises (ip, port). Used by the v2 self-connect tests so they
-// can drive isSelfEndpoint without standing up a full Start() path.
+// can drive IsSelfEndpoint without standing up a full Start() path.
 func newSelfEndpointServer(t *testing.T, ip net.IP, port int) *Server {
 	t.Helper()
 	db, err := enode.OpenDB("")
@@ -682,16 +682,16 @@ func TestIsSelfEndpoint(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := srv.isSelfEndpoint(tc.addr); got != tc.want {
-				t.Fatalf("isSelfEndpoint(%v) = %v, want %v", tc.addr, got, tc.want)
+			if got := srv.IsSelfEndpoint(tc.addr); got != tc.want {
+				t.Fatalf("IsSelfEndpoint(%v) = %v, want %v", tc.addr, got, tc.want)
 			}
 		})
 	}
 
 	t.Run("nil localnode", func(t *testing.T) {
 		bare := &Server{log: testlog.Logger(t, logging.LvlTrace)}
-		if bare.isSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
-			t.Fatal("isSelfEndpoint must return false when localnode is nil")
+		if bare.IsSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must return false when localnode is nil")
 		}
 	})
 
@@ -701,8 +701,8 @@ func TestIsSelfEndpoint(t *testing.T) {
 		// Must not false-positive — admin RPC paths can call DialV2
 		// before listenSetup completes.
 		early := newSelfEndpointServer(t, selfIP, 0)
-		if early.isSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
-			t.Fatal("isSelfEndpoint must return false while localnode TCP port is 0")
+		if early.IsSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must return false while localnode TCP port is 0")
 		}
 	})
 
@@ -711,8 +711,8 @@ func TestIsSelfEndpoint(t *testing.T) {
 		// fallback. Dialing your own loopback at your listen port
 		// is a self-connect and should be classified as such.
 		loop := newSelfEndpointServer(t, net.IP{127, 0, 0, 1}, selfPort)
-		if !loop.isSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
-			t.Fatal("isSelfEndpoint must catch loopback self-dial")
+		if !loop.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must catch loopback self-dial")
 		}
 	})
 }

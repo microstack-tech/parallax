@@ -27,15 +27,23 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
+// IsSelfFunc reports whether addr matches the local node's own
+// advertised endpoint. AddrmanBackend consults it before writing
+// gossiped entries to addrman so a peer can't (accidentally or
+// otherwise) cause us to ingest our own external IP as a peer.
+// nil disables the check.
+type IsSelfFunc func(addr *net.TCPAddr) bool
+
 // AddrmanBackend is the production Backend implementation. It routes
 // parallax-disc/1 traffic into an addrman.AddrMan for storage and
 // maintains the external-address Quorum tally. Per-peer rate-limit
 // state is kept in handler.go's state struct; the Backend provides the
 // buckets on demand via NewIngestBucket.
 type AddrmanBackend struct {
-	m   *addrman.AddrMan
-	Q   *Quorum
-	log logging.Logger
+	m      *addrman.AddrMan
+	Q      *Quorum
+	log    logging.Logger
+	isSelf IsSelfFunc
 
 	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
@@ -47,8 +55,11 @@ type AddrmanBackend struct {
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
-// Backend interface used by Run.
-func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger) *AddrmanBackend {
+// Backend interface used by Run. isSelf may be nil when the host
+// has no notion of self (tests, fuzzing) — in production it should
+// be Server.IsSelfEndpoint so a quorum-confirmed self-IP echoed
+// back to us via gossip is dropped at the ingest boundary.
+func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf IsSelfFunc) *AddrmanBackend {
 	if q == nil {
 		q = NewQuorum()
 	}
@@ -59,6 +70,7 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger) *Addrm
 		m:             m,
 		Q:             q,
 		log:           log,
+		isSelf:        isSelf,
 		peerBuckets:   make(map[PeerKey]*tokenBucket),
 		handshakeByID: make(map[enode.ID]string),
 	}
@@ -162,6 +174,17 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		naddr, err := addrman.NewNetAddr(net, e.Addr, e.TCPPort)
 		if err != nil {
 			continue
+		}
+		// Drop any entry that names our own advertised endpoint.
+		// Once our quorum-confirmed external IP propagates to peers
+		// (we self-advertise it on every outbound session) it can
+		// come back to us via gossip; without this filter we'd
+		// write a self-loop into addrman that survives across
+		// restarts via addrbook.rlp.
+		if b.isSelf != nil {
+			if tcp, ok := selfTCPFromEntry(e); ok && b.isSelf(tcp) {
+				continue
+			}
 		}
 		// Clamp LastSeen to [now-10min, now+10min] per PIP-0006
 		// Phase 2. Future-dating is rejected by falling back to now
@@ -318,3 +341,22 @@ func computeGroup(net uint8, addr []byte) []byte {
 // structurally identical (same BIP155 codes) but Go's type system
 // requires the conversion.
 func addrmanNetID(n uint8) addrman.NetID { return addrman.NetID(n) }
+
+// selfTCPFromEntry projects a PeerEntry onto the *net.TCPAddr shape
+// IsSelfFunc consumes. Returns ok=false for non-IPv4/IPv6 entries —
+// those can never be the local node's listen endpoint.
+func selfTCPFromEntry(e PeerEntry) (*net.TCPAddr, bool) {
+	switch e.NetworkID {
+	case NetIPv4:
+		if len(e.Addr) != 4 {
+			return nil, false
+		}
+		return &net.TCPAddr{IP: net.IPv4(e.Addr[0], e.Addr[1], e.Addr[2], e.Addr[3]), Port: int(e.TCPPort)}, true
+	case NetIPv6:
+		if len(e.Addr) != 16 {
+			return nil, false
+		}
+		return &net.TCPAddr{IP: append(net.IP(nil), e.Addr...), Port: int(e.TCPPort)}, true
+	}
+	return nil, false
+}

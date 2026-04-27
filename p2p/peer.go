@@ -120,6 +120,16 @@ type Peer struct {
 
 // NewPeer returns a peer for testing purposes.
 func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
+	pipe, _ := net.Pipe()
+	return NewPeerForTest(id, name, caps, pipe)
+}
+
+// NewPeerForTest returns a peer backed by the supplied net.Conn so
+// callers in other packages can drive code paths that depend on
+// Peer.RemoteAddr() / Peer.LocalAddr() — for example, AddrmanBackend
+// tests that need a *net.TCPAddr remote rather than the synthetic
+// pipeAddr returned by net.Pipe.
+func NewPeerForTest(id enode.ID, name string, caps []Cap, fd net.Conn) *Peer {
 	// Generate a fake set of local protocols to match as running caps. Almost
 	// no fields needs to be meaningful here as we're only using it to cross-
 	// check with the "remote" caps array.
@@ -128,9 +138,8 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 		protos[i].Name = cap.Name
 		protos[i].Version = cap.Version
 	}
-	pipe, _ := net.Pipe()
 	node := enode.SignNull(new(enr.Record), id)
-	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
+	conn := &conn{fd: fd, transport: nil, node: node, caps: caps, name: name}
 	peer := newPeer(logging.Root(), conn, protos)
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer

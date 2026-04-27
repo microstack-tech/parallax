@@ -903,7 +903,7 @@ func (srv *Server) setupDialScheduler() {
 		// when the addrbook has none (e.g., a freshly-installed
 		// v1.x-only network), the goroutine idles on its internal
 		// backoff.
-		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.isSelfEndpoint)
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.IsSelfEndpoint)
 		srv.loopWG.Add(1)
 		go srv.runV2Dialer()
 	}
@@ -1007,7 +1007,7 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	if !srv.v2DialCooldownCheckAndMark(addr) {
 		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
 	}
-	if srv.isSelfEndpoint(addr) {
+	if srv.IsSelfEndpoint(addr) {
 		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
 		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
 	}
@@ -1111,8 +1111,11 @@ func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
 	return true
 }
 
-// isSelfEndpoint reports whether addr matches this node's own
-// advertised (IP, TCP) endpoint. Used to short-circuit v2 dials
+// IsSelfEndpoint reports whether addr matches this node's own
+// advertised (IP, TCP) endpoint. Exported so external wiring (the
+// disc-protocol AddrmanBackend, the addrman V2Iter) can consult
+// the same source of truth as the dial / handshake guards. Used
+// to short-circuit v2 dials
 // that would hairpin through the NAT and arrive back at our own
 // listener, and as a defense-in-depth check in postHandshakeChecks
 // for v2 connections that bypass the dial guard. Returns false
@@ -1120,7 +1123,7 @@ func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
 // setupListening) so the check can't false-positive in the
 // startup window — DialV2 is reachable from admin RPC paths that
 // may run before that point.
-func (srv *Server) isSelfEndpoint(addr *net.TCPAddr) bool {
+func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	if addr == nil || srv.localnode == nil {
 		return false
 	}
@@ -1564,7 +1567,7 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	// and any future code path that bypasses DialV2.
 	if _, isV2 := c.transport.(*v2Transport); isV2 {
 		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
-			if srv.isSelfEndpoint(remote) {
+			if srv.IsSelfEndpoint(remote) {
 				return DiscSelf
 			}
 			for _, p := range peers {
