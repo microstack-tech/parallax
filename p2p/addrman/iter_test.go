@@ -167,3 +167,90 @@ func TestTeeIterFeedsAddrman(t *testing.T) {
 		t.Errorf("source counts = %v, want 2 legacy_udp", counts)
 	}
 }
+
+// TestV2IterSkipsSelf — when isSelf reports a stored KeyType=0x00
+// entry as the local node, V2Iter must skip it and emit the next
+// one. Without this gate, the disc protocol's quorum-confirmed
+// self-IP is selected forever and the v2 dialer burns its dial
+// cycles on a guarded self-dial.
+func TestV2IterSkipsSelf(t *testing.T) {
+	m, err := New(Deterministic(13))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfAddr, _ := NewNetAddr(NetIPv4, []byte{45, 236, 49, 58}, 32110)
+	otherAddr, _ := NewNetAddr(NetIPv4, []byte{8, 8, 4, 4}, 32110)
+	if !m.AddOne(selfAddr, 0x00, nil, time.Now(), selfAddr, SourceTCPGossip, 0) {
+		t.Fatal("AddOne self failed")
+	}
+	if !m.AddOne(otherAddr, 0x00, nil, time.Now(), otherAddr, SourceTCPGossip, 0) {
+		t.Fatal("AddOne other failed")
+	}
+
+	selfTCP := &net.TCPAddr{IP: net.IPv4(45, 236, 49, 58), Port: 32110}
+	isSelf := func(addr *net.TCPAddr) bool {
+		return addr.Port == selfTCP.Port && addr.IP.Equal(selfTCP.IP)
+	}
+
+	it := NewV2Iter(m, 10*time.Millisecond, isSelf)
+	defer it.Close()
+
+	got := make(chan NetAddr, 1)
+	go func() {
+		if it.Next() {
+			got <- it.Candidate().Addr
+		} else {
+			got <- NetAddr{}
+		}
+	}()
+
+	select {
+	case cand := <-got:
+		if !cand.Valid() {
+			t.Fatal("V2Iter.Next returned false")
+		}
+		if cand.Equal(selfAddr) {
+			t.Fatalf("V2Iter emitted self entry %v", cand)
+		}
+		if !cand.Equal(otherAddr) {
+			t.Fatalf("V2Iter emitted unexpected entry: got %v want %v", cand, otherAddr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("V2Iter did not yield")
+	}
+}
+
+// TestV2IterNilSelfFn — passing a nil IsSelfFunc must disable the
+// filter, not panic. Lets unit tests against a bare AddrMan use
+// V2Iter without inventing a self-fn.
+func TestV2IterNilSelfFn(t *testing.T) {
+	m, err := New(Deterministic(14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, _ := NewNetAddr(NetIPv4, []byte{1, 2, 3, 4}, 32110)
+	if !m.AddOne(addr, 0x00, nil, time.Now(), addr, SourceTCPGossip, 0) {
+		t.Fatal("AddOne failed")
+	}
+
+	it := NewV2Iter(m, 10*time.Millisecond, nil)
+	defer it.Close()
+
+	got := make(chan NetAddr, 1)
+	go func() {
+		if it.Next() {
+			got <- it.Candidate().Addr
+		} else {
+			got <- NetAddr{}
+		}
+	}()
+
+	select {
+	case cand := <-got:
+		if !cand.Equal(addr) {
+			t.Fatalf("got %v want %v", cand, addr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("V2Iter did not yield with nil isSelf")
+	}
+}
