@@ -71,15 +71,32 @@ type Backend interface {
 	// known (connection torn down, never parallax-disc/1-negotiated).
 	PeerHandshake(id enode.ID) string
 
+	// LocalHello returns the Hello the handler should send on the
+	// outgoing greeting. Carries the local nonce, listen port, and
+	// services flag. Bitcoin Core analog: PushNodeVersion.
+	LocalHello() Hello
+
+	// HandleHello consumes the peer's Hello on receipt. Must run the
+	// self-connect nonce check (returning an error to end the
+	// session if the peer's nonce matches our own) and may store
+	// the Hello for later lookup.
+	HandleHello(peer *p2p.Peer, h Hello) error
+
 	// Log returns the logger to use for protocol-level events.
 	Log() logging.Logger
 }
 
 // state holds per-peer handler state — one struct per session.
 type state struct {
+	// sentHello / gotHello track the v2 Hello exchange. Hello is the
+	// first message in both directions; receiving any other message
+	// before Hello is a protocol violation. Once gotHello is set,
+	// it's never reset — a second Hello is also a violation.
+	sentHello atomic.Bool
+	gotHello  atomic.Bool
+
 	// sentYourAddr: we've written our YourAddr message for this
-	// session. Each side sends exactly one, as the first message after
-	// capability negotiation.
+	// session. Each side sends exactly one, immediately after Hello.
 	sentYourAddr atomic.Bool
 
 	// gotYourAddr: we've seen the peer's YourAddr for this session.
@@ -120,9 +137,18 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 
 	st := &state{}
 
-	// First action on both sides: send YourAddr reporting the remote's
-	// observed TCP source. Order-independent because RLPx is
-	// multiplexed — either message may arrive first at the receiver.
+	// First action on both sides: send Hello carrying the local
+	// nonce, listen port, and services flag. Receivers compare the
+	// nonce against their own to detect self-connect, and use the
+	// listen port to dedup cross-dial pairs (phase 2). Bitcoin Core
+	// analog: PushNodeVersion (src/net.cpp).
+	if err := sendHello(backend, rw, st); err != nil {
+		log.Debug("parallax-disc/1: Hello send failed", "err", err)
+	}
+
+	// YourAddr follows Hello: peer's view of our remote source for
+	// quorum. Order-independent on the wire because RLPx is
+	// multiplexed — but logically Hello must precede YourAddr.
 	if err := sendYourAddr(backend, peer, rw, st); err != nil {
 		log.Debug("parallax-disc/1: YourAddr send failed", "err", err)
 	}
@@ -183,7 +209,18 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 		return fmt.Errorf("disc: message too large: %d > %d", msg.Size, MaxMessageSize)
 	}
 
+	// Enforce the protocol's first-message ordering: Hello must be
+	// the first message on every session. Anything else before Hello
+	// is a violation. Once gotHello is true, the rule is satisfied.
+	// The Hello message itself bypasses the gate (it's allowed to
+	// be the first thing we see).
+	if msg.Code != HelloMsg && !st.gotHello.Load() {
+		return fmt.Errorf("disc: msg 0x%02x before Hello", msg.Code)
+	}
+
 	switch msg.Code {
+	case HelloMsg:
+		return handleHello(backend, peer, st, msg)
 	case GetPeersMsg:
 		return handleGetPeers(backend, peer, rw, st, msg)
 	case PeersMsg:
@@ -315,6 +352,35 @@ func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) err
 	}
 	backend.HandleYourAddr(peer, y.NetworkID, y.Addr, y.TCPPort)
 	return nil
+}
+
+// sendHello writes the local node's Hello (nonce, listen port,
+// services). Idempotent via the CAS on sentHello — runs at most
+// once per session, even if Run is restarted by a higher layer.
+func sendHello(backend Backend, rw p2p.MsgReadWriter, st *state) error {
+	if !st.sentHello.CompareAndSwap(false, true) {
+		return nil
+	}
+	return p2p.Send(rw, HelloMsg, backend.LocalHello())
+}
+
+// handleHello processes the peer's Hello on the receive side.
+// Single-shot per session via gotHello — a second Hello is a
+// protocol violation. Decode + Validate + delegate to backend; the
+// backend runs the self-connect nonce check and stores the entry
+// for later cross-dial dedup lookups.
+func handleHello(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
+	var h Hello
+	if err := msg.Decode(&h); err != nil {
+		return fmt.Errorf("disc: Hello decode: %w", err)
+	}
+	if !st.gotHello.CompareAndSwap(false, true) {
+		return errors.New("disc: multiple Hello messages from one peer")
+	}
+	if err := h.Validate(); err != nil {
+		return err
+	}
+	return backend.HandleHello(peer, h)
 }
 
 // sendYourAddr is the handshake-time "here's what I see as your source"
