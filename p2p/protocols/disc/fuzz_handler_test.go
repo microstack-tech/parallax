@@ -44,8 +44,10 @@ func FuzzHandlerDispatch(f *testing.F) {
 	f.Add(uint8(GetPeersMsg), []byte{0xc0})
 	f.Add(uint8(PeersMsg), []byte{0xc0})
 	f.Add(uint8(YourAddrMsg), []byte{0xc0})
+	f.Add(uint8(HelloMsg), []byte{0xc0})
 	f.Add(uint8(0xFF), []byte{})
 	f.Add(uint8(PeersMsg), bytes.Repeat([]byte{0xff}, 256))
+	f.Add(uint8(HelloMsg), bytes.Repeat([]byte{0xff}, 256))
 
 	f.Fuzz(func(t *testing.T, code uint8, payload []byte) {
 		if len(payload) > 16*1024 {
