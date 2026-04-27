@@ -17,6 +17,7 @@
 package disc
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -34,16 +35,28 @@ import (
 // nil disables the check.
 type IsSelfFunc func(addr *net.TCPAddr) bool
 
+// HelloProvider returns the local node's outgoing Hello (nonce,
+// listen port, services). Called once per outbound session by the
+// handler before sending. nil disables Hello sending entirely (used
+// by test backends that don't need the v2 greeting).
+type HelloProvider func() Hello
+
+// errSelfConnect is returned from HandleHello when the remote's
+// echoed nonce matches our own. The session ends; the connection is
+// torn down with DiscSelf upstream.
+var errSelfConnect = errors.New("disc: self-connect detected via Hello nonce")
+
 // AddrmanBackend is the production Backend implementation. It routes
 // parallax-disc/1 traffic into an addrman.AddrMan for storage and
 // maintains the external-address Quorum tally. Per-peer rate-limit
 // state is kept in handler.go's state struct; the Backend provides the
 // buckets on demand via NewIngestBucket.
 type AddrmanBackend struct {
-	m      *addrman.AddrMan
-	Q      *Quorum
-	log    logging.Logger
-	isSelf IsSelfFunc
+	m         *addrman.AddrMan
+	Q         *Quorum
+	log       logging.Logger
+	isSelf    IsSelfFunc
+	helloProv HelloProvider
 
 	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
@@ -52,6 +65,11 @@ type AddrmanBackend struct {
 	// Populated on session start by TrackHandshake, purged on
 	// PeerDisconnected.
 	handshakeByID map[enode.ID]string
+	// peerHello is the per-session record of each peer's Hello.
+	// Populated on Hello receipt, purged in PeerDisconnected.
+	// Looked up by Server.peerListenAddr to dedup cross-dial pairs
+	// (phase 2) and by future eviction telemetry (phase 3).
+	peerHello map[PeerKey]Hello
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
@@ -59,7 +77,10 @@ type AddrmanBackend struct {
 // has no notion of self (tests, fuzzing) — in production it should
 // be Server.IsSelfEndpoint so a quorum-confirmed self-IP echoed
 // back to us via gossip is dropped at the ingest boundary.
-func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf IsSelfFunc) *AddrmanBackend {
+// helloProvider may be nil when the host doesn't speak the Hello
+// extension (legacy tests). In production it returns the Hello the
+// Server wants to advertise.
+func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf IsSelfFunc, helloProvider HelloProvider) *AddrmanBackend {
 	if q == nil {
 		q = NewQuorum()
 	}
@@ -71,8 +92,10 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		Q:             q,
 		log:           log,
 		isSelf:        isSelf,
+		helloProv:     helloProvider,
 		peerBuckets:   make(map[PeerKey]*tokenBucket),
 		handshakeByID: make(map[enode.ID]string),
+		peerHello:     make(map[PeerKey]Hello),
 	}
 }
 
@@ -286,8 +309,49 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	b.mu.Lock()
 	delete(b.peerBuckets, key)
 	delete(b.handshakeByID, peer.ID())
+	delete(b.peerHello, key)
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
+}
+
+// LocalHello returns the local node's outgoing Hello (the value sent
+// on every outbound parallax-disc/1 session). Returns the zero
+// Hello with ProtoVersion=HelloMinProtoVersion if no provider is
+// configured — keeps tests usable without a full Server context.
+func (b *AddrmanBackend) LocalHello() Hello {
+	if b.helloProv == nil {
+		return Hello{ProtoVersion: HelloMinProtoVersion}
+	}
+	return b.helloProv()
+}
+
+// HandleHello stores the peer's claimed Hello and runs the
+// self-connect check. Returns errSelfConnect when the peer's nonce
+// matches our own — the handler propagates this to end the session
+// with DiscSelf upstream. Cross-dial dedup using the disclosed
+// listen port lands in phase 2.
+func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
+	if b.helloProv != nil {
+		if local := b.helloProv(); h.Nonce == local.Nonce {
+			return errSelfConnect
+		}
+	}
+	key := peerKeyFor(peer)
+	b.mu.Lock()
+	b.peerHello[key] = h
+	b.mu.Unlock()
+	return nil
+}
+
+// PeerHello returns the Hello previously recorded for id, or
+// (zero, false) if no Hello has been received on the peer's session.
+// Used by Server.peerListenAddr (phase 2) to project an inbound
+// peer's effective listen endpoint for cross-dial dedup.
+func (b *AddrmanBackend) PeerHello(key PeerKey) (Hello, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h, ok := b.peerHello[key]
+	return h, ok
 }
 
 // peerKeyFor returns the stable PeerKey for the session lifetime. We
