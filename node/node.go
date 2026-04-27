@@ -602,7 +602,7 @@ func (n *Node) setupAddrManAndDisc() error {
 	// Register the subprotocol. Append directly to Protocols — we're
 	// still in initializingState (Start's state machine has flipped
 	// to runningState but the server hasn't started yet).
-	backend := disc.NewAddrmanBackend(m, nil, n.log)
+	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
 	return nil
