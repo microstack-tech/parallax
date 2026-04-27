@@ -285,6 +285,31 @@ func TestHandlerHelloValidationError(t *testing.T) {
 	}
 }
 
+// TestHandlerHelloEndsSessionOnSelfNonce — when the testBackend
+// returns errSelfConnect from HandleHello (simulating a peer
+// echoing our own nonce), the handler ends the session.
+func TestHandlerHelloEndsSessionOnSelfNonce(t *testing.T) {
+	b := &testBackend{
+		obsOK:    true,
+		helloErr: errSelfConnect,
+	}
+	app, done := runHandler(t, b)
+	drainGreeting(t, app)
+
+	in := Hello{ProtoVersion: HelloMinProtoVersion, Nonce: 1, ListenPort: 32110}
+	if err := p2p.Send(app, HelloMsg, in); err != nil {
+		t.Fatalf("send Hello: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, errSelfConnect) {
+			t.Fatalf("session ended with %v, want errSelfConnect", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler didn't exit after self-nonce Hello")
+	}
+}
+
 // TestHandlerHelloPropagatesToBackend — a valid Hello reaches
 // backend.HandleHello and is captured.
 func TestHandlerHelloPropagatesToBackend(t *testing.T) {
