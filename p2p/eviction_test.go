@@ -386,6 +386,21 @@ func TestPostHandshakeChecksTriggersEviction(t *testing.T) {
 	}
 }
 
+// TestNodeNetworkGroupKeyExemptsLoopback — loopback / link-local
+// addresses bypass the diversity gate so dev-loopback tests don't
+// degrade to one peer total.
+func TestNodeNetworkGroupKeyExemptsLoopback(t *testing.T) {
+	if k := ipNetworkGroupKey(net.ParseIP("127.0.0.1")); k != "" {
+		t.Errorf("loopback yielded non-empty key %q", k)
+	}
+	if k := ipNetworkGroupKey(net.ParseIP("169.254.1.1")); k != "" {
+		t.Errorf("link-local yielded non-empty key %q", k)
+	}
+	if k := ipNetworkGroupKey(net.IPv4(8, 8, 8, 8)); k == "" {
+		t.Error("public IPv4 yielded empty key")
+	}
+}
+
 // TestPostHandshakeChecksHardRejectsWhenEvictionFails — when the
 // inbound pool is saturated AND every peer is protected from
 // eviction (trusted/static), postHandshakeChecks falls through to
