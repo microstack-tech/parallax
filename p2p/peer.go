@@ -178,6 +178,13 @@ func (p *Peer) Fullname() string {
 	return p.rw.name
 }
 
+// Created returns the monotonic clock time at which this peer was
+// constructed. Used by cross-dial dedup and (future) eviction
+// telemetry as a "connection age" signal — smaller value = older.
+func (p *Peer) Created() mclock.AbsTime {
+	return p.created
+}
+
 // Caps returns the capabilities (supported subprotocols) of the remote peer.
 func (p *Peer) Caps() []Cap {
 	// TODO: maybe return copy

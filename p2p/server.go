@@ -261,6 +261,14 @@ type Server struct {
 	// for concurrent reads from peer goroutines without locking.
 	helloNonce uint64
 
+	// peerListenLookup is the disc-protocol's per-peer Hello cache
+	// projected as "given this peer ID, what listen port did they
+	// disclose?". Used by peerListenAddr to dedup inbound peers
+	// (whose RemoteAddr port is ephemeral) against outbound dials.
+	// Set once at node setup before Start; nil during tests that
+	// don't wire the disc backend.
+	peerListenLookup PeerListenPortLookup
+
 	// addrbook is the PIP-0006 address manager. Populated only when
 	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
 	// additional FairMix source and receives discv4/bootnode entries
@@ -422,6 +430,31 @@ func (srv *Server) LocalNode() *enode.LocalNode {
 // safe for concurrent reads.
 func (srv *Server) HelloNonce() uint64 {
 	return srv.helloNonce
+}
+
+// PeerListenPortLookup is the minimal surface peerListenAddr needs
+// to consult an external per-peer listen-port store. The
+// parallax-disc/1 AddrmanBackend records a peer's claimed listen
+// port from their Hello message and implements this interface so
+// the Server can resolve inbound peers' true listen address (their
+// kernel RemoteAddr port is ephemeral, not their listen port).
+//
+// Returning ok=false means the peer hasn't disclosed a port (yet)
+// or doesn't speak the disc protocol — peerListenAddr in turn
+// reports unknown for that peer, which behaves correctly in the
+// dedup paths (no false positives).
+type PeerListenPortLookup interface {
+	PeerListenPort(id enode.ID) (uint16, bool)
+}
+
+// SetPeerListenPortLookup wires the disc backend (or any other
+// per-peer listen-port store) into the Server. Called once at node
+// setup before Start; subsequent calls overwrite. Concurrent reads
+// from peer goroutines see the latest value via plain field access
+// — node setup runs before any peer goroutine, so the
+// happens-before is established by Start's startup barrier.
+func (srv *Server) SetPeerListenPortLookup(l PeerListenPortLookup) {
+	srv.peerListenLookup = l
 }
 
 // initHelloNonce draws a 64-bit value from crypto/rand. Called once
@@ -1174,20 +1207,102 @@ func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	return addr.Port == selfPort && addr.IP.Equal(n.IP())
 }
 
-// alreadyConnectedTo reports whether any current peer has a RemoteAddr
-// matching addr's (IP, port). Used by DialV2 to dedupe v2 targets
-// that can't be caught by node.ID-keyed matching.
+// peerListenAddr returns the peer's effective (IP, listen-port) for
+// dedup. For outbound peers, RemoteAddr is the dial target — its port
+// IS the peer's listen port. For inbound peers, RemoteAddr's port is
+// the ephemeral source they connected from; substitute the listen
+// port the peer disclosed via parallax-disc/1 Hello when available.
+// Returns ok=false in two cases:
+//   - non-TCP RemoteAddr (test pipes, tunneled transports);
+//   - inbound peer with no disclosed listen port yet (pre-Hello window
+//     or v1 peer that doesn't speak the extension).
+//
+// Callers using this for dedup must treat ok=false as "no signal" —
+// it's not safe to assume the peer's listen address.
+func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
+	pra, ok := p.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return nil, false
+	}
+	if !p.rw.is(inboundConn) {
+		return pra, true
+	}
+	if srv.peerListenLookup == nil {
+		return nil, false
+	}
+	port, ok := srv.peerListenLookup.PeerListenPort(p.ID())
+	if !ok || port == 0 {
+		return nil, false
+	}
+	return &net.TCPAddr{IP: pra.IP, Port: int(port)}, true
+}
+
+// PeerListenAddr is the exported wrapper around peerListenAddr.
+// Used by the parallax-disc/1 AddrmanBackend's cross-dial dedup
+// hook so the disc package doesn't need to duplicate the
+// outbound/inbound branching logic.
+func (srv *Server) PeerListenAddr(p *Peer) (*net.TCPAddr, bool) {
+	return srv.peerListenAddr(p)
+}
+
+// alreadyConnectedTo reports whether any current peer's effective
+// listen-addr matches addr's (IP, port). Used by DialV2 to dedupe v2
+// dial targets that can't be caught by node.ID-keyed matching.
+//
+// Inbound peers contribute to this check only after disclosing their
+// listen port via Hello; in the brief window between TCP-up and Hello
+// receipt, an outbound dial to the same logical peer can race through.
+// The post-Hello cross-dial dedup hook in AddrmanBackend.HandleHello
+// resolves the resulting duplicate by dropping the inbound side.
 func (srv *Server) alreadyConnectedTo(addr *net.TCPAddr) bool {
 	for _, p := range srv.Peers() {
-		pra, ok := p.RemoteAddr().(*net.TCPAddr)
+		la, ok := srv.peerListenAddr(p)
 		if !ok {
 			continue
 		}
-		if pra.Port == addr.Port && pra.IP.Equal(addr.IP) {
+		if la.Port == addr.Port && la.IP.Equal(addr.IP) {
 			return true
 		}
 	}
 	return false
+}
+
+// FindCrossDialDup looks for an existing peer (other than newPeer)
+// whose effective listen-addr matches (newPeer.IP, listenPort).
+// Returns nil if none. Called by AddrmanBackend.HandleHello after
+// a peer discloses its listen port: if a duplicate exists, one of
+// the two connections must be torn down to avoid double-counting
+// the logical neighbor. Tie-break logic lives at the call site.
+func (srv *Server) FindCrossDialDup(newPeer *Peer, listenPort uint16) *Peer {
+	return srv.findCrossDialDupIn(srv.Peers(), newPeer, listenPort)
+}
+
+// findCrossDialDupIn is the testable core: same logic but operates
+// over a caller-supplied peer slice instead of pulling the current
+// set through the run loop. Tests synthesize fake peers and drive
+// it directly without standing up Start().
+func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort uint16) *Peer {
+	if newPeer == nil || listenPort == 0 {
+		return nil
+	}
+	pra, ok := newPeer.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return nil
+	}
+	target := &net.TCPAddr{IP: pra.IP, Port: int(listenPort)}
+	for _, p := range peers {
+		if p == newPeer {
+			continue
+		}
+		la, ok := srv.peerListenAddr(p)
+		if !ok {
+			continue
+		}
+		if la.Port == target.Port && la.IP.Equal(target.IP) {
+			return p
+		}
+	}
+	return nil
 }
 
 // logStartup emits the node's starting address as plain ip:port

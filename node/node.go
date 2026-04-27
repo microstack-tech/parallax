@@ -617,6 +617,13 @@ func (n *Node) setupAddrManAndDisc() error {
 		}
 	}
 	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint, helloProvider)
+	// Bidirectional wiring for cross-dial dedup:
+	//   Server → backend.PeerListenPort to resolve inbound peers'
+	//     listen ports in alreadyConnectedTo / peerListenAddr.
+	//   backend → server.FindCrossDialDup to scan peers when a
+	//     Hello arrives and disconnect duplicates.
+	n.server.SetPeerListenPortLookup(backend)
+	backend.SetCrossDialHost(n.server)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
 	return nil
