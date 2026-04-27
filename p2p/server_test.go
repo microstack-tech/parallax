@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -1034,6 +1035,112 @@ func TestAlreadyConnectedToInboundWithLookup(t *testing.T) {
 	}
 	if la.Port != target.Port || !la.IP.Equal(target.IP) {
 		t.Fatalf("peerListenAddr = %v, want %v", la, target)
+	}
+}
+
+// TestPeerTelemetryDefaults — fresh peer has zero telemetry except
+// RelayTxs which defaults true (peers relay tx until disclosed).
+func TestPeerTelemetryDefaults(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	if p.MinPing() != 0 {
+		t.Errorf("MinPing default = %v, want 0", p.MinPing())
+	}
+	if p.LastBlockRx() != 0 {
+		t.Errorf("LastBlockRx default = %v, want 0", p.LastBlockRx())
+	}
+	if p.LastTxRx() != 0 {
+		t.Errorf("LastTxRx default = %v, want 0", p.LastTxRx())
+	}
+	if p.BytesRx() != 0 {
+		t.Errorf("BytesRx default = %v, want 0", p.BytesRx())
+	}
+	if p.BytesTx() != 0 {
+		t.Errorf("BytesTx default = %v, want 0", p.BytesTx())
+	}
+	if !p.RelayTxs() {
+		t.Error("RelayTxs default should be true")
+	}
+	if p.BlockRelayOnly() {
+		t.Error("BlockRelayOnly default should be false")
+	}
+}
+
+// TestPeerMarkBlockRxAdvances — MarkBlockRx writes a non-zero
+// monotonic value; subsequent calls produce values >= the prior.
+func TestPeerMarkBlockRxAdvances(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	p.MarkBlockRx()
+	first := p.LastBlockRx()
+	if first == 0 {
+		t.Fatal("LastBlockRx still zero after MarkBlockRx")
+	}
+	time.Sleep(time.Millisecond)
+	p.MarkBlockRx()
+	second := p.LastBlockRx()
+	if second < first {
+		t.Fatalf("LastBlockRx regressed: first=%v second=%v", first, second)
+	}
+}
+
+// TestPeerMarkTxRxAdvances — same shape as block.
+func TestPeerMarkTxRxAdvances(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	p.MarkTxRx()
+	first := p.LastTxRx()
+	if first == 0 {
+		t.Fatal("LastTxRx still zero after MarkTxRx")
+	}
+	time.Sleep(time.Millisecond)
+	p.MarkTxRx()
+	if p.LastTxRx() < first {
+		t.Fatal("LastTxRx regressed")
+	}
+}
+
+// TestPeerSetRelayTxs — setter flips the flag; concurrent reads see
+// the new value.
+func TestPeerSetRelayTxs(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	p.SetRelayTxs(false)
+	if p.RelayTxs() {
+		t.Error("RelayTxs should be false after SetRelayTxs(false)")
+	}
+	p.SetRelayTxs(true)
+	if !p.RelayTxs() {
+		t.Error("RelayTxs should be true after SetRelayTxs(true)")
+	}
+}
+
+// TestPeerSetBlockRelayOnly — setter is sticky; default false.
+func TestPeerSetBlockRelayOnly(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	if p.BlockRelayOnly() {
+		t.Error("default BlockRelayOnly should be false")
+	}
+	p.SetBlockRelayOnly(true)
+	if !p.BlockRelayOnly() {
+		t.Error("BlockRelayOnly should be true after SetBlockRelayOnly")
+	}
+}
+
+// TestPeerTelemetryConcurrent — concurrent writers must not race
+// (run with -race to verify). Sanity check that the atomic
+// operations are correct.
+func TestPeerTelemetryConcurrent(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(3)
+		go func() { defer wg.Done(); for range 100 { p.MarkBlockRx() } }()
+		go func() { defer wg.Done(); for range 100 { p.MarkTxRx() } }()
+		go func() { defer wg.Done(); for range 100 { _ = p.MinPing(); _ = p.RelayTxs() } }()
+	}
+	wg.Wait()
+	if p.LastBlockRx() == 0 {
+		t.Fatal("LastBlockRx still zero after concurrent writes")
+	}
+	if p.LastTxRx() == 0 {
+		t.Fatal("LastTxRx still zero after concurrent writes")
 	}
 }
 

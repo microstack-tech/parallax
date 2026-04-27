@@ -23,6 +23,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
@@ -113,6 +114,41 @@ type Peer struct {
 	pingRecv chan struct{}
 	disc     chan DiscReason
 
+	// Quality telemetry. Updated concurrently from readLoop, the
+	// prl-protocol handler, and pingLoop; consumed by the eviction
+	// algorithm (p2p/eviction.go). Mirrors Bitcoin Core's
+	// NodeEvictionCandidate fields (src/node/eviction.h:18-33).
+	//
+	// minPing is the smallest RTT observed on this session's ping
+	// exchanges, in nanoseconds. Zero before the first pong arrives.
+	// Larger values sort lower-quality during eviction.
+	minPing atomic.Int64
+	// lastPingSent records when we sent the most recent pingMsg
+	// (mclock.AbsTime as int64). Used to compute RTT on pong receipt.
+	lastPingSent atomic.Int64
+	// lastBlockRx is mclock.AbsTime of the most recent block-bearing
+	// message received from this peer (set by the prl protocol).
+	// Higher = more recently active block-relayer.
+	lastBlockRx atomic.Int64
+	// lastTxRx is mclock.AbsTime of the most recent transaction-
+	// bearing message received from this peer (set by the prl
+	// protocol). Higher = more recently active tx-relayer.
+	// Block-relay-only peers leave this at zero.
+	lastTxRx atomic.Int64
+	// bytesRx / bytesTx are payload-only byte counters incremented
+	// in readLoop / write paths. Framing overhead is excluded;
+	// inter-peer comparison only.
+	bytesRx atomic.Uint64
+	bytesTx atomic.Uint64
+	// relayTxs mirrors the peer's Hello.Services & ServiceRelayTx
+	// bit. Defaults true until Hello disclosure rules out tx relay.
+	// Used to scope the tx-time-based protection round in eviction.
+	relayTxs atomic.Bool
+	// blockRelayOnly flags an outbound peer in the dial scheduler's
+	// block-relay-only bucket (phase 4). Drops Transactions msgs and
+	// suppresses address gossip. Set once at peer attach.
+	blockRelayOnly atomic.Bool
+
 	// events receives message send / receive events if set
 	events   *event.Feed
 	testPipe *MsgPipeRW // for testing
@@ -123,6 +159,11 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 	pipe, _ := net.Pipe()
 	return NewPeerForTest(id, name, caps, pipe)
 }
+
+// defaultRelayTxs sets the initial RelayTxs state. New peers are
+// assumed to relay tx until Hello receipt explicitly disclaims it.
+// Called from newPeer; exposed only as a documentation hook.
+func defaultRelayTxs(p *Peer) { p.relayTxs.Store(true) }
 
 // NewPeerForTest returns a peer backed by the supplied net.Conn so
 // callers in other packages can drive code paths that depend on
@@ -183,6 +224,64 @@ func (p *Peer) Fullname() string {
 // telemetry as a "connection age" signal — smaller value = older.
 func (p *Peer) Created() mclock.AbsTime {
 	return p.created
+}
+
+// MinPing returns the smallest RTT observed on this session's
+// ping/pong exchanges, in nanoseconds. Zero if no pong has been
+// received yet.
+func (p *Peer) MinPing() time.Duration {
+	return time.Duration(p.minPing.Load())
+}
+
+// LastBlockRx returns the monotonic time of the most recent
+// block-bearing message received from this peer, or zero if none.
+func (p *Peer) LastBlockRx() mclock.AbsTime {
+	return mclock.AbsTime(p.lastBlockRx.Load())
+}
+
+// LastTxRx returns the monotonic time of the most recent transaction
+// bearing message received from this peer, or zero if none.
+func (p *Peer) LastTxRx() mclock.AbsTime {
+	return mclock.AbsTime(p.lastTxRx.Load())
+}
+
+// BytesRx returns the cumulative payload bytes received from this
+// peer since session start.
+func (p *Peer) BytesRx() uint64 { return p.bytesRx.Load() }
+
+// BytesTx returns the cumulative payload bytes sent to this peer
+// since session start.
+func (p *Peer) BytesTx() uint64 { return p.bytesTx.Load() }
+
+// RelayTxs reports whether the peer accepts tx relay (mirror of
+// Hello.Services & ServiceRelayTx). Defaults true; flipped to
+// false on Hello receipt for block-relay-only peers.
+func (p *Peer) RelayTxs() bool { return p.relayTxs.Load() }
+
+// SetRelayTxs is called by the disc protocol on Hello receipt with
+// the peer's services flags. Concurrency-safe.
+func (p *Peer) SetRelayTxs(v bool) { p.relayTxs.Store(v) }
+
+// BlockRelayOnly reports whether this is a block-relay-only outbound
+// peer. Always false for inbound peers and full-relay outbound.
+func (p *Peer) BlockRelayOnly() bool { return p.blockRelayOnly.Load() }
+
+// SetBlockRelayOnly is called by the dial scheduler at peer attach
+// time when the peer occupies a block-relay-only outbound slot.
+// Sticky for the session lifetime.
+func (p *Peer) SetBlockRelayOnly(v bool) { p.blockRelayOnly.Store(v) }
+
+// MarkBlockRx stamps the lastBlockRx telemetry to the current
+// monotonic time. Called by the prl protocol on receipt of any
+// block-bearing message.
+func (p *Peer) MarkBlockRx() {
+	p.lastBlockRx.Store(int64(mclock.Now()))
+}
+
+// MarkTxRx stamps the lastTxRx telemetry. Called by the prl
+// protocol on receipt of Transactions / PooledTransactions.
+func (p *Peer) MarkTxRx() {
+	p.lastTxRx.Store(int64(mclock.Now()))
 }
 
 // Caps returns the capabilities (supported subprotocols) of the remote peer.
@@ -262,6 +361,7 @@ func newPeer(log logging.Logger, conn *conn, protocols []Protocol) *Peer {
 		pingRecv: make(chan struct{}, 16),
 		log:      logging.New("id", conn.node.ID(), "conn", conn.flags),
 	}
+	defaultRelayTxs(p)
 	return p
 }
 
