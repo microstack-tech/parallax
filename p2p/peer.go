@@ -428,6 +428,12 @@ func (p *Peer) pingLoop() {
 	for {
 		select {
 		case <-ping.C:
+			// Stamp send time BEFORE the SendItems call returns so a
+			// fast pong reply (test pipes) can't observe an unset
+			// lastPingSent. The race window is harmless either way:
+			// a pong arriving before the stamp would yield a
+			// nonsense RTT and be ignored by the min-update.
+			p.lastPingSent.Store(int64(mclock.Now()))
 			if err := SendItems(p.rw, pingMsg); err != nil {
 				p.protoErr <- err
 				return
@@ -437,6 +443,33 @@ func (p *Peer) pingLoop() {
 			SendItems(p.rw, pongMsg)
 
 		case <-p.closed:
+			return
+		}
+	}
+}
+
+// recordPongRTT computes RTT from the most recent ping send time
+// and updates minPing if the new sample improves on the running
+// minimum. Called from handle() on pongMsg receipt.
+//
+// A zero lastPingSent means we received a pong without ever sending
+// a ping (test scaffolding, or an adversarial peer); skip the update.
+// Negative RTT (clock skew, monotonic-broken stub) is also ignored.
+func (p *Peer) recordPongRTT() {
+	sent := p.lastPingSent.Load()
+	if sent == 0 {
+		return
+	}
+	rtt := int64(mclock.Now()) - sent
+	if rtt <= 0 {
+		return
+	}
+	for {
+		cur := p.minPing.Load()
+		if cur != 0 && rtt >= cur {
+			return
+		}
+		if p.minPing.CompareAndSwap(cur, rtt) {
 			return
 		}
 	}
@@ -466,6 +499,9 @@ func (p *Peer) handle(msg Msg) error {
 		case p.pingRecv <- struct{}{}:
 		case <-p.closed:
 		}
+	case msg.Code == pongMsg:
+		msg.Discard()
+		p.recordPongRTT()
 	case msg.Code == discMsg:
 		// This is the last message. We don't need to discard or
 		// check errors because, the connection will be closed after it.
