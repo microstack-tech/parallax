@@ -161,7 +161,7 @@ var (
 	// This is the version of go that will be downloaded by
 	//
 	//     go run ci.go install -dlgo
-	dlgoVersion = "1.25.1"
+	dlgoVersion = "1.26.1"
 )
 
 var GOBIN string
