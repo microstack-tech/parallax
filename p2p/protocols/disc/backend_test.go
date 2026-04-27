@@ -18,6 +18,7 @@ package disc
 
 import (
 	"crypto/rand"
+	"errors"
 	"net"
 	"testing"
 
@@ -97,7 +98,7 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 	isSelf := func(addr *net.TCPAddr) bool {
 		return addr.Port == selfPort && addr.IP.Equal(selfIP)
 	}
-	b := NewAddrmanBackend(m, nil, nil, isSelf)
+	b := NewAddrmanBackend(m, nil, nil, isSelf, nil)
 
 	// Peer with a real TCP RemoteAddr so peerNetworkGroup succeeds.
 	a, d, err := pipes.TCPPipe()
@@ -133,6 +134,179 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 	}
 }
 
+// TestLocalHelloDefaultWithNilProvider — when no helloProvider is
+// configured, LocalHello returns a zero-ish Hello with ProtoVersion
+// at the minimum so callers can still send a valid greeting.
+func TestLocalHelloDefaultWithNilProvider(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	h := b.LocalHello()
+	if h.ProtoVersion != HelloMinProtoVersion {
+		t.Fatalf("ProtoVersion = %d, want %d", h.ProtoVersion, HelloMinProtoVersion)
+	}
+	if h.Nonce != 0 || h.ListenPort != 0 || h.Services != 0 {
+		t.Fatalf("non-zero fields with nil provider: %+v", h)
+	}
+}
+
+// TestLocalHelloUsesProvider — LocalHello forwards the provider's
+// output verbatim. Wires the Server.HelloNonce/listen port plumbing
+// from node.go.
+func TestLocalHelloUsesProvider(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(21))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Hello{
+		ProtoVersion: 1,
+		Nonce:        0xCAFEBABE,
+		ListenPort:   32110,
+		Services:     ServiceNodeNetwork | ServiceRelayTx,
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, func() Hello { return want })
+	if got := b.LocalHello(); got.Nonce != want.Nonce || got.ListenPort != want.ListenPort || got.Services != want.Services {
+		t.Fatalf("LocalHello() = %+v, want %+v", got, want)
+	}
+}
+
+// TestHandleHelloStoresAndLooksUp — HandleHello writes peerHello;
+// PeerHello reads it back. Cross-dial dedup in phase 2 depends on
+// this round-trip.
+func TestHandleHelloStoresAndLooksUp(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(22))
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := Hello{ProtoVersion: 1, Nonce: 0x1111}
+	b := NewAddrmanBackend(m, nil, nil, nil, func() Hello { return local })
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	in := Hello{ProtoVersion: 1, Nonce: 0x2222, ListenPort: 32110, Services: ServiceNodeNetwork}
+	if err := b.HandleHello(peer, in); err != nil {
+		t.Fatalf("HandleHello: %v", err)
+	}
+	got, ok := b.PeerHello(peerKeyFor(peer))
+	if !ok {
+		t.Fatal("PeerHello returned ok=false after HandleHello stored")
+	}
+	if got.Nonce != in.Nonce || got.ListenPort != in.ListenPort || got.Services != in.Services {
+		t.Fatalf("PeerHello returned %+v, want %+v", got, in)
+	}
+}
+
+// TestHandleHelloDetectsSelfConnect — when the peer's nonce equals
+// our own LocalHello().Nonce, HandleHello returns errSelfConnect and
+// does NOT store the entry. The handler will end the session with
+// DiscSelf upstream.
+func TestHandleHelloDetectsSelfConnect(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(23))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sharedNonce uint64 = 0xDEADBEEF
+	b := NewAddrmanBackend(m, nil, nil, nil, func() Hello {
+		return Hello{ProtoVersion: 1, Nonce: sharedNonce}
+	})
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	echoed := Hello{ProtoVersion: 1, Nonce: sharedNonce, ListenPort: 32110}
+	err = b.HandleHello(peer, echoed)
+	if !errors.Is(err, errSelfConnect) {
+		t.Fatalf("HandleHello err = %v, want errSelfConnect", err)
+	}
+	if _, ok := b.PeerHello(peerKeyFor(peer)); ok {
+		t.Fatal("self-connect Hello must NOT be stored in peerHello")
+	}
+}
+
+// TestHandleHelloNilProviderSkipsSelfCheck — when no helloProvider
+// is configured, the self-connect check is bypassed and Hello is
+// stored normally. Lets test backends without a provider exercise
+// the round-trip.
+func TestHandleHelloNilProviderSkipsSelfCheck(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(24))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	in := Hello{ProtoVersion: 1, Nonce: 1, ListenPort: 32110}
+	if err := b.HandleHello(peer, in); err != nil {
+		t.Fatalf("HandleHello: %v", err)
+	}
+	if _, ok := b.PeerHello(peerKeyFor(peer)); !ok {
+		t.Fatal("PeerHello not populated when helloProvider is nil")
+	}
+}
+
+// TestPeerDisconnectedClearsHello — closing the session purges the
+// peer's recorded Hello; PeerHello returns ok=false afterward.
+func TestPeerDisconnectedClearsHello(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(25))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	in := Hello{ProtoVersion: 1, Nonce: 1, ListenPort: 32110}
+	if err := b.HandleHello(peer, in); err != nil {
+		t.Fatalf("HandleHello: %v", err)
+	}
+	b.PeerDisconnected(peer)
+	if _, ok := b.PeerHello(peerKeyFor(peer)); ok {
+		t.Fatal("PeerHello still present after PeerDisconnected")
+	}
+}
+
 // TestAddrmanBackendHandlePeersNilSelfFn — passing a nil IsSelfFunc
 // must not panic and must let all entries through. Lets tests / fuzz
 // targets construct a backend without inventing a self-fn.
@@ -141,7 +315,7 @@ func TestAddrmanBackendHandlePeersNilSelfFn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := NewAddrmanBackend(m, nil, nil, nil)
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
 
 	a, d, err := pipes.TCPPipe()
 	if err != nil {
