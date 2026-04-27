@@ -2112,6 +2112,9 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 		// to the peer.
 		p.events = &srv.peerFeed
 	}
+	// Cache the peer's network-group bytes once. Eviction passes
+	// read this on every candidate without recomputing.
+	p.computeAndCacheNetworkGroup()
 	go srv.runPeer(p)
 	return p
 }

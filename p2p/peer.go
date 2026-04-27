@@ -154,6 +154,12 @@ type Peer struct {
 	// block-relay-only bucket (phase 4). Drops Transactions msgs and
 	// suppresses address gossip. Set once at peer attach.
 	blockRelayOnly atomic.Bool
+	// networkGroup is the cached /16-IPv4 or /32-IPv6 prefix bytes
+	// (with a network-tag byte prefix). Populated once at attach
+	// time by computeAndCacheNetworkGroup; nil for peers without a
+	// TCP RemoteAddr. Eviction protection passes consume this for
+	// anti-eclipse diversity preservation.
+	networkGroup atomic.Pointer[[]byte]
 
 	// events receives message send / receive events if set
 	events   *event.Feed
