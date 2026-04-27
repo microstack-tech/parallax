@@ -313,6 +313,44 @@ func TestDialSchedManyStaticNodes(t *testing.T) {
 	})
 }
 
+// TestDialSchedNetworkGroupDiversity — once an outbound peer in a
+// /16 IPv4 group is established, new candidates in the same group
+// are skipped. Different groups still dial. Mirrors Bitcoin Core's
+// outbound_ipv46_peer_netgroups guard (src/net.cpp:2685).
+func TestDialSchedNetworkGroupDiversity(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: an outbound peer in 8.8.x.x is already
+		// connected. Discover candidates in the same group
+		// (8.8.0.0/16) and candidates in distinct groups. Only
+		// the distinct-group candidates should be dialed.
+		{
+			peersAdded: []*conn{
+				{flags: dynDialedConn, node: newNode(uintID(0x01), "8.8.1.1:32110")},
+			},
+			discovered: []*enode.Node{
+				newNode(uintID(0x10), "8.8.2.1:32110"),  // same /16 → skip
+				newNode(uintID(0x11), "8.8.99.1:32110"), // same /16 → skip
+				newNode(uintID(0x20), "1.2.3.4:32110"),  // distinct
+				newNode(uintID(0x21), "5.6.7.8:32110"),  // distinct
+				newNode(uintID(0x22), "9.0.0.1:32110"),  // distinct
+				newNode(uintID(0x23), "10.0.0.1:32110"), // distinct
+			},
+			wantNewDials: []*enode.Node{
+				newNode(uintID(0x20), "1.2.3.4:32110"),
+				newNode(uintID(0x21), "5.6.7.8:32110"),
+				newNode(uintID(0x22), "9.0.0.1:32110"),
+				newNode(uintID(0x23), "10.0.0.1:32110"),
+			},
+		},
+	})
+}
+
 // This test checks that past dials are not retried for some time.
 func TestDialSchedHistory(t *testing.T) {
 	t.Parallel()
