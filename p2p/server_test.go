@@ -34,6 +34,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
+	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 type testTransport struct {
@@ -1120,6 +1121,74 @@ func TestPeerSetBlockRelayOnly(t *testing.T) {
 	p.SetBlockRelayOnly(true)
 	if !p.BlockRelayOnly() {
 		t.Error("BlockRelayOnly should be true after SetBlockRelayOnly")
+	}
+}
+
+// TestRecordPongRTTNoSendIsNoop — receiving a pong before we ever
+// sent a ping must NOT update minPing (would record a meaningless
+// "since startup" duration).
+func TestRecordPongRTTNoSendIsNoop(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	p.recordPongRTT()
+	if p.MinPing() != 0 {
+		t.Fatalf("MinPing = %v, want 0 (no ping sent yet)", p.MinPing())
+	}
+}
+
+// TestRecordPongRTTUpdatesMinimum — after stamping a send time and
+// invoking recordPongRTT, MinPing reflects a positive duration.
+func TestRecordPongRTTUpdatesMinimum(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	p.lastPingSent.Store(int64(mclock.Now()))
+	time.Sleep(time.Millisecond)
+	p.recordPongRTT()
+	if p.MinPing() <= 0 {
+		t.Fatalf("MinPing = %v, want positive", p.MinPing())
+	}
+}
+
+// TestRecordPongRTTKeepsMinimum — second sample with worse RTT
+// must NOT replace the minimum.
+func TestRecordPongRTTKeepsMinimum(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	// First sample: short RTT.
+	p.lastPingSent.Store(int64(mclock.Now()))
+	time.Sleep(time.Millisecond)
+	p.recordPongRTT()
+	first := p.MinPing()
+
+	// Second sample: long RTT.
+	p.lastPingSent.Store(int64(mclock.Now()))
+	time.Sleep(20 * time.Millisecond)
+	p.recordPongRTT()
+	second := p.MinPing()
+
+	if second != first {
+		t.Fatalf("MinPing changed from %v to %v; should keep first (smaller) sample", first, second)
+	}
+}
+
+// TestRecordPongRTTUpdatesOnImprovement — second sample with
+// shorter RTT replaces the minimum.
+func TestRecordPongRTTUpdatesOnImprovement(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	// First sample: long RTT.
+	p.lastPingSent.Store(int64(mclock.Now()))
+	time.Sleep(20 * time.Millisecond)
+	p.recordPongRTT()
+	first := p.MinPing()
+	if first <= 0 {
+		t.Fatal("first MinPing not set")
+	}
+
+	// Second sample: shorter RTT.
+	p.lastPingSent.Store(int64(mclock.Now()))
+	time.Sleep(time.Millisecond)
+	p.recordPongRTT()
+	second := p.MinPing()
+
+	if second >= first {
+		t.Fatalf("MinPing did not improve: first=%v second=%v", first, second)
 	}
 }
 
