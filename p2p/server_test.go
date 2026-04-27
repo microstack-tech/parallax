@@ -774,3 +774,52 @@ func TestPostHandshakeChecksRejectsV2Self(t *testing.T) {
 		t.Fatalf("postHandshakeChecks err = %v, want DiscSelf", err)
 	}
 }
+
+// TestHelloNonceRandomized — startTestServer goes through Start which
+// calls setupLocalNode. The resulting helloNonce must be non-zero on
+// all but vanishingly rare draws and must differ across two
+// independently-started servers (collision probability 2^-64).
+func TestHelloNonceRandomized(t *testing.T) {
+	srvA := startTestServer(t, &newkey().PublicKey, nil)
+	defer srvA.Stop()
+	srvB := startTestServer(t, &newkey().PublicKey, nil)
+	defer srvB.Stop()
+
+	if srvA.HelloNonce() == 0 {
+		t.Fatal("server A helloNonce is zero; init likely skipped")
+	}
+	if srvB.HelloNonce() == 0 {
+		t.Fatal("server B helloNonce is zero; init likely skipped")
+	}
+	if srvA.HelloNonce() == srvB.HelloNonce() {
+		t.Fatalf("two servers got the same helloNonce %d; randomness broken", srvA.HelloNonce())
+	}
+}
+
+// TestHelloNonceStableAfterStart — once the server is up the nonce
+// must be immutable. Multiple reads return the same value and no
+// background goroutine rotates it.
+func TestHelloNonceStableAfterStart(t *testing.T) {
+	srv := startTestServer(t, &newkey().PublicKey, nil)
+	defer srv.Stop()
+
+	first := srv.HelloNonce()
+	for i := 0; i < 100; i++ {
+		if got := srv.HelloNonce(); got != first {
+			t.Fatalf("helloNonce changed mid-run: was %d, got %d on read %d", first, got, i)
+		}
+	}
+}
+
+// TestInitHelloNonce — direct test of the init helper. Calling on a
+// bare Server populates the field with non-zero bytes drawn from
+// crypto/rand.
+func TestInitHelloNonce(t *testing.T) {
+	var srv Server
+	if err := srv.initHelloNonce(); err != nil {
+		t.Fatalf("initHelloNonce: %v", err)
+	}
+	if srv.helloNonce == 0 {
+		t.Fatal("helloNonce still zero after init")
+	}
+}

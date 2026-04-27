@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	crand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -251,6 +253,14 @@ type Server struct {
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
 
+	// helloNonce is a 64-bit random value generated once per Server
+	// lifetime and embedded in every parallax-disc/1 Hello we send.
+	// Receiving our own nonce back identifies a self-connect (the
+	// protocol-level analog of Bitcoin Core's nLocalHostNonce, src/
+	// net.cpp PushNodeVersion). Read-only after setupLocalNode; safe
+	// for concurrent reads from peer goroutines without locking.
+	helloNonce uint64
+
 	// addrbook is the PIP-0006 address manager. Populated only when
 	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
 	// additional FairMix source and receives discv4/bootnode entries
@@ -404,6 +414,25 @@ func (c *conn) set(f connFlag, val bool) {
 // LocalNode returns the local node record.
 func (srv *Server) LocalNode() *enode.LocalNode {
 	return srv.localnode
+}
+
+// HelloNonce returns the per-startup random nonce embedded in every
+// outgoing parallax-disc/1 Hello. Bitcoin Core analog: nLocalHostNonce
+// (src/net.cpp PushNodeVersion). Stable for the Server's lifetime;
+// safe for concurrent reads.
+func (srv *Server) HelloNonce() uint64 {
+	return srv.helloNonce
+}
+
+// initHelloNonce draws a 64-bit value from crypto/rand. Called once
+// from setupLocalNode before any peer can be accepted.
+func (srv *Server) initHelloNonce() error {
+	var buf [8]byte
+	if _, err := crand.Read(buf[:]); err != nil {
+		return fmt.Errorf("hello nonce init: %w", err)
+	}
+	srv.helloNonce = binary.BigEndian.Uint64(buf[:])
+	return nil
 }
 
 // Peers returns all connected peers.
@@ -718,6 +747,16 @@ func (srv *Server) warnOnLegacyUDPDominance() {
 }
 
 func (srv *Server) setupLocalNode() error {
+	// Generate the per-startup self-connect nonce. Drawn from
+	// crypto/rand so adversaries can't predict it; uint64 space is
+	// large enough that collision probability across the network is
+	// negligible (birthday bound ~2^32 distinct nodes before any
+	// pair shares a nonce, and even then only matters if those two
+	// nodes happen to dial each other).
+	if err := srv.initHelloNonce(); err != nil {
+		return err
+	}
+
 	// Create the devp2p handshake.
 	pubkey := crypto.FromECDSAPub(&srv.PrivateKey.PublicKey)
 	srv.ourHandshake = &protoHandshake{Version: baseProtocolVersion, Name: srv.Name, ID: pubkey[1:]}
