@@ -135,10 +135,16 @@ type Peer struct {
 	// protocol). Higher = more recently active tx-relayer.
 	// Block-relay-only peers leave this at zero.
 	lastTxRx atomic.Int64
-	// bytesRx / bytesTx are payload-only byte counters incremented
-	// in readLoop / write paths. Framing overhead is excluded;
-	// inter-peer comparison only.
+	// bytesRx is the payload-only byte counter incremented in
+	// readLoop after each successful ReadMsg. Framing overhead is
+	// excluded; useful for admin-RPC and operator diagnostics, not
+	// consumed by the eviction algorithm (Bitcoin Core's
+	// NodeEvictionCandidate has no byte counter — see eviction.h).
 	bytesRx atomic.Uint64
+	// bytesTx is reserved for symmetric accounting at the write
+	// path. Currently always zero — instrumentation lands when an
+	// admin diagnostic actually needs it; the field is here so the
+	// shape doesn't shift later.
 	bytesTx atomic.Uint64
 	// relayTxs mirrors the peer's Hello.Services & ServiceRelayTx
 	// bit. Defaults true until Hello disclosure rules out tx relay.
@@ -483,6 +489,10 @@ func (p *Peer) readLoop(errc chan<- error) {
 			errc <- err
 			return
 		}
+		// Payload-only counter — framing overhead is excluded so
+		// inter-peer comparisons remain meaningful regardless of
+		// transport (rlpx vs v2Transport may differ on framing).
+		p.bytesRx.Add(uint64(msg.Size))
 		msg.ReceivedAt = time.Now()
 		if err = p.handle(msg); err != nil {
 			errc <- err

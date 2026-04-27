@@ -1124,6 +1124,25 @@ func TestPeerSetBlockRelayOnly(t *testing.T) {
 	}
 }
 
+// TestPeerBytesRxAccumulates — incrementing the counter from
+// (simulated) readLoop iterations is monotonic and the public
+// BytesRx accessor reflects the running total. The actual
+// readLoop wiring is exercised by the existing TestServerListen
+// chain; this is a unit test of the counter semantics.
+func TestPeerBytesRxAccumulates(t *testing.T) {
+	p := NewPeer(randomID(), "test", nil)
+	if p.BytesRx() != 0 {
+		t.Fatalf("BytesRx default = %d, want 0", p.BytesRx())
+	}
+	// Simulate readLoop's per-message increment.
+	p.bytesRx.Add(100)
+	p.bytesRx.Add(50)
+	p.bytesRx.Add(7)
+	if got := p.BytesRx(); got != 157 {
+		t.Fatalf("BytesRx = %d, want 157", got)
+	}
+}
+
 // TestRecordPongRTTNoSendIsNoop — receiving a pong before we ever
 // sent a ping must NOT update minPing (would record a meaningless
 // "since startup" duration).
