@@ -639,3 +639,138 @@ func syncAddPeer(srv *Server, node *enode.Node) bool {
 		}
 	}
 }
+
+// newSelfEndpointServer builds a minimal Server whose localnode
+// advertises (ip, port). Used by the v2 self-connect tests so they
+// can drive isSelfEndpoint without standing up a full Start() path.
+func newSelfEndpointServer(t *testing.T, ip net.IP, port int) *Server {
+	t.Helper()
+	db, err := enode.OpenDB("")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ln := enode.NewLocalNode(db, newkey())
+	if ip != nil {
+		ln.SetStaticIP(ip)
+	}
+	if port != 0 {
+		ln.Set(enr.TCP(port))
+	}
+	return &Server{
+		Config:    Config{MaxPeers: 1},
+		localnode: ln,
+		log:       testlog.Logger(t, logging.LvlTrace),
+	}
+}
+
+func TestIsSelfEndpoint(t *testing.T) {
+	const selfPort = 30303
+	selfIP := net.ParseIP("1.2.3.4")
+	srv := newSelfEndpointServer(t, selfIP, selfPort)
+
+	tests := []struct {
+		name string
+		addr *net.TCPAddr
+		want bool
+	}{
+		{"nil addr", nil, false},
+		{"exact match", &net.TCPAddr{IP: selfIP, Port: selfPort}, true},
+		{"port mismatch", &net.TCPAddr{IP: selfIP, Port: selfPort + 1}, false},
+		{"ip mismatch", &net.TCPAddr{IP: net.ParseIP("5.6.7.8"), Port: selfPort}, false},
+		{"v4-mapped v6", &net.TCPAddr{IP: net.ParseIP("::ffff:1.2.3.4"), Port: selfPort}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := srv.isSelfEndpoint(tc.addr); got != tc.want {
+				t.Fatalf("isSelfEndpoint(%v) = %v, want %v", tc.addr, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("nil localnode", func(t *testing.T) {
+		bare := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+		if bare.isSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
+			t.Fatal("isSelfEndpoint must return false when localnode is nil")
+		}
+	})
+
+	t.Run("port unset", func(t *testing.T) {
+		// Bootstrap state: setupLocalNode has run (IP fallback)
+		// but setupListening has not yet published the TCP port.
+		// Must not false-positive — admin RPC paths can call DialV2
+		// before listenSetup completes.
+		early := newSelfEndpointServer(t, selfIP, 0)
+		if early.isSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
+			t.Fatal("isSelfEndpoint must return false while localnode TCP port is 0")
+		}
+	})
+
+	t.Run("loopback bootstrap", func(t *testing.T) {
+		// Before NAT discovery, localnode.IP is the 127.0.0.1
+		// fallback. Dialing your own loopback at your listen port
+		// is a self-connect and should be classified as such.
+		loop := newSelfEndpointServer(t, net.IP{127, 0, 0, 1}, selfPort)
+		if !loop.isSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
+			t.Fatal("isSelfEndpoint must catch loopback self-dial")
+		}
+	})
+}
+
+func TestDialV2RejectsSelfEndpoint(t *testing.T) {
+	srv := startTestServer(t, &newkey().PublicKey, nil)
+	defer srv.Stop()
+
+	self := srv.localnode.Node()
+	if self.TCP() == 0 {
+		t.Fatalf("test server did not publish TCP port to localnode")
+	}
+	addr := &net.TCPAddr{IP: self.IP(), Port: self.TCP()}
+
+	err := srv.DialV2(addr)
+	if err == nil {
+		t.Fatalf("DialV2(%v) returned nil error", addr)
+	}
+	if !errors.Is(err, errV2DialSelf) {
+		t.Fatalf("DialV2 error = %v, want wrapping errV2DialSelf", err)
+	}
+	for _, p := range srv.Peers() {
+		if pra, ok := p.RemoteAddr().(*net.TCPAddr); ok && pra.IP.Equal(addr.IP) && pra.Port == addr.Port {
+			t.Fatalf("self-dial produced a peer: %v", pra)
+		}
+	}
+	srv.v2DialRecentMu.Lock()
+	_, recorded := srv.v2DialRecent[addr.String()]
+	srv.v2DialRecentMu.Unlock()
+	if !recorded {
+		t.Fatalf("v2DialRecent did not record the rejected dial; cooldown semantics depend on it")
+	}
+}
+
+func TestPostHandshakeChecksRejectsV2Self(t *testing.T) {
+	const selfPort = 30303
+	selfIP := net.ParseIP("1.2.3.4")
+	srv := newSelfEndpointServer(t, selfIP, selfPort)
+
+	// Build a fake net.Conn whose RemoteAddr returns the self
+	// endpoint. The kernel-level remote of an outbound v2 dial
+	// is the dial target; if that equals our advertised endpoint
+	// the connection is a hairpin and must be rejected as DiscSelf.
+	pipe, _ := net.Pipe()
+	defer pipe.Close()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: selfIP, Port: selfPort}}
+
+	// c.node.ID must differ from srv.localnode.ID() so the existing
+	// node.ID-keyed self-check doesn't mask the v2 endpoint check.
+	other := enode.SignNull(new(enr.Record), randomID())
+	c := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      other,
+	}
+
+	err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, c)
+	if !errors.Is(err, DiscSelf) {
+		t.Fatalf("postHandshakeChecks err = %v, want DiscSelf", err)
+	}
+}

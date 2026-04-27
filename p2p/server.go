@@ -1007,6 +1007,10 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	if !srv.v2DialCooldownCheckAndMark(addr) {
 		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
 	}
+	if srv.isSelfEndpoint(addr) {
+		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
+		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
+	}
 	already := srv.alreadyConnectedTo(addr)
 	peerCount := len(srv.Peers())
 	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount)
@@ -1073,6 +1077,15 @@ const v2DialCooldown = 30 * time.Second
 // real failure.
 var errV2DialCooldown = errors.New("v2 dial cooldown")
 
+// errV2DialSelf is the sentinel returned by DialV2 when the dial
+// target matches this node's own advertised (IP, TCP) endpoint.
+// v2 sessions derive node.ID from ephemeral X25519 keys, so the
+// node.ID-keyed self-check in postHandshakeChecks cannot fire for
+// v2 peers — without this guard, a node behind a hairpinning NAT
+// dials its own external IP and accepts the looped-back TCP
+// connection as a peer.
+var errV2DialSelf = errors.New("v2 dial self")
+
 // v2DialCooldownCheckAndMark returns true and records addr's dial
 // timestamp if the cooldown has elapsed; returns false otherwise.
 // Serialized so concurrent callers (runV2Dialer, dial-scheduler v2
@@ -1096,6 +1109,27 @@ func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
 		}
 	}
 	return true
+}
+
+// isSelfEndpoint reports whether addr matches this node's own
+// advertised (IP, TCP) endpoint. Used to short-circuit v2 dials
+// that would hairpin through the NAT and arrive back at our own
+// listener, and as a defense-in-depth check in postHandshakeChecks
+// for v2 connections that bypass the dial guard. Returns false
+// when localnode's TCP port is 0 (not yet published by
+// setupListening) so the check can't false-positive in the
+// startup window — DialV2 is reachable from admin RPC paths that
+// may run before that point.
+func (srv *Server) isSelfEndpoint(addr *net.TCPAddr) bool {
+	if addr == nil || srv.localnode == nil {
+		return false
+	}
+	n := srv.localnode.Node()
+	selfPort := n.TCP()
+	if selfPort == 0 {
+		return false
+	}
+	return addr.Port == selfPort && addr.IP.Equal(n.IP())
 }
 
 // alreadyConnectedTo reports whether any current peer has a RemoteAddr
@@ -1520,8 +1554,19 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	// fresh-looking ID that the map above can't flag. Fall back to
 	// (IP, TCP port) matching — if a peer on the same address is
 	// already connected, treat this as a duplicate.
+	//
+	// Also catch v2 self-connections that the node.ID check above
+	// can't see: the kernel-level remote of an outbound dial is
+	// the dial target, so if it matches our own advertised endpoint
+	// the connection is a hairpin. DialV2 already rejects this at
+	// the dial site; the check here covers the narrow window where
+	// localnode's IP updates between the dial and this checkpoint,
+	// and any future code path that bypasses DialV2.
 	if _, isV2 := c.transport.(*v2Transport); isV2 {
 		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			if srv.isSelfEndpoint(remote) {
+				return DiscSelf
+			}
 			for _, p := range peers {
 				pra, ok := p.RemoteAddr().(*net.TCPAddr)
 				if !ok {
