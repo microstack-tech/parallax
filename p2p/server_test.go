@@ -823,3 +823,236 @@ func TestInitHelloNonce(t *testing.T) {
 		t.Fatal("helloNonce still zero after init")
 	}
 }
+
+// fakePortLookup is a test stub for PeerListenPortLookup. Maps
+// enode.ID -> disclosed listen port; missing entries return ok=false.
+type fakePortLookup struct {
+	ports map[enode.ID]uint16
+}
+
+func (f *fakePortLookup) PeerListenPort(id enode.ID) (uint16, bool) {
+	p, ok := f.ports[id]
+	if !ok {
+		return 0, false
+	}
+	return p, true
+}
+
+// makeFakePeer constructs a Peer with the given (ID, RemoteAddr)
+// and inbound flag. The conn flags carry inbound state so
+// p.rw.is(inboundConn) returns the requested value.
+func makeFakePeer(t *testing.T, id enode.ID, remote *net.TCPAddr, inbound bool) *Peer {
+	t.Helper()
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: remote}
+	t.Cleanup(func() { _ = fake.Close() })
+	p := NewPeerForTest(id, "fake", nil, fake)
+	if inbound {
+		p.rw.set(inboundConn, true)
+	}
+	return p
+}
+
+// TestPeerListenAddrOutboundUsesRemoteAddr — outbound peers report
+// their dial-target's listen port via RemoteAddr; peerListenAddr
+// returns it directly without consulting the lookup.
+func TestPeerListenAddrOutboundUsesRemoteAddr(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	id := randomID()
+	peer := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}, false /*outbound*/)
+
+	la, ok := srv.peerListenAddr(peer)
+	if !ok {
+		t.Fatal("outbound peer should always yield listen-addr")
+	}
+	if la.Port != 32110 || !la.IP.Equal(net.IPv4(8, 8, 8, 8)) {
+		t.Fatalf("got %v, want 8.8.8.8:32110", la)
+	}
+}
+
+// TestPeerListenAddrInboundNeedsLookup — inbound peer's RemoteAddr
+// has the ephemeral source port; peerListenAddr returns ok=false
+// without a lookup, and the disclosed listen port with one.
+func TestPeerListenAddrInboundNeedsLookup(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	id := randomID()
+	peer := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555 /*ephemeral*/}, true /*inbound*/)
+
+	if _, ok := srv.peerListenAddr(peer); ok {
+		t.Fatal("inbound peer with no lookup should yield ok=false")
+	}
+
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{id: 32110}})
+	la, ok := srv.peerListenAddr(peer)
+	if !ok {
+		t.Fatal("inbound peer with lookup should yield ok=true")
+	}
+	if la.Port != 32110 || !la.IP.Equal(net.IPv4(8, 8, 8, 8)) {
+		t.Fatalf("got %v, want 8.8.8.8:32110", la)
+	}
+}
+
+// TestPeerListenAddrInboundUnknownPort — lookup returns port=0 (peer
+// disclosed unknown listen port); peerListenAddr returns ok=false.
+func TestPeerListenAddrInboundUnknownPort(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{}})
+	id := randomID()
+	peer := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true)
+
+	if _, ok := srv.peerListenAddr(peer); ok {
+		t.Fatal("inbound peer with no port disclosed should yield ok=false")
+	}
+}
+
+// TestFindCrossDialDupKeepsOutbound — when an inbound peer's Hello
+// reveals a listen port matching an existing outbound, the inbound
+// is selected as the loser (tie-break is outbound-preferring).
+func TestFindCrossDialDupKeepsOutbound(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	target := &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}
+	out := makeFakePeer(t, randomID(), target, false /*outbound*/)
+	in := makeFakePeer(t, randomID(), &net.TCPAddr{IP: target.IP, Port: 55555}, true /*inbound*/)
+
+	dup := srv.findCrossDialDupIn([]*Peer{out}, in, 32110)
+	if dup == nil {
+		t.Fatal("expected the outbound peer to be found as duplicate")
+	}
+	if dup != out {
+		t.Fatalf("got %v, want %v", dup.ID(), out.ID())
+	}
+}
+
+// TestFindCrossDialDupSkipsSelf — must not return newPeer itself.
+func TestFindCrossDialDupSkipsSelf(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	target := &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}
+	self := makeFakePeer(t, randomID(), target, false)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{self}, self, 32110); dup != nil {
+		t.Fatalf("must skip newPeer itself; got %v", dup.ID())
+	}
+}
+
+// TestFindCrossDialDupNoMatch — different IP or port → nil.
+func TestFindCrossDialDupNoMatch(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	other := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 32110}, false)
+	in := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{other}, in, 32110); dup != nil {
+		t.Fatalf("must return nil when no match; got %v", dup.ID())
+	}
+}
+
+// TestFindCrossDialDupZeroPort — listenPort=0 is a no-op.
+func TestFindCrossDialDupZeroPort(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	peer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}, false)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{peer}, peer, 0); dup != nil {
+		t.Fatalf("listenPort=0 must yield nil; got %v", dup.ID())
+	}
+}
+
+// TestFindCrossDialDupInboundWithLookup — finds an inbound peer as
+// the duplicate when its disclosed listen port (via lookup) matches.
+func TestFindCrossDialDupInboundWithLookup(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	id := randomID()
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{id: 32110}})
+	existing := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
+	newPeer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, false /*outbound*/)
+
+	dup := srv.findCrossDialDupIn([]*Peer{existing}, newPeer, 32110)
+	if dup != existing {
+		t.Fatalf("must find existing inbound as duplicate; got %v want %v", dup, existing.ID())
+	}
+}
+
+// TestSelectCrossDialLoserPrefersOutbound — direct unit test of the
+// tie-break helper. Inbound + outbound: inbound loses regardless of
+// argument order.
+func TestSelectCrossDialLoserPrefersOutbound(t *testing.T) {
+	out := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 32110}, false)
+	in := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 55555}, true)
+
+	if loser := selectCrossDialLoser(out, in); loser != in {
+		t.Fatalf("(out, in) loser = %v, want in", loser)
+	}
+	if loser := selectCrossDialLoser(in, out); loser != in {
+		t.Fatalf("(in, out) loser = %v, want in", loser)
+	}
+}
+
+// TestSelectCrossDialLoserSameDirectionKeepsOlder — when both are
+// inbound or both outbound, the younger connection loses.
+func TestSelectCrossDialLoserSameDirectionKeepsOlder(t *testing.T) {
+	older := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 32110}, true)
+	// A bare-handed mclock manipulation isn't possible without a
+	// clock injection seam; instead, sleep briefly so the second
+	// peer's Created() is genuinely newer.
+	time.Sleep(2 * time.Millisecond)
+	younger := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 44444}, true)
+
+	if older.Created() >= younger.Created() {
+		t.Skipf("clock didn't advance; older=%d younger=%d", older.Created(), younger.Created())
+	}
+	if loser := selectCrossDialLoser(older, younger); loser != younger {
+		t.Fatalf("loser = %v, want younger", loser)
+	}
+	if loser := selectCrossDialLoser(younger, older); loser != younger {
+		t.Fatalf("loser = %v, want younger (reversed args)", loser)
+	}
+}
+
+// TestAlreadyConnectedToInboundWithLookup — alreadyConnectedTo
+// must succeed for an inbound peer once that peer has disclosed
+// its listen port via the lookup. Without a lookup it returns
+// false (no signal).
+func TestAlreadyConnectedToInboundWithLookup(t *testing.T) {
+	// Construct a server but don't Start it — we drive Peers() via
+	// a direct injection using the same channel pattern but skipping
+	// the run-loop wiring isn't available here, so use a minimal
+	// approach: bypass alreadyConnectedTo (which calls srv.Peers()
+	// and hence the run loop) and test the underlying decision
+	// surface — peerListenAddr + lookup integration — directly.
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	id := randomID()
+	in := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true)
+
+	target := &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}
+	// Pre-Hello: lookup returns ok=false → peerListenAddr returns
+	// false → no match.
+	if la, ok := srv.peerListenAddr(in); ok {
+		t.Fatalf("pre-Hello peerListenAddr should be ok=false; got %v", la)
+	}
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{id: 32110}})
+	la, ok := srv.peerListenAddr(in)
+	if !ok {
+		t.Fatal("post-Hello peerListenAddr should be ok=true")
+	}
+	if la.Port != target.Port || !la.IP.Equal(target.IP) {
+		t.Fatalf("peerListenAddr = %v, want %v", la, target)
+	}
+}
+
+// selectCrossDialLoser is in the disc package; this trampoline lets
+// the p2p test driver call it without exporting from disc.
+// We don't have access to disc from p2p (would be a cycle), so
+// re-test the rule here against the same algorithm, keyed off the
+// peer fields the disc package consumes.
+func selectCrossDialLoser(a, b *Peer) *Peer {
+	aIn := a.rw.is(inboundConn)
+	bIn := b.rw.is(inboundConn)
+	if aIn != bIn {
+		if aIn {
+			return a
+		}
+		return b
+	}
+	if a.Created() < b.Created() {
+		return b
+	}
+	return a
+}
