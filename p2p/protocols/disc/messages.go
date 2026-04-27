@@ -19,6 +19,8 @@ package disc
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 )
 
 // Message codes for parallax-disc/1. Local to this subprotocol.
@@ -26,6 +28,7 @@ const (
 	GetPeersMsg uint64 = 0x00
 	PeersMsg    uint64 = 0x01
 	YourAddrMsg uint64 = 0x02
+	HelloMsg    uint64 = 0x03
 )
 
 // Wire limits — these numbers are load-bearing for DoS resistance. See
@@ -34,6 +37,21 @@ const (
 // attacker a larger single-message memory-amp ratio.
 const (
 	MaxPeersPerMessage = 1000
+
+	// HelloMaxTailSize bounds the Tail forward-compat slice on Hello.
+	// Plenty of room for future fields without enabling allocation
+	// amplification by an adversarial peer.
+	HelloMaxTailSize = 256
+)
+
+// Service flags advertised in Hello.Services. Bit positions match
+// Bitcoin Core's NODE_NETWORK / NODE_RELAY / NODE_BLOOM layout where
+// applicable, so operators familiar with Core's services field can
+// read Parallax peer flags without translation.
+const (
+	ServiceNodeNetwork uint32 = 1 << 0 // peer serves blocks (always 1 for full nodes)
+	ServiceNodeBloom   uint32 = 1 << 1 // reserved; not yet implemented
+	ServiceRelayTx     uint32 = 1 << 2 // peer wants tx relay (false on block-relay-only)
 )
 
 // BIP155 network IDs. Kept here (rather than imported from p2p/addrman)
@@ -117,6 +135,23 @@ type PeerEntry struct {
 	LastSeen  uint64
 }
 
+// Hello is the v2 greeting message. Sent once per session immediately
+// after capability negotiation, before YourAddr. Mirrors the role of
+// Bitcoin Core's `version` message: protocol version, services flag,
+// peer's claimed listen port, self-connect detection nonce.
+//
+// Tail is an rlp:"tail" forward-compat slot so future fields can be
+// appended without breaking decoders that only know the original
+// layout. Each future field becomes one element in Tail; current code
+// ignores them.
+type Hello struct {
+	ProtoVersion uint16
+	Nonce        uint64
+	ListenPort   uint16
+	Services     uint32
+	Tail         []rlp.RawValue `rlp:"tail"`
+}
+
 // Validation errors — peers are disconnected on any of these.
 var (
 	ErrEntryAddrLen    = errors.New("disc: PeerEntry address length mismatches NetworkID")
@@ -125,6 +160,8 @@ var (
 	ErrPeersTooLarge   = errors.New("disc: Peers message exceeds MaxPeersPerMessage")
 	ErrYourAddrShape   = errors.New("disc: YourAddr malformed")
 	ErrNodeIDForbidden = errors.New("disc: PeerEntry NodeID not permitted for KeyType=0x00")
+	ErrHelloVersion    = errors.New("disc: Hello ProtoVersion below minimum")
+	ErrHelloTailSize   = errors.New("disc: Hello Tail exceeds HelloMaxTailSize")
 )
 
 // Skippable returns true if e should be silently dropped on ingest
@@ -180,6 +217,29 @@ func (y *YourAddr) Validate() (skip bool, err error) {
 func (p *Peers) Validate() error {
 	if len(p.Entries) > MaxPeersPerMessage {
 		return fmt.Errorf("%w: got=%d max=%d", ErrPeersTooLarge, len(p.Entries), MaxPeersPerMessage)
+	}
+	return nil
+}
+
+// HelloMinProtoVersion is the lowest ProtoVersion the local node will
+// accept. Bumping this rejects peers that haven't upgraded past a
+// known-broken release; lowering re-enables compatibility.
+const HelloMinProtoVersion uint16 = 1
+
+// Validate on Hello enforces version floor and a total-tail-bytes
+// bound. Unknown Services bits and ListenPort=0 are accepted — peers
+// may genuinely not know their listen port (NAT, dynamic), and
+// unknown services flags are forward-compat space.
+func (h *Hello) Validate() error {
+	if h.ProtoVersion < HelloMinProtoVersion {
+		return fmt.Errorf("%w: got=%d min=%d", ErrHelloVersion, h.ProtoVersion, HelloMinProtoVersion)
+	}
+	tailBytes := 0
+	for _, t := range h.Tail {
+		tailBytes += len(t)
+	}
+	if tailBytes > HelloMaxTailSize {
+		return fmt.Errorf("%w: got=%d max=%d", ErrHelloTailSize, tailBytes, HelloMaxTailSize)
 	}
 	return nil
 }
