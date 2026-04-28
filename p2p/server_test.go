@@ -697,14 +697,29 @@ func TestIsSelfEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("port unset", func(t *testing.T) {
+	t.Run("port unset external IP", func(t *testing.T) {
 		// Bootstrap state: setupLocalNode has run (IP fallback)
 		// but setupListening has not yet published the TCP port.
-		// Must not false-positive — admin RPC paths can call DialV2
-		// before listenSetup completes.
+		// Dialing some external (IP, port) must NOT be classified
+		// as self — we genuinely don't know our port yet, and the
+		// remote IP can't be us.
 		early := newSelfEndpointServer(t, selfIP, 0)
 		if early.IsSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
-			t.Fatal("IsSelfEndpoint must return false while localnode TCP port is 0")
+			t.Fatal("IsSelfEndpoint must return false on external IP while localnode TCP port is 0")
+		}
+	})
+
+	t.Run("port unset loopback", func(t *testing.T) {
+		// Before the listener publishes a port, a loopback dial is
+		// always self — no legitimate caller wants to dial 127.0.0.1
+		// during the Start() window. Closes the prior gap where
+		// admin RPC / replayAnchors could have raced setupListening.
+		early := newSelfEndpointServer(t, selfIP, 0)
+		if !early.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must catch loopback dial during pre-listen window")
+		}
+		if !early.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must catch IPv6 loopback dial during pre-listen window")
 		}
 	})
 
@@ -715,6 +730,24 @@ func TestIsSelfEndpoint(t *testing.T) {
 		loop := newSelfEndpointServer(t, net.IP{127, 0, 0, 1}, selfPort)
 		if !loop.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
 			t.Fatal("IsSelfEndpoint must catch loopback self-dial")
+		}
+	})
+
+	t.Run("loopback to listen port with external IP", func(t *testing.T) {
+		// Once the listener is bound on an external IP, a loopback
+		// dial to the listen port still hairpins to our own listener
+		// (kernel routes 127.0.0.1 -> the local socket regardless of
+		// the bind interface). Must be flagged as self.
+		ext := newSelfEndpointServer(t, selfIP, selfPort)
+		if !ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must catch loopback dial to our listen port")
+		}
+		if !ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must catch v6-loopback dial to our listen port")
+		}
+		// Loopback at a *different* port is not self.
+		if ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort + 1}) {
+			t.Fatal("IsSelfEndpoint false-positive on loopback at non-listen port")
 		}
 	})
 }

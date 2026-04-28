@@ -1305,24 +1305,46 @@ func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
 // advertised (IP, TCP) endpoint. Exported so external wiring (the
 // disc-protocol AddrmanBackend, the addrman V2Iter) can consult
 // the same source of truth as the dial / handshake guards. Used
-// to short-circuit v2 dials
-// that would hairpin through the NAT and arrive back at our own
-// listener, and as a defense-in-depth check in postHandshakeChecks
-// for v2 connections that bypass the dial guard. Returns false
-// when localnode's TCP port is 0 (not yet published by
-// setupListening) so the check can't false-positive in the
-// startup window — DialV2 is reachable from admin RPC paths that
-// may run before that point.
+// to short-circuit v2 dials that would hairpin through the NAT
+// and arrive back at our own listener, and as a defense-in-depth
+// check in postHandshakeChecks for v2 connections that bypass the
+// dial guard.
+//
+// A dial counts as self when ANY of these hold:
+//
+//   - the address (IP, port) matches localnode's advertised TCP
+//     endpoint (the ordinary case once setupListening publishes
+//     the port);
+//   - the address is loopback (127.0.0.0/8, ::1) and the port
+//     matches our listen port (a localhost dial to our own
+//     listener);
+//   - the address is loopback and our listen port is not yet
+//     published — during the brief Start()-window before
+//     setupListening assigns the TCP port to localnode, any
+//     loopback dial is treated as self because no legitimate
+//     caller (admin RPC, anchor replay, feeler, runV2Dialer)
+//     ever wants to dial loopback at this stage.
+//
+// The loopback-only fallback in the port-0 branch closes the
+// startup-window gap without false-positiving real external
+// peers: a dial to a remote host's IP cannot match loopback.
 func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	if addr == nil || srv.localnode == nil {
 		return false
 	}
 	n := srv.localnode.Node()
 	selfPort := n.TCP()
+	// Pre-listening window: only loopback can be self with certainty.
+	// A loopback dial is never legitimate before the listener exists.
 	if selfPort == 0 {
+		return addr.IP.IsLoopback()
+	}
+	if addr.Port != selfPort {
 		return false
 	}
-	return addr.Port == selfPort && addr.IP.Equal(n.IP())
+	// Same port: self if the IP matches the advertised one OR is
+	// loopback (127.0.0.1 -> own listener regardless of advertised IP).
+	return addr.IP.Equal(n.IP()) || addr.IP.IsLoopback()
 }
 
 // peerListenAddr returns the peer's effective (IP, listen-port) for
