@@ -204,7 +204,7 @@ func TestAnchorsSkipsZeroPortEntries(t *testing.T) {
 
 	in := []*net.TCPAddr{
 		{IP: net.IPv4(5, 6, 7, 8), Port: 1234}, // keep
-		{IP: nil, Port: 32110},                  // nil ip → drop
+		{IP: nil, Port: 32110},                 // nil ip → drop
 	}
 	if err := saveAnchors(path, in); err != nil {
 		t.Fatalf("saveAnchors: %v", err)

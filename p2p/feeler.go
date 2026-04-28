@@ -51,12 +51,6 @@ const (
 	// connected to receive their `Peers` reply. The disc protocol
 	// times out the GetPeers / Peers exchange in well under this.
 	addrFetchLifetime = 30 * time.Second
-
-	// resolveCollisionsInterval is how often the feeler loop also
-	// runs ResolveCollisions to promote / evict tryCollision
-	// entries. Bitcoin Core does this on every feeler tick
-	// (src/net.cpp ThreadOpenConnections post-feeler-dial).
-	resolveCollisionsInterval = feelerInterval
 )
 
 // runFeeler is the background loop that periodically dials a single

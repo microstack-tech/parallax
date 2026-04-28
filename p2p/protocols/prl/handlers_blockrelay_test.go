@@ -76,7 +76,6 @@ func TestBlockRelayOnlyDropsTxRelay(t *testing.T) {
 		{"handleGetPooledTransactions66", handleGetPooledTransactions66},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			d := &trackingDecoder{}
 			// Backend is intentionally nil — a regression that passes

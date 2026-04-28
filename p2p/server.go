@@ -1584,7 +1584,6 @@ func (srv *Server) replayAnchors() {
 	}
 	srv.log.Info("anchors: replaying block-relay-only peers", "count", len(addrs))
 	for _, a := range addrs {
-		a := a
 		srv.loopWG.Add(1)
 		go func() {
 			defer srv.loopWG.Done()

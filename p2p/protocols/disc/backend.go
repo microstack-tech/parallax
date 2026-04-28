@@ -61,12 +61,12 @@ var errSelfConnect = errors.New("disc: self-connect detected via Hello nonce")
 // state is kept in handler.go's state struct; the Backend provides the
 // buckets on demand via NewIngestBucket.
 type AddrmanBackend struct {
-	m              *addrman.AddrMan
-	Q              *Quorum
-	log            logging.Logger
-	isSelf         IsSelfFunc
-	helloProv      HelloProvider
-	crossDialHost  CrossDialHost
+	m               *addrman.AddrMan
+	Q               *Quorum
+	log             logging.Logger
+	isSelf          IsSelfFunc
+	helloProv       HelloProvider
+	crossDialHost   CrossDialHost
 	crossDialHostMu sync.RWMutex
 
 	mu          sync.Mutex
