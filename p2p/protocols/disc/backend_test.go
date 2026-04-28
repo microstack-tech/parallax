@@ -244,6 +244,54 @@ func TestHandleHelloDetectsSelfConnect(t *testing.T) {
 	}
 }
 
+// TestHandleHelloNonceNearMissAccepted — a peer whose nonce differs
+// from ours by a single bit must NOT be flagged as self-connect.
+// Pairs with TestHandleHelloDetectsSelfConnect to lock down the
+// constant-time comparison's correctness on near-equal inputs.
+func TestHandleHelloNonceNearMissAccepted(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(123))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const localNonce uint64 = 0x0123456789ABCDEF
+	b := NewAddrmanBackend(m, nil, nil, nil, func() Hello {
+		return Hello{ProtoVersion: 1, Nonce: localNonce}
+	})
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	cases := []uint64{
+		localNonce ^ 1,                  // single-bit flip in low byte
+		localNonce ^ (1 << 63),          // single-bit flip in high byte
+		localNonce + 1,                  // adjacent integer
+		localNonce - 1,                  // adjacent integer
+		(localNonce >> 8) | ((localNonce & 0xFF) << 56), // byte rotation — same bits
+	}
+	for _, nonce := range cases {
+		if nonce == localNonce {
+			t.Fatalf("test setup bug: case nonce equals local nonce 0x%016X", localNonce)
+		}
+		echoed := Hello{ProtoVersion: 1, Nonce: nonce, ListenPort: 32110}
+		err := b.HandleHello(peer, echoed)
+		if errors.Is(err, errSelfConnect) {
+			t.Fatalf("near-miss nonce 0x%016X falsely matched local 0x%016X", nonce, localNonce)
+		}
+		if err != nil {
+			t.Fatalf("HandleHello near-miss: %v", err)
+		}
+	}
+}
+
 // TestHandleHelloNilProviderSkipsSelfCheck — when no helloProvider
 // is configured, the self-connect check is bypassed and Hello is
 // stored normally. Lets test backends without a provider exercise

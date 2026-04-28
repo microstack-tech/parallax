@@ -17,6 +17,8 @@
 package disc
 
 import (
+	"crypto/subtle"
+	"encoding/binary"
 	"errors"
 	"net"
 	"sync"
@@ -354,7 +356,11 @@ func (b *AddrmanBackend) LocalHello() Hello {
 // Server's run loop processes delpeer in the next iteration.
 func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 	if b.helloProv != nil {
-		if local := b.helloProv(); h.Nonce == local.Nonce {
+		local := b.helloProv()
+		var hbuf, lbuf [8]byte
+		binary.BigEndian.PutUint64(hbuf[:], h.Nonce)
+		binary.BigEndian.PutUint64(lbuf[:], local.Nonce)
+		if subtle.ConstantTimeCompare(hbuf[:], lbuf[:]) == 1 {
 			return errSelfConnect
 		}
 	}
