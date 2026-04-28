@@ -4,6 +4,24 @@ title: 'admin'
 
 The `admin` API gives access to several non-standard RPC methods, which allows fine grained control over an Parallax client instance, including but not limited to network peer and RPC endpoint management.
 
+### admin\_addnode
+
+Ingests an address into the addrbook with `source=manual`. Manual entries persist across restarts, are exempt from source-aware bucket eviction, and are dialed before any other source. Accepts either plain `ip:port` (v2.0-native peers, `KeyType=0x00`) or the legacy `enode://<nodeID>@ip:port` form (v1.x peers, `KeyType=0x01`).
+
+Returns `true` if the entry was inserted or updated, `false` otherwise.
+
+| CLIENT  | METHOD INVOCATION                                       |
+| ------- | ------------------------------------------------------- |
+| Console | admin.addnode(address)                                  |
+| RPC     | \{method": "admin\_addnode", "params": \[string\]\}    |
+
+#### Example
+
+```javascript
+> admin.addnode("69.62.94.166:32110")
+true
+```
+
 ### admin\_addPeer
 
 The addPeer administrative method requests adding a new remote node to the list of tracked static nodes. The node will try to maintain connectivity to these nodes at all times, reconnecting every once in a while if the remote connection goes down.
@@ -23,6 +41,43 @@ The method accepts a single argument, the [enode](../../../parallax-protocol/adv
 true
 ```
 
+### admin\_addrbookResetKey
+
+Regenerates the addrbook's per-node secret `nKey` and clears the tried table atomically. Use after a credible `nKey` leak — without a fresh key, an attacker who learned the old one can predict which buckets future peers will land in and skew the address selection. Destructive: every entry currently in the tried table is moved back to the new table or evicted.
+
+Returns `true` on success.
+
+| CLIENT  | METHOD INVOCATION                            |
+| ------- | -------------------------------------------- |
+| Console | admin.addrbookResetKey()                     |
+| RPC     | \{method": "admin\_addrbookResetKey"\}      |
+
+### admin\_addrbookStatus
+
+Returns a read-only snapshot of the addrbook: total entry count, the new/tried split, and per-source counts (`manual`, `dns_seed`, `tcp_gossip`, `legacy_udp`).
+
+| CLIENT  | METHOD INVOCATION                          |
+| ------- | ------------------------------------------ |
+| Console | admin.addrbookStatus()                     |
+| RPC     | \{method": "admin\_addrbookStatus"\}      |
+
+#### Example
+
+```javascript
+> admin.addrbookStatus()
+{
+  total: 1247,
+  new: 1118,
+  tried: 129,
+  perSource: {
+    dns_seed: 64,
+    legacy_udp: 0,
+    manual: 2,
+    tcp_gossip: 1181
+  }
+}
+```
+
 ### admin\_addTrustedPeer
 
 Adds the given node to a reserved trusted list which allows the node to always connect, even if the slots are full. It returns a BOOL to indicate whether the peer was successfully added to the list.
@@ -31,6 +86,17 @@ Adds the given node to a reserved trusted list which allows the node to always c
 | ------- | ----------------------------------------------------- |
 | Console | admin.addTrustedPeer(url)                             |
 | RPC     | \{method": "admin\_addTrustedPeer", "params": \[url]\}|
+
+### admin\_clearbanned
+
+Removes every entry from the persistent ban list (`<datadir>/banlist.json`). Does **not** touch the in-memory discourage filter, which is restart-cleared by design.
+
+Returns `true` on success.
+
+| CLIENT  | METHOD INVOCATION                       |
+| ------- | --------------------------------------- |
+| Console | admin.clearbanned()                     |
+| RPC     | \{method": "admin\_clearbanned"\}      |
 
 ### admin\_datadir
 
@@ -47,6 +113,24 @@ The datadir administrative property can be queried for the absolute path the run
 ```javascript
 > admin.datadir
 "/home/john/.parallax"
+```
+
+### admin\_dialV2
+
+Directly opens a BIP324-style v2 RLPx connection to the given `ip:port`. Bypasses the addrman routability filter, so it can target loopback / RFC1918 addresses for testing. Operator-testing entry point — peers established via `admin_dialV2` are still subject to all the normal post-handshake checks (peer cap, ban list, self-endpoint guard).
+
+Returns `true` if the dial was launched, `false` otherwise.
+
+| CLIENT  | METHOD INVOCATION                                   |
+| ------- | --------------------------------------------------- |
+| Console | admin.dialV2(address)                               |
+| RPC     | \{method": "admin\_dialV2", "params": \[string\]\} |
+
+#### Example
+
+```javascript
+> admin.dialV2("127.0.0.1:32110")
+true
 ```
 
 ### admin\_exportChain
@@ -66,6 +150,29 @@ Imports an exported list of blocks from a local file. Importing involves process
 | ------- | ----------------------------------------------------- |
 | Console | admin.importChain(file)                               |
 | RPC     | \{method": "admin\_importChain", "params": \[string\]\}|
+
+### admin\_listbanned
+
+Returns the active (non-expired) entries from the persistent ban list as a JSON array. Each entry has the CIDR-formatted subnet, the Unix-second timestamps for `ban_created` and `banned_until`, and an optional free-form `reason` tag. Expired entries are pruned lazily on each call.
+
+| CLIENT  | METHOD INVOCATION                       |
+| ------- | --------------------------------------- |
+| Console | admin.listbanned()                      |
+| RPC     | \{method": "admin\_listbanned"\}       |
+
+#### Example
+
+```javascript
+> admin.listbanned()
+[
+  {
+    address: "10.0.0.0/24",
+    ban_created: 1730000000,
+    banned_until: 1730086400,
+    reason: "manual"
+  }
+]
+```
 
 ### admin\_nodeInfo
 
@@ -198,6 +305,15 @@ Disconnects from a remote node if the connection exists. It returns a boolean in
 | Console | admin.removePeer(url)                                |
 | RPC     | \{method": "admin\_removePeer", "params": \[string]\}|
 
+### admin\_removenode
+
+Drops an address from the addrbook regardless of which table holds it. Inverse of `admin_addnode`. Returns `true` if the entry was removed, `false` if it was not present.
+
+| CLIENT  | METHOD INVOCATION                                       |
+| ------- | ------------------------------------------------------- |
+| Console | admin.removenode(address)                               |
+| RPC     | \{method": "admin\_removenode", "params": \[string\]\} |
+
 ### admin\_removeTrustedPeer
 
 Removes a remote node from the trusted peer set, but it does not disconnect it automatically. It returns a boolean indicating validations succeeded.
@@ -206,6 +322,35 @@ Removes a remote node from the trusted peer set, but it does not disconnect it a
 | ------- | ----------------------------------------------------------- |
 | Console | admin.removeTrustedPeer(url)                                |
 | RPC     | \{method": "admin\_removeTrustedPeer", "params": \[string]\}|
+
+### admin\_setban
+
+Adds or removes an entry in the persistent ban list. Banned IPs are hard-rejected at the listener for every inbound; trusted peers bypass the check.
+
+Arguments:
+
+- `subnet` — IP or CIDR string. `"1.2.3.4"` is treated as `/32`; `"10.0.0.0/24"` as a CIDR. IPv6 supported similarly.
+- `command` — `"add"` or `"remove"`.
+- `bantime` — seconds. Honored only on `"add"`. `0` falls back to the daemon's `DefaultBanDuration` (24 h).
+- `absolute` — when `true`, `bantime` is interpreted as a Unix timestamp instead of an offset from now. Defaults to `false`.
+
+On `"add"` any currently-connected peer whose remote address matches the subnet is also disconnected. On `"remove"` the call returns an error if the subnet was not previously banned.
+
+Returns `true` on success.
+
+| CLIENT  | METHOD INVOCATION                                                          |
+| ------- | -------------------------------------------------------------------------- |
+| Console | admin.setban(subnet, command, bantime, absolute)                           |
+| RPC     | \{method": "admin\_setban", "params": \[string, string, int64, bool\]\}   |
+
+#### Example
+
+```javascript
+> admin.setban("10.0.0.0/24", "add", 86400, false)
+true
+> admin.setban("10.0.0.0/24", "remove")
+true
+```
 
 ### admin\_startHTTP
 
