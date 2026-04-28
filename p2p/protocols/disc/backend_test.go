@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
@@ -536,6 +537,142 @@ type hookFunc func(*p2p.Peer, uint16) *p2p.Peer
 
 func (f hookFunc) FindCrossDialDup(p *p2p.Peer, port uint16) *p2p.Peer {
 	return f(p, port)
+}
+
+// TestRunQuorumRefreshLoopReconcilesConnectedPeers — the periodic
+// 1h backstop calls Quorum.Refresh with the currently-connected peer
+// set, dropping reports from peers whose PeerDisconnected didn't
+// fire. Drives the loop manually with a short interval so the test
+// completes in milliseconds.
+func TestRunQuorumRefreshLoopReconcilesConnectedPeers(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(101))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	// Three pipes / three peers; record their PeerKey so the test
+	// matches what Quorum sees.
+	type sess struct {
+		conn net.Conn
+		dial net.Conn
+		peer *p2p.Peer
+		key  PeerKey
+	}
+	mkSess := func() *sess {
+		a, d, err := pipes.TCPPipe()
+		if err != nil {
+			t.Fatalf("TCPPipe: %v", err)
+		}
+		var id enode.ID
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		p := p2p.NewPeerForTest(id, "test", nil, a)
+		return &sess{conn: a, dial: d, peer: p, key: peerKeyFor(p)}
+	}
+	s1, s2, s3 := mkSess(), mkSess(), mkSess()
+	defer s1.conn.Close()
+	defer s1.dial.Close()
+	defer s2.conn.Close()
+	defer s2.dial.Close()
+	defer s3.conn.Close()
+	defer s3.dial.Close()
+
+	// All three Hello, all three report distinct groups → quorum.
+	for _, s := range []*sess{s1, s2, s3} {
+		if err := b.HandleHello(s.peer, Hello{ProtoVersion: 1, Nonce: uint64(len(s.key)), ListenPort: 32110}); err != nil {
+			t.Fatalf("HandleHello: %v", err)
+		}
+	}
+	addr := []byte{198, 51, 100, 11}
+	b.Q.Report(s1.key, NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	b.Q.Report(s2.key, NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	b.Q.Report(s3.key, NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+	if _, _, _, ok := b.Q.Winner(); !ok {
+		t.Fatal("quorum not reached after three reports")
+	}
+
+	// Simulate a missed Disconnect: forcibly remove s3 from the
+	// backend's peerHello map without firing PeerDisconnected. The
+	// next Refresh tick must reconcile and drop s3's report.
+	b.mu.Lock()
+	delete(b.peerHello, s3.key)
+	b.mu.Unlock()
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.RunQuorumRefreshLoopWithInterval(stop, 5*time.Millisecond)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, _, _, ok := b.Q.Winner(); !ok {
+			break
+		}
+		select {
+		case <-deadline:
+			close(stop)
+			<-done
+			t.Fatal("quorum still ok after refresh loop should have dropped s3's orphaned report")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	close(stop)
+	<-done
+
+	// s1 + s2 still connected, two distinct groups, no quorum — exactly
+	// the post-refresh state we want.
+	if _, _, _, ok := b.Q.Winner(); ok {
+		t.Fatal("quorum re-emerged after stop")
+	}
+}
+
+// TestRunQuorumRefreshLoopRespectsStop — closing the stop chan
+// terminates the goroutine promptly. Regression guard against a
+// future refactor that swallows the stop signal.
+func TestRunQuorumRefreshLoopRespectsStop(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(102))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.RunQuorumRefreshLoopWithInterval(stop, time.Hour)
+	}()
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunQuorumRefreshLoop did not return after stop")
+	}
+}
+
+// TestRunQuorumRefreshLoopZeroInterval — an interval of 0 / negative
+// returns immediately without spinning. Defensive against
+// misconfiguration (future code passing a config field).
+func TestRunQuorumRefreshLoopZeroInterval(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(103))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.RunQuorumRefreshLoopWithInterval(stop, 0)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunQuorumRefreshLoop with interval=0 did not return")
+	}
 }
 
 // TestPeerDisconnectedClearsHello — closing the session purges the

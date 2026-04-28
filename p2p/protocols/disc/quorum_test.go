@@ -18,6 +18,7 @@ package disc
 
 import (
 	"testing"
+	"time"
 )
 
 // TestQuorumReachedAtThreshold — three reports from distinct groups
@@ -124,6 +125,86 @@ func TestQuorumDisconnectRemovesVotes(t *testing.T) {
 	q.Disconnect("p3")
 	if _, _, _, ok := q.Winner(); ok {
 		t.Error("quorum still ok after disconnecting one of three groups")
+	}
+}
+
+// TestQuorumRefreshDropsDisconnectedPeers — Refresh's
+// connected-peer reconciliation drops reports from peers absent
+// from the supplied connected set, even when their receivedAt is
+// fresh. The "and on peer churn" half of PIP-0006 §Phase 4's
+// quorum re-eval, here exercised as the periodic backstop in case
+// Disconnect() didn't fire.
+func TestQuorumRefreshDropsDisconnectedPeers(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 7}
+
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Fatal("quorum not reached initially")
+	}
+
+	// p3's session vanished (handler.Run returned without firing
+	// PeerDisconnected). Refresh with the truly-connected set must
+	// drop the orphaned report and quorum must follow.
+	connected := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	dropped := q.Refresh(time.Now(), connected)
+	if dropped != 1 {
+		t.Errorf("Refresh dropped %d, want 1", dropped)
+	}
+	if _, _, _, ok := q.Winner(); ok {
+		t.Error("quorum still ok after Refresh dropped a contributing peer")
+	}
+}
+
+// TestQuorumRefreshNilConnectedKeepsReports — passing nil for the
+// connected set is the "skip connected-set reconciliation" mode
+// (used by tests that exercise only the time-eviction path). Reports
+// must remain intact.
+func TestQuorumRefreshNilConnectedKeepsReports(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 8}
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+
+	if dropped := q.Refresh(time.Now(), nil); dropped != 0 {
+		t.Errorf("nil connected set dropped %d reports, want 0", dropped)
+	}
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Error("quorum lost after Refresh(nil)")
+	}
+}
+
+// TestQuorumRefreshAgeEviction — Refresh runs the evictStaleLocked
+// pass first, dropping reports older than QuorumEvictAfter even if
+// the peer is still listed as connected. Defense-in-depth for a peer
+// whose session is alive but whose YourAddr report has gone stale
+// (which shouldn't happen given current handler discipline, but is
+// what QuorumEvictAfter exists to bound).
+func TestQuorumRefreshAgeEviction(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 9}
+
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+
+	// Move p1's report into the stale window, then refresh at "now".
+	q.mu.Lock()
+	for _, byPeer := range q.reports {
+		if entry, ok := byPeer["p1"]; ok {
+			entry.receivedAt = time.Now().Add(-QuorumEvictAfter - time.Minute)
+			byPeer["p1"] = entry
+		}
+	}
+	q.mu.Unlock()
+
+	connected := map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
+	q.Refresh(time.Now(), connected)
+	if _, _, _, ok := q.Winner(); ok {
+		t.Error("quorum still ok after stale report aged out")
 	}
 }
 

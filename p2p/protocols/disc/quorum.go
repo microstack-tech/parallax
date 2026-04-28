@@ -30,8 +30,18 @@ const QuorumThreshold = 3
 
 // QuorumEvictAfter caps how long a peer's YourAddr report stays in the
 // tally. Reports are refreshed on re-connect, so anything older than
-// this is a disconnected peer that shouldn't count.
+// this is a disconnected peer whose Disconnect() hook didn't fire (a
+// crash mid-shutdown, or a future code path that bypasses handler.Run's
+// defer). Held high enough that long-lived sessions — which only emit
+// YourAddr once at handshake time — keep their reports.
 const QuorumEvictAfter = 3 * time.Hour
+
+// QuorumRefreshInterval is how often the periodic backstop sweep runs.
+// PIP-0006 §Phase 4: "re-evaluate quorum every 1h and on peer churn".
+// Peer churn is already covered by Disconnect; this tick is the
+// defense-in-depth backstop against missed Disconnect propagation, and
+// the synchronization point for Refresh's connected-peer reconciliation.
+const QuorumRefreshInterval = time.Hour
 
 // PeerKey uniquely identifies a peer within the quorum tally. We want
 // per-peer reports (one peer, one vote) but across sessions a single
@@ -226,6 +236,40 @@ func (q *Quorum) evictStaleLocked(now time.Time) {
 			delete(q.reports, key)
 		}
 	}
+}
+
+// Refresh runs the periodic re-evaluation called for in PIP-0006 §Phase
+// 4: drop time-stale reports, then drop reports from peers that are no
+// longer connected. The connected set is supplied by the caller (so
+// Quorum doesn't depend on Server). A nil set is treated as "skip the
+// connected-set reconciliation" — useful for tests that exercise only
+// the time-eviction path.
+//
+// Returns the number of reports dropped by the connected-set check (the
+// time-eviction count is not surfaced; it's defense-in-depth and
+// rare). Callers can log or metric this.
+func (q *Quorum) Refresh(now time.Time, connected map[PeerKey]struct{}) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.evictStaleLocked(now)
+
+	if connected == nil {
+		return 0
+	}
+	dropped := 0
+	for key, byPeer := range q.reports {
+		for pk := range byPeer {
+			if _, ok := connected[pk]; !ok {
+				delete(byPeer, pk)
+				dropped++
+			}
+		}
+		if len(byPeer) == 0 {
+			delete(q.reports, key)
+		}
+	}
+	return dropped
 }
 
 // Stats returns the current tally for operator diagnostics. Dumps (addr,

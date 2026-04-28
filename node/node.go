@@ -630,6 +630,13 @@ func (n *Node) setupAddrManAndDisc() error {
 	backend.SetCrossDialHost(n.server)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
+
+	// Periodic 1h quorum re-evaluation backstop (PIP-0006 §Phase 4).
+	// Peer churn is already covered by handler.Run's PeerDisconnected
+	// hook; this tick reconciles Quorum's report tally against the
+	// connected-peer set in case a Disconnect was missed, and ages out
+	// time-stale reports.
+	go backend.RunQuorumRefreshLoop(n.stop)
 	return nil
 }
 

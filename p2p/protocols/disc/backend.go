@@ -327,6 +327,55 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	b.Q.Disconnect(key)
 }
 
+// connectedPeerKeys snapshots the set of peers currently tracked by the
+// backend (those that have completed Hello and not yet disconnected).
+// Used by RunQuorumRefreshLoop to reconcile Quorum's report tally
+// against the actually-connected set — the "drop reports for peers no
+// longer connected" half of PIP-0006 §Phase 4's quorum re-eval.
+func (b *AddrmanBackend) connectedPeerKeys() map[PeerKey]struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[PeerKey]struct{}, len(b.peerHello))
+	for k := range b.peerHello {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// RunQuorumRefreshLoop is the 1h periodic backstop that recomputes
+// Quorum's tally — runs evictStaleLocked plus a connected-peer-set
+// reconciliation. Returns when stop fires; caller is responsible for
+// goroutine lifetime. Safe to call exactly once per backend.
+//
+// In production Server.Start spawns this as part of the parallax-disc/1
+// wiring. Tests invoke it directly with a synthetic stop chan, or
+// exercise Quorum.Refresh in isolation.
+func (b *AddrmanBackend) RunQuorumRefreshLoop(stop <-chan struct{}) {
+	b.RunQuorumRefreshLoopWithInterval(stop, QuorumRefreshInterval)
+}
+
+// RunQuorumRefreshLoopWithInterval is the test-facing variant of
+// RunQuorumRefreshLoop. Internal to the package.
+func (b *AddrmanBackend) RunQuorumRefreshLoopWithInterval(stop <-chan struct{}, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-t.C:
+			dropped := b.Q.Refresh(now, b.connectedPeerKeys())
+			if dropped > 0 {
+				b.log.Debug("parallax-disc/1: quorum refresh dropped reports from disconnected peers",
+					"dropped", dropped)
+			}
+		}
+	}
+}
+
 // LocalHello returns the local node's outgoing Hello (the value sent
 // on every outbound parallax-disc/1 session). Returns the zero
 // Hello with ProtoVersion=HelloMinProtoVersion if no provider is
