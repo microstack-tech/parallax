@@ -81,6 +81,7 @@ type Table struct {
 	nodeAddedHook func(*node) // for testing
 	nodeFilter    func(*enode.Node) bool
 	verifySlots   chan struct{} // bounds concurrent async ENR verifications
+	rejects       *rejectCache  // suppresses repeat verifyAndAdd on rejected/failed IDs
 }
 
 // maxConcurrentVerifications caps the number of in-flight RequestENR
@@ -118,6 +119,7 @@ func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, nodeFilter fun
 		log:         log,
 		nodeFilter:  nodeFilter,
 		verifySlots: make(chan struct{}, maxConcurrentVerifications),
+		rejects:     newRejectCache(),
 	}
 	if err := tab.setFallbackNodes(bootnodes); err != nil {
 		return nil, err
@@ -611,27 +613,49 @@ func (tab *Table) addVerifiedNode(n *node) {
 //
 // If no nodeFilter is configured, n is added synchronously via the regular
 // addVerifiedNode path.
+//
+// Two short-circuits avoid redundant RequestENR round-trips:
+//
+//  1. If n.ID() is in the negative cache (recent RequestENR error or filter
+//     rejection), drop immediately. Each non-Parallax / dead ID then costs
+//     us at most one round-trip per rejectCacheTTL, regardless of how many
+//     neighbors keep returning it in their FINDNODE responses.
+//
+//  2. If we already have a verified ENR for n.ID() in the local nodedb,
+//     reuse it. The nodedb only persists nodes that previously passed
+//     nodeFilter (see copyLiveNodes), so a hit means the ID is trusted.
+//     If it has gone offline since, the table revalidator will prune it.
 func (tab *Table) verifyAndAdd(n *node) {
 	if tab.nodeFilter == nil {
 		tab.addVerifiedNode(n)
+		return
+	}
+	id := n.ID()
+	if tab.rejects.Contains(id) {
+		return
+	}
+	if cached := tab.db.Node(id); cached != nil {
+		tab.addVerifiedNode(wrapNode(cached))
 		return
 	}
 	select {
 	case tab.verifySlots <- struct{}{}:
 	default:
 		// Back-pressure: already at the verification cap; drop.
-		tab.log.Debug("verifyAndAdd: slots exhausted", "id", n.ID(), "ip", n.IP())
+		tab.log.Debug("verifyAndAdd: slots exhausted", "id", id, "ip", n.IP())
 		return
 	}
 	go func() {
 		defer func() { <-tab.verifySlots }()
 		rn, err := tab.net.RequestENR(unwrapNode(n))
 		if err != nil {
-			tab.log.Debug("verifyAndAdd: RequestENR failed", "id", n.ID(), "ip", n.IP(), "err", err)
+			tab.rejects.Add(id)
+			tab.log.Debug("verifyAndAdd: RequestENR failed", "id", id, "ip", n.IP(), "err", err)
 			return
 		}
 		if !tab.nodeFilter(rn) {
-			tab.log.Debug("verifyAndAdd: node filtered out", "id", n.ID(), "ip", n.IP())
+			tab.rejects.Add(id)
+			tab.log.Debug("verifyAndAdd: node filtered out", "id", id, "ip", n.IP())
 			return
 		}
 		tab.addVerifiedNode(wrapNode(rn))

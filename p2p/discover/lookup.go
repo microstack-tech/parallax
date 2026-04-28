@@ -171,16 +171,35 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 		// would be rejected by addSeenNode's filter check.
 		add := n
 		if it.tab.nodeFilter != nil {
-			nn, err := it.tab.net.RequestENR(unwrapNode(n))
-			if err != nil {
-				it.tab.log.Debug("Lookup ENR request failed", "id", n.ID(), "addr", n.addr(), "err", err)
+			id := n.ID()
+			// Negative cache: a recent RequestENR error or filter rejection
+			// for this ID short-circuits without another round-trip. Without
+			// this, the same non-Parallax peer being returned by every
+			// neighbor's FINDNODE response would burn one RequestENR per
+			// occurrence (the a55b10... storm in the original report).
+			if it.tab.rejects.Contains(id) {
 				continue
 			}
-			if !it.tab.nodeFilter(nn) {
-				it.tab.log.Debug("Lookup filtered node", "id", n.ID(), "addr", n.addr())
-				continue
+			// Positive cache: a verified ENR already in the local nodedb
+			// means we previously accepted this ID. Reuse it instead of
+			// round-tripping. The nodedb only persists filter-passing
+			// records (see copyLiveNodes), so this is safe.
+			if cached := it.tab.db.Node(id); cached != nil {
+				add = wrapNode(cached)
+			} else {
+				nn, err := it.tab.net.RequestENR(unwrapNode(n))
+				if err != nil {
+					it.tab.rejects.Add(id)
+					it.tab.log.Debug("Lookup ENR request failed", "id", id, "addr", n.addr(), "err", err)
+					continue
+				}
+				if !it.tab.nodeFilter(nn) {
+					it.tab.rejects.Add(id)
+					it.tab.log.Debug("Lookup filtered node", "id", id, "addr", n.addr())
+					continue
+				}
+				add = wrapNode(nn)
 			}
-			add = wrapNode(nn)
 		}
 		it.tab.addSeenNode(add)
 		filtered = append(filtered, add)
