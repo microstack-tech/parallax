@@ -173,10 +173,43 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		}
 	}
 
+	// Per-peer relay outbox: RelayAddress fans newly-learned
+	// addresses into our outbox; the drain goroutine writes them on
+	// the wire (gated by the per-peer known-addr bloom so we don't
+	// repeat what the peer already told us). Buffer 16 means we drop
+	// at most a small burst if the underlying connection is slow —
+	// Bitcoin's behavior.
+	type outboxRegistrar interface {
+		RegisterPeerOutbox(PeerKey, chan<- PeerEntry)
+		UnregisterPeerOutbox(PeerKey)
+	}
+	var outbox chan PeerEntry
+	if reg, ok := backend.(outboxRegistrar); ok {
+		outbox = make(chan PeerEntry, relayOutboxBuffer)
+		reg.RegisterPeerOutbox(peerKeyFor(peer), outbox)
+	}
+
+	relayDone := make(chan struct{})
+	if outbox != nil {
+		go func() {
+			defer close(relayDone)
+			runRelayDrain(peer, rw, st, outbox, log)
+		}()
+	} else {
+		close(relayDone)
+	}
+
 	defer func() {
 		// Release per-peer state from the backend's maps on session
 		// close. AddrmanBackend exposes PeerDisconnected; other
 		// backends may not, so check via type assertion.
+		if reg, ok := backend.(outboxRegistrar); ok {
+			reg.UnregisterPeerOutbox(peerKeyFor(peer))
+		}
+		if outbox != nil {
+			close(outbox)
+		}
+		<-relayDone
 		if cleaner, ok := backend.(interface{ PeerDisconnected(*p2p.Peer) }); ok {
 			cleaner.PeerDisconnected(peer)
 		}
@@ -186,6 +219,38 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		if err := handleOne(backend, peer, rw, st); err != nil {
 			log.Debug("parallax-disc/1: session ending", "err", err)
 			return err
+		}
+	}
+}
+
+// relayOutboxBuffer is the per-peer relay outbox depth. Sized so a
+// small burst of new addresses doesn't drop while the drain
+// goroutine is mid-WriteMsg, but kept tight enough that a peer with
+// a slow underlying TCP connection doesn't pile up megabytes of
+// queued entries. Bitcoin's outbound rate of 1.0 addr/s + burst 10
+// means 16 covers ~16s of worst-case backlog before drops.
+const relayOutboxBuffer = 16
+
+// runRelayDrain is the per-peer goroutine that pulls entries from
+// the relay outbox and writes them to the wire. Skips entries the
+// peer already knows about (per the rolling known-addr bloom in
+// st.knownAddr), which is the m_addr_known dedup half of Bitcoin's
+// RelayAddress contract.
+//
+// Returns when the outbox closes (session ending) or when a write
+// fails (the peer goroutine exits anyway and we want to avoid
+// leaking a goroutine on a torn connection).
+func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-chan PeerEntry, log logging.Logger) {
+	for entry := range outbox {
+		key := addressKey(entry.NetworkID, entry.Addr, entry.TCPPort)
+		if st.knownAddr.Contains(key) {
+			// Peer already knows. Bitcoin: m_addr_known dedup.
+			continue
+		}
+		st.knownAddr.Add(key)
+		if err := p2p.Send(rw, PeersMsg, Peers{Entries: []PeerEntry{entry}}); err != nil {
+			log.Trace("parallax-disc/1: relay write failed; ending drain", "peer", peer.ID(), "err", err)
+			return
 		}
 	}
 }

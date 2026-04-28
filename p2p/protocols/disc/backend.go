@@ -17,6 +17,7 @@
 package disc
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
 	"errors"
@@ -83,6 +84,19 @@ type AddrmanBackend struct {
 	// Looked up by Server.peerListenAddr to dedup cross-dial pairs
 	// (phase 2) and by future eviction telemetry (phase 3).
 	peerHello map[PeerKey]Hello
+
+	// peerOutboxes is the per-peer relay channel registered by
+	// handler.Run. RelayAddress fans newly-learned addresses into
+	// the chosen subset of these. See relay.go for the picker.
+	peerOutboxes map[PeerKey]*peerRelayState
+
+	// relayKey is the per-process secret used as the keyed-hash key
+	// for the address-relay PRF. 32 random bytes from crypto/rand at
+	// backend construction; never persisted, never rotated. Rotating
+	// per-process means an observer can't predict our pick set across
+	// restarts; rotating per-process-not-per-day means the daily
+	// pick rotation is the work of the day-bucket input, not the key.
+	relayKey [32]byte
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
@@ -100,7 +114,7 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 	if log == nil {
 		log = logging.Root()
 	}
-	return &AddrmanBackend{
+	b := &AddrmanBackend{
 		m:             m,
 		Q:             q,
 		log:           log,
@@ -109,7 +123,15 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		peerBuckets:   make(map[PeerKey]*tokenBucket),
 		handshakeByID: make(map[enode.ID]string),
 		peerHello:     make(map[PeerKey]Hello),
+		peerOutboxes:  make(map[PeerKey]*peerRelayState),
 	}
+	if _, err := rand.Read(b.relayKey[:]); err != nil {
+		// crypto/rand failures are catastrophic (see crypto.io's
+		// unfailing-by-design guarantee on linux/getrandom). Panic
+		// rather than ship with a zero-key relay PRF.
+		panic("disc: cannot read randomness for relayKey: " + err.Error())
+	}
+	return b
 }
 
 // TrackHandshake records the handshake variant used for this session.
@@ -234,7 +256,19 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 			claimed = now
 		}
 		// Plus the 2-hour gossip penalty applied by the Add path.
-		b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		added := b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		// Bitcoin §RelayAddress: only newly-learned addresses get
+		// gossiped onward; if AddOne reports the entry was already
+		// known, we'd be amplifying without benefit. Reachability is
+		// a rough heuristic — we treat any entry that addrman accepted
+		// (passed the IsTerrible-style filters in IngestV2/IngestNode)
+		// as reachable for relay purposes, matching Bitcoin's "fReachable
+		// from caller" pattern. v2-native (KeyType=0) and legacy
+		// (KeyType=1) are both relayable; unknown/invalid would have
+		// been rejected upstream.
+		if added {
+			b.RelayAddress(peer, e, true)
+		}
 	}
 }
 
