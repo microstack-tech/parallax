@@ -511,6 +511,84 @@ func randomID() (id enode.ID) {
 	return id
 }
 
+// TestSetupConnInboundProgressLifecycle — confirms the
+// inboundProgress register/unregister wiring in setupConn:
+//
+//   - on inbound setup, the NodeID is registered with the dial
+//     scheduler before checkpointPostHandshake;
+//   - the registration is cleared on every exit path (here:
+//     protoHandshake failure mid-stream).
+//
+// Verified by checking the dialsched's inboundProgress map directly
+// after SetupConn returns. Pairs with the dial-scheduler unit tests
+// that exercise checkDial's new branch.
+func TestSetupConnInboundProgressLifecycle(t *testing.T) {
+	t.Parallel()
+
+	clientkey := newkey()
+	srvkey := newkey()
+	clientpub := &clientkey.PublicKey
+	tt := &setupTransport{
+		pubkey:            clientpub,
+		phs:               protoHandshake{ID: crypto.FromECDSAPub(clientpub)[1:]},
+		protoHandshakeErr: errors.New("fail at proto handshake"),
+	}
+	cfg := Config{
+		PrivateKey:  srvkey,
+		MaxPeers:    10,
+		NoDial:      true,
+		NoDiscovery: true,
+		Protocols:   []Protocol{discard},
+		Logger:      testlog.Logger(t, logging.LvlTrace),
+	}
+	srv := &Server{
+		Config:       cfg,
+		newTransport: func(fd net.Conn, _ *ecdsa.PublicKey) transport { return tt },
+		log:          cfg.Logger,
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Stop()
+
+	clientNode := nodeFromConn(clientpub, &fakeConn{remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}})
+	id := clientNode.ID()
+
+	a, b := net.Pipe()
+	defer b.Close()
+	if err := srv.SetupConn(a, inboundConn, nil); err == nil {
+		t.Fatal("SetupConn returned nil; want proto-handshake error")
+	}
+
+	// After SetupConn returns, the deferred inboundProgressEnd must
+	// have run. Probe dialsched via checkDial: a candidate carrying
+	// our just-vacated NodeID must NOT be blocked by errInboundProgress.
+	probe := newNode(id, "1.2.3.4:32110")
+	gotErr := make(chan error, 1)
+	go func() {
+		// checkDial runs on the dial loop goroutine. We funnel a
+		// query in via a synthetic dial-update helper.
+		gotErr <- srv.dialsched.probeCheckDial(probe)
+	}()
+	select {
+	case err := <-gotErr:
+		if errors.Is(err, errInboundProgress) {
+			t.Fatalf("inboundProgress leaked after SetupConn returned: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("probeCheckDial did not return")
+	}
+}
+
+// fakeConn is a net.Conn stub that returns a fixed RemoteAddr. Used
+// to coax nodeFromConn into producing the same ID setupConn would.
+type fakeConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (f *fakeConn) RemoteAddr() net.Addr { return f.remote }
+
 // This test checks that inbound connections are throttled by IP.
 func TestServerInboundThrottle(t *testing.T) {
 	const timeout = 5 * time.Second

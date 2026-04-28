@@ -1930,7 +1930,6 @@ running:
 				// Ensure that the trusted flag is set before checking against MaxPeers.
 				c.flags |= trustedConn
 			}
-			// TODO: track in-progress inbound node IDs (pre-Peer) to avoid dialing them.
 			c.cont <- srv.postHandshakeChecks(peers, inboundCount, tcpGossipPeers, c)
 
 		case c := <-srv.checkpointAddPeer:
@@ -2416,6 +2415,19 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		c.node = dialDest
 	}
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
+	// Inbound: register the NodeID with the dial scheduler so an
+	// outbound iterator pick on the same ID is rejected with
+	// errInboundProgress. The defer brackets the entire window —
+	// post-handshake checks, protocol handshake, addPeer — so the
+	// registration is cleared regardless of which exit path runs.
+	// By the time setupConn returns success, dialsched.peerAdded has
+	// already populated d.peers[id] (peerAdded blocks on the dialer
+	// loop), so the unregister leaves no protective gap.
+	if c.is(inboundConn) && srv.dialsched != nil {
+		id := c.node.ID()
+		srv.dialsched.inboundProgressBegin(id)
+		defer srv.dialsched.inboundProgressEnd(id)
+	}
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)

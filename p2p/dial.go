@@ -76,6 +76,7 @@ var (
 	errSelf                  = errors.New("is self")
 	errAlreadyDialing        = errors.New("already dialing")
 	errAlreadyConnected      = errors.New("already connected")
+	errInboundProgress       = errors.New("inbound handshake in progress")
 	errRecentlyDialed        = errors.New("recently dialed")
 	errNetRestrict           = errors.New("not contained in netrestrict list")
 	errNoPort                = errors.New("node does not provide TCP port")
@@ -104,11 +105,38 @@ type dialScheduler struct {
 	addPeerCh   chan *conn
 	remPeerCh   chan *conn
 
+	// addInProgressCh / remInProgressCh signal that an inbound conn
+	// is between encryption-handshake-done and addPeer (the protocol-
+	// handshake window). The dialer rejects outbound dials to those
+	// IDs to avoid the symmetric-handshake race that ends with one
+	// side eating a DiscAlreadyConnected after wasting a handshake.
+	// PIP-0006 §Phase 6 / server.go's "track in-progress inbound node
+	// IDs (pre-Peer)" TODO.
+	addInProgressCh chan enode.ID
+	remInProgressCh chan enode.ID
+
+	// probeCh is a test-only synchronous probe of inboundProgress
+	// state. The loop handles it inline, so the result reflects the
+	// state at the moment the request was processed and the read of
+	// d.inboundProgress is loop-local (no race).
+	probeCh chan probeCheckDialReq
+
 	// Everything below here belongs to loop and
 	// should only be accessed by code on the loop goroutine.
 	dialing   map[enode.ID]*dialTask // active tasks
 	peers     map[enode.ID]struct{}  // all connected peers
 	dialPeers int                    // current number of dialed peers
+
+	// inboundProgress is the run-loop's view of inbound conns
+	// currently between checkpointPostHandshake and the moment they
+	// either land in d.peers (success) or are dropped (failure).
+	// Refcounted: a malicious peer that opens two inbound TCP sockets
+	// claiming the same NodeID would otherwise underflow the count
+	// when the first finishes. Bitcoin's net.cpp doesn't see this
+	// because IDs are tied to TLS-handshake outcome and a given peer
+	// can't easily duplicate; v2-handshake's ephemeral-key derived ID
+	// is harder to duplicate but the refcount is cheap insurance.
+	inboundProgress map[enode.ID]int
 
 	// blockRelayDialed counts the subset of dialPeers that occupy
 	// block-relay-only slots (Bitcoin Core's
@@ -198,18 +226,22 @@ func (cfg dialConfig) withDefaults() dialConfig {
 
 func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupFunc) *dialScheduler {
 	d := &dialScheduler{
-		dialConfig:     config.withDefaults(),
-		setupFunc:      setupFunc,
-		dialing:        make(map[enode.ID]*dialTask),
-		outboundGroups: make(map[string]int),
-		static:         make(map[enode.ID]*dialTask),
-		peers:          make(map[enode.ID]struct{}),
-		doneCh:         make(chan *dialTask),
-		nodesIn:        make(chan *enode.Node),
-		addStaticCh:    make(chan *enode.Node),
-		remStaticCh:    make(chan *enode.Node),
-		addPeerCh:      make(chan *conn),
-		remPeerCh:      make(chan *conn),
+		dialConfig:      config.withDefaults(),
+		setupFunc:       setupFunc,
+		dialing:         make(map[enode.ID]*dialTask),
+		outboundGroups:  make(map[string]int),
+		static:          make(map[enode.ID]*dialTask),
+		peers:           make(map[enode.ID]struct{}),
+		inboundProgress: make(map[enode.ID]int),
+		doneCh:          make(chan *dialTask),
+		nodesIn:         make(chan *enode.Node),
+		addStaticCh:     make(chan *enode.Node),
+		remStaticCh:     make(chan *enode.Node),
+		addPeerCh:       make(chan *conn),
+		remPeerCh:       make(chan *conn),
+		addInProgressCh: make(chan enode.ID),
+		remInProgressCh: make(chan enode.ID),
+		probeCh:         make(chan probeCheckDialReq),
 	}
 	d.lastStatsLog = d.clock.Now()
 	d.ctx, d.cancel = context.WithCancel(context.Background())
@@ -254,6 +286,56 @@ func (d *dialScheduler) peerRemoved(c *conn) {
 	select {
 	case d.remPeerCh <- c:
 	case <-d.ctx.Done():
+	}
+}
+
+// inboundProgressBegin marks an inbound conn's NodeID as being mid-
+// handshake. checkDial rejects outbound dials to that ID until the
+// matching inboundProgressEnd. Synchronous: returns once the loop
+// has applied the change, so callers (setupConn on accept goroutines)
+// see a consistent inboundProgress state by the time the next dial
+// candidate is considered.
+func (d *dialScheduler) inboundProgressBegin(id enode.ID) {
+	select {
+	case d.addInProgressCh <- id:
+	case <-d.ctx.Done():
+	}
+}
+
+// inboundProgressEnd is the matching unregister. Always paired with
+// an earlier Begin via defer in setupConn so it fires on every exit
+// path (success, post-handshake-fail, proto-handshake-fail).
+func (d *dialScheduler) inboundProgressEnd(id enode.ID) {
+	select {
+	case d.remInProgressCh <- id:
+	case <-d.ctx.Done():
+	}
+}
+
+// probeCheckDialReq is the message a probeCheckDial sends into the
+// loop: a node to inspect plus a reply channel for the result.
+type probeCheckDialReq struct {
+	n   *enode.Node
+	out chan error
+}
+
+// probeCheckDial runs a checkDial against d's loop-owned state and
+// returns the same error a real iterator pick would see. Test-only.
+// The probe runs ON the loop goroutine via probeCh so the read of
+// inboundProgress can't race with any in-flight begin/end / addPeer
+// updates.
+func (d *dialScheduler) probeCheckDial(n *enode.Node) error {
+	out := make(chan error, 1)
+	select {
+	case d.probeCh <- probeCheckDialReq{n: n, out: out}:
+	case <-d.ctx.Done():
+		return d.ctx.Err()
+	}
+	select {
+	case err := <-out:
+		return err
+	case <-d.ctx.Done():
+		return d.ctx.Err()
 	}
 }
 
@@ -343,6 +425,19 @@ loop:
 			}
 			delete(d.peers, c.node.ID())
 			d.updateStaticPool(c.node.ID())
+
+		case id := <-d.addInProgressCh:
+			d.inboundProgress[id]++
+
+		case id := <-d.remInProgressCh:
+			if n := d.inboundProgress[id]; n > 1 {
+				d.inboundProgress[id] = n - 1
+			} else {
+				delete(d.inboundProgress, id)
+			}
+
+		case req := <-d.probeCh:
+			req.out <- d.checkDial(req.n)
 
 		case node := <-d.addStaticCh:
 			id := node.ID()
@@ -470,6 +565,13 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	}
 	if _, ok := d.peers[n.ID()]; ok {
 		return errAlreadyConnected
+	}
+	// Reject if an inbound conn for the same NodeID is still mid-
+	// handshake. Closes the symmetric-dial race that would otherwise
+	// have us spend a full encryption + protocol handshake just to
+	// hit DiscAlreadyConnected at addPeerChecks. PIP-0006 review A6.
+	if d.inboundProgress[n.ID()] > 0 {
+		return errInboundProgress
 	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNetRestrict

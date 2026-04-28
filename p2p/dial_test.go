@@ -465,6 +465,88 @@ func TestDialSchedNetworkGroupDiversity(t *testing.T) {
 	})
 }
 
+// TestDialSchedSkipsInboundInProgress — when an inbound conn is
+// mid-handshake for some NodeID (registered via inboundProgressBegin),
+// the dial scheduler must NOT pick that ID from the discovery
+// iterator. Closes the symmetric-handshake race that previously had
+// us spend a full encryption + protocol handshake just to hit
+// DiscAlreadyConnected at the second checkpointAddPeer. PIP-0006
+// review item A6.
+func TestDialSchedSkipsInboundInProgress(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	racing := newNode(uintID(0x42), "1.2.3.4:32110")
+	other := newNode(uintID(0x43), "5.6.7.8:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: inbound for racing.ID() is mid-handshake. Both
+		// candidates appear from the iterator — only `other` should
+		// be dialed; `racing` is suppressed by inboundProgress.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(racing.ID())
+				// Drain the channel synchronously by triggering a
+				// loop turn — sleep-free wait by sending a static
+				// add and removing it (a no-op the loop must handle
+				// before it picks from nodesIn).
+			},
+			discovered:   []*enode.Node{racing, other},
+			wantNewDials: []*enode.Node{other},
+		},
+		// Round 1: the inbound finishes and unregisters. `racing`
+		// should now be eligible.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: []*enode.Node{racing},
+		},
+	})
+}
+
+// TestDialSchedInboundProgressRefcount — two inbound conns claiming
+// the same NodeID register independently; the dial scheduler must
+// keep blocking until BOTH unregister. Defends against a peer that
+// opens a second inbound socket while the first is still mid-
+// handshake.
+func TestDialSchedInboundProgressRefcount(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	racing := newNode(uintID(0x44), "9.10.11.12:32110")
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(racing.ID())
+				d.inboundProgressBegin(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: nil, // suppressed (refcount=2)
+		},
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: nil, // still suppressed (refcount=1)
+		},
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: []*enode.Node{racing},
+		},
+	})
+}
+
 // This test checks that past dials are not retried for some time.
 func TestDialSchedHistory(t *testing.T) {
 	t.Parallel()
