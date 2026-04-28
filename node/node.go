@@ -32,6 +32,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/support/event"
@@ -277,6 +278,9 @@ func (n *Node) openEndpoints() error {
 	// (rather than letting Server do it internally) avoids the import
 	// cycle that would appear if p2p imported p2p/protocols/disc.
 	if err := n.setupAddrManAndDisc(); err != nil {
+		return err
+	}
+	if err := n.setupBanMan(); err != nil {
 		return err
 	}
 	// start networking endpoints
@@ -626,6 +630,29 @@ func (n *Node) setupAddrManAndDisc() error {
 	backend.SetCrossDialHost(n.server)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
+	return nil
+}
+
+// setupBanMan constructs the persistent BanMan and assigns it to the
+// p2p Server before Start. Done at the node layer so the path
+// defaulting lives next to AddrBookPath / AnchorsPath in
+// cmd/utils/flags.go and so test harnesses that preset
+// server.BanList are respected via the early-return.
+//
+// When n.config.P2P.BanListPath is empty the BanMan runs in-memory
+// only (no persistence). Mutators auto-Dump after every change, so
+// no shutdown hook is required; the in-memory discourage filter is
+// restart-cleared by design.
+func (n *Node) setupBanMan() error {
+	if n.server.BanList != nil {
+		// Already wired (test harness or double-Start).
+		return nil
+	}
+	bm, err := banman.New(n.config.P2P.BanListPath, n.log)
+	if err != nil {
+		return err
+	}
+	n.server.BanList = bm
 	return nil
 }
 

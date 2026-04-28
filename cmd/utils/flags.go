@@ -1246,6 +1246,12 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if cfg.P2P.AnchorsPath == "" && cfg.DataDir != "" {
 		cfg.P2P.AnchorsPath = filepath.Join(cfg.DataDir, "anchors.dat")
 	}
+	// Default the banlist location to <datadir>/banlist.json. An empty
+	// BanListPath keeps the BanMan in-memory only (fine for ephemeral
+	// tests).
+	if cfg.P2P.BanListPath == "" && cfg.DataDir != "" {
+		cfg.P2P.BanListPath = filepath.Join(cfg.DataDir, "banlist.json")
+	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {
 		cfg.JWTSecret = ctx.GlobalString(JWTSecretFlag.Name)

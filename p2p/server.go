@@ -229,8 +229,15 @@ type Config struct {
 	// to reject banned and (under saturation) discouraged source IPs.
 	// Operator-controlled persistence lives in p2p/banman; the Server
 	// only reads. nil disables ban / discourage gating — useful in
-	// ephemeral tests.
+	// ephemeral tests. The node layer constructs and assigns this
+	// before Server.Start using BanListPath; tests can preset.
 	BanList *banman.BanMan `toml:"-"`
+
+	// BanListPath is where banlist.json persists across restarts.
+	// Defaults to <datadir>/banlist.json via the node layer. Empty
+	// keeps the BanMan in-memory only (fine for ephemeral tests).
+	// Honored only when BanList is nil at Start time.
+	BanListPath string `toml:",omitempty"`
 
 	// AnchorsPath is the location of anchors.dat. On clean shutdown
 	// the (IP, listen-port) of currently-connected block-relay-only
