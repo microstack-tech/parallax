@@ -1006,6 +1006,24 @@ func (srv *Server) setupDialScheduler() {
 		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.IsSelfEndpoint)
 		srv.loopWG.Add(1)
 		go srv.runV2Dialer()
+
+		// Background feeler. Periodically tests one addrman entry
+		// for reachability without occupying an outbound slot —
+		// Bitcoin Core's anti-eclipse / addrman-freshness feeler
+		// (src/net.cpp:2796-2810). Refreshes LastSuccess on hits,
+		// records failures otherwise.
+		srv.loopWG.Add(1)
+		go srv.runFeeler()
+
+		// Cold-start addrfetch. One-shot bootstrap-only dial when
+		// the addrman is below addrFetchThreshold so a fresh
+		// install can populate addrbook from a few peers' GetPeers
+		// responses (Bitcoin Core ConnectionType::ADDR_FETCH,
+		// src/net.cpp:2422). No-op once the addrman has filled up.
+		if len(srv.BootstrapNodesV2) > 0 {
+			srv.loopWG.Add(1)
+			go srv.runAddrFetch()
+		}
 	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
