@@ -171,6 +171,13 @@ type Peer struct {
 	// TCP RemoteAddr. Eviction protection passes consume this for
 	// anti-eclipse diversity preservation.
 	networkGroup atomic.Pointer[[]byte]
+	// tcpGossipSourced is true when this peer's address came from
+	// addrman with source=tcp_gossip at admit time. Set once in the
+	// run loop's checkpointAddPeer branch and read on disconnect to
+	// keep the per-source peer counter (which drives the
+	// MinLegacyPeers floor) in sync. Read-only after admit; no
+	// atomic needed.
+	tcpGossipSourced bool
 
 	// events receives message send / receive events if set
 	events   *event.Feed

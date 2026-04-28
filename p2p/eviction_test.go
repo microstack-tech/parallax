@@ -380,7 +380,7 @@ func TestPostHandshakeChecksTriggersEviction(t *testing.T) {
 		flags:     inboundConn,
 	}
 
-	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), newConn)
+	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, newConn)
 	if err != nil {
 		t.Fatalf("postHandshakeChecks returned %v; expected nil after successful eviction", err)
 	}
@@ -432,7 +432,7 @@ func TestPostHandshakeChecksHardRejectsWhenEvictionFails(t *testing.T) {
 
 	// Pass inboundCount >= maxInboundConns to force the saturation
 	// branch.
-	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), newConn)
+	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, newConn)
 	if err != DiscTooManyPeers {
 		t.Fatalf("postHandshakeChecks = %v, want DiscTooManyPeers", err)
 	}

@@ -771,7 +771,7 @@ func TestPostHandshakeChecksRejectsV2Self(t *testing.T) {
 		node:      other,
 	}
 
-	err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, c)
+	err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, 0, c)
 	if !errors.Is(err, DiscSelf) {
 		t.Fatalf("postHandshakeChecks err = %v, want DiscSelf", err)
 	}

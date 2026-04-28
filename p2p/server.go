@@ -66,6 +66,13 @@ const (
 	// override via Config.MaxBlockRelayPeers.
 	defaultMaxBlockRelayPeers = 2
 
+	// defaultMinLegacyPeers is the number of peer slots withheld from
+	// tcp_gossip-sourced candidates while in v2.x. Bounds the blast
+	// radius of a v2.0-specific bug by preventing 100% concentration
+	// on the new code path. Removed in v3.0 alongside the legacy
+	// transports. PIP-0006 §Phase 5.
+	defaultMinLegacyPeers = 2
+
 	// This time limits inbound connection attempts per source IP.
 	inboundThrottleTime = 30 * time.Second
 
@@ -98,6 +105,21 @@ type Config struct {
 	// MaxPeers is the maximum number of peers that can be
 	// connected. It must be greater than zero.
 	MaxPeers int
+
+	// MinLegacyPeers is the number of peer slots withheld from
+	// tcp_gossip-sourced candidates so the node retains at least
+	// this many peers from non-tcp_gossip sources (legacy_udp,
+	// dns_seed, manual, self_advertised) when such peers are
+	// reachable. Defaults to defaultMinLegacyPeers when zero. Set
+	// to a negative value to disable the floor entirely.
+	//
+	// Rationale: during v2.x, prevents a v2.0 node from ending up
+	// with all peers running the same new code — bounds the blast
+	// radius of a v2.0-specific bug. Not a defense against any
+	// adversary; robustness for early-rollout population
+	// concentration. Removed in v3.0 alongside the legacy
+	// transports. PIP-0006 §Phase 5.
+	MinLegacyPeers int `toml:",omitempty"`
 
 	// MaxPendingPeers is the maximum number of peers that can be pending in the
 	// handshake phase, counted separately for inbound and outbound connections.
@@ -1677,6 +1699,69 @@ func (srv *Server) maxInboundConns() int {
 	return srv.MaxPeers - srv.maxDialedConns()
 }
 
+// minLegacyPeers returns the configured floor of non-tcp_gossip
+// peer slots, with the v2.x default applied when MinLegacyPeers is
+// zero. A negative value disables the floor.
+func (srv *Server) minLegacyPeers() int {
+	if srv.MinLegacyPeers < 0 {
+		return 0
+	}
+	if srv.MinLegacyPeers == 0 {
+		return defaultMinLegacyPeers
+	}
+	return srv.MinLegacyPeers
+}
+
+// connSourceTag returns the addrman source tag for c's remote
+// endpoint, or 0 if no addrman entry exists or the addrbook is
+// disabled. Looks up by RemoteAddr; for v1 inbound peers this is the
+// ephemeral source port and won't match the addrman entry keyed by
+// listen port — those connections fall through unclassified, which
+// is the conservative choice (the floor only fires on classifiable
+// tcp_gossip peers).
+func (srv *Server) connSourceTag(c *conn) addrman.Source {
+	if srv.addrbook == nil {
+		return 0
+	}
+	tcp, ok := c.fd.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return 0
+	}
+	var na addrman.NetAddr
+	var err error
+	if v4 := tcp.IP.To4(); v4 != nil {
+		na, err = addrman.NewNetAddr(addrman.NetIPv4, v4, uint16(tcp.Port))
+	} else if v6 := tcp.IP.To16(); v6 != nil {
+		na, err = addrman.NewNetAddr(addrman.NetIPv6, v6, uint16(tcp.Port))
+	} else {
+		return 0
+	}
+	if err != nil {
+		return 0
+	}
+	info := srv.addrbook.Lookup(na)
+	if info == nil {
+		return 0
+	}
+	return info.SourceTag
+}
+
+// hasNonTCPGossipAlternatives reports whether the addrbook holds
+// any entry from a source other than tcp_gossip. Used to short-
+// circuit the legacy-floor reject when no non-tcp_gossip candidate
+// could ever fill the reserved slots.
+func (srv *Server) hasNonTCPGossipAlternatives() bool {
+	if srv.addrbook == nil {
+		return false
+	}
+	for src, n := range srv.addrbook.CountsBySource() {
+		if src != addrman.SourceTCPGossip && n > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (srv *Server) maxDialedConns() (limit int) {
 	if srv.NoDial || srv.MaxPeers == 0 {
 		return 0
@@ -1772,7 +1857,13 @@ func (srv *Server) run() {
 	var (
 		peers        = make(map[enode.ID]*Peer)
 		inboundCount = 0
-		trusted      = make(map[enode.ID]bool, len(srv.TrustedNodes))
+		// tcpGossipPeers counts currently-connected peers whose
+		// addrman entry was tagged source=tcp_gossip when first
+		// learned. Drives the MinLegacyPeers floor in
+		// postHandshakeChecks so we don't end up with all peers on
+		// the new code path during early v2.x. PIP-0006 §Phase 5.
+		tcpGossipPeers = 0
+		trusted        = make(map[enode.ID]bool, len(srv.TrustedNodes))
 	)
 	// Put trusted nodes into a map to speed up checks.
 	// Trusted peers are loaded on startup or added via AddTrustedPeer RPC.
@@ -1818,12 +1909,12 @@ running:
 				c.flags |= trustedConn
 			}
 			// TODO: track in-progress inbound node IDs (pre-Peer) to avoid dialing them.
-			c.cont <- srv.postHandshakeChecks(peers, inboundCount, c)
+			c.cont <- srv.postHandshakeChecks(peers, inboundCount, tcpGossipPeers, c)
 
 		case c := <-srv.checkpointAddPeer:
 			// At this point the connection is past the protocol handshake.
 			// Its capabilities are known and the remote identity is verified.
-			err := srv.addPeerChecks(peers, inboundCount, c)
+			err := srv.addPeerChecks(peers, inboundCount, tcpGossipPeers, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
 				p := srv.launchPeer(c)
@@ -1832,6 +1923,10 @@ running:
 				srv.dialsched.peerAdded(c)
 				if p.Inbound() {
 					inboundCount++
+				}
+				if srv.connSourceTag(c) == addrman.SourceTCPGossip {
+					tcpGossipPeers++
+					p.tcpGossipSourced = true
 				}
 				// addrman.Good: mark this peer's address as verified.
 				// Callers to addrman learn from our successes this
@@ -1848,6 +1943,9 @@ running:
 			srv.dialsched.peerRemoved(pd.rw)
 			if pd.Inbound() {
 				inboundCount--
+			}
+			if pd.tcpGossipSourced && tcpGossipPeers > 0 {
+				tcpGossipPeers--
 			}
 			// addrman.Attempt: log the dial failure so IsTerrible
 			// eventually evicts unreachable entries. Only count
@@ -1896,7 +1994,7 @@ running:
 	}
 }
 
-func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
+func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, tcpGossipPeers int, c *conn) error {
 	// Saturation handling for inbound: instead of hard-rejecting,
 	// run the Bitcoin-Core-style eviction algorithm to free a slot
 	// by dropping the lowest-quality existing inbound peer. If
@@ -1916,6 +2014,21 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	// Trusted peers bypass.
 	if srv.BanList != nil && !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns() {
 		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsDiscouraged(remote.IP) {
+			return DiscTooManyPeers
+		}
+	}
+	// MinLegacyPeers floor (PIP-0006 §Phase 5): hard-cap tcp_gossip
+	// peers at MaxPeers - MinLegacyPeers so a v2.0-specific bug
+	// can't take down 100% of our peers. Applies on both directions
+	// once the peer's source is classifiable. Trusted peers bypass.
+	// Skipped when the addrbook holds no non-tcp_gossip alternatives —
+	// no point reserving slots that nothing can fill.
+	if floor := srv.minLegacyPeers(); floor > 0 && !c.is(trustedConn) {
+		cap := srv.MaxPeers - floor
+		if cap < 0 {
+			cap = 0
+		}
+		if tcpGossipPeers >= cap && srv.connSourceTag(c) == addrman.SourceTCPGossip && srv.hasNonTCPGossipAlternatives() {
 			return DiscTooManyPeers
 		}
 	}
@@ -1963,14 +2076,14 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	return nil
 }
 
-func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
+func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount, tcpGossipPeers int, c *conn) error {
 	// Drop connections with no matching protocols.
 	if len(srv.Protocols) > 0 && countMatchingProtocols(srv.Protocols, c.caps) == 0 {
 		return DiscUselessPeer
 	}
 	// Repeat the post-handshake checks because the
 	// peer set might have changed since those checks were performed.
-	return srv.postHandshakeChecks(peers, inboundCount, c)
+	return srv.postHandshakeChecks(peers, inboundCount, tcpGossipPeers, c)
 }
 
 // listenLoop runs in its own goroutine and accepts
