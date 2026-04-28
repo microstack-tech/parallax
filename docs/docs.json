@@ -87,7 +87,8 @@
                 "pages": [
                   "parallax-protocol/advanced/networking/overview",
                   "parallax-protocol/advanced/networking/addresses",
-                  "parallax-protocol/advanced/networking/pip-0006"
+                  "parallax-protocol/advanced/networking/pip-0006",
+                  "parallax-protocol/advanced/networking/peer-management"
                 ]
               },
               {

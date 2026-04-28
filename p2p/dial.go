@@ -73,12 +73,13 @@ func nodeAddr(n *enode.Node) net.Addr {
 
 // checkDial errors:
 var (
-	errSelf             = errors.New("is self")
-	errAlreadyDialing   = errors.New("already dialing")
-	errAlreadyConnected = errors.New("already connected")
-	errRecentlyDialed   = errors.New("recently dialed")
-	errNetRestrict      = errors.New("not contained in netrestrict list")
-	errNoPort           = errors.New("node does not provide TCP port")
+	errSelf                  = errors.New("is self")
+	errAlreadyDialing        = errors.New("already dialing")
+	errAlreadyConnected      = errors.New("already connected")
+	errRecentlyDialed        = errors.New("recently dialed")
+	errNetRestrict           = errors.New("not contained in netrestrict list")
+	errNoPort                = errors.New("node does not provide TCP port")
+	errOutboundGroupOccupied = errors.New("outbound network group already occupied")
 )
 
 // dialer creates outbound connections and submits them into Server.
@@ -108,6 +109,27 @@ type dialScheduler struct {
 	dialing   map[enode.ID]*dialTask // active tasks
 	peers     map[enode.ID]struct{}  // all connected peers
 	dialPeers int                    // current number of dialed peers
+
+	// blockRelayDialed counts the subset of dialPeers that occupy
+	// block-relay-only slots (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). Updated at
+	// peerAdded / peerRemoved time when c.is(blockRelayConn).
+	blockRelayDialed int
+
+	// dialingBlockRelay counts the subset of in-flight dials
+	// (d.dialing) that were launched as block-relay-only. Combined
+	// with blockRelayDialed it gives the picker the "committed"
+	// BR-bucket size, so a burst of four concurrent picks doesn't
+	// all classify as full-relay just because no peer has reached
+	// addPeerCh yet.
+	dialingBlockRelay int
+
+	// outboundGroups counts how many currently-dialed peers occupy
+	// each network group (Bitcoin Core IPv4 /16, IPv6 /32). Used by
+	// checkDial to enforce one-outbound-per-group anti-eclipse
+	// (mirrors src/net.cpp:2647-2688). Keyed by string(NetworkGroup).
+	// Updated at peerAdded / peerRemoved time alongside dialPeers.
+	outboundGroups map[string]int
 
 	// The static map tracks all static dial tasks. The subset of usable static dial tasks
 	// (i.e. those passing checkDial) is kept in staticPool. The scheduler prefers
@@ -145,6 +167,14 @@ type dialConfig struct {
 	// that don't want the v2 branch.
 	v2Predicate func(*enode.Node) bool
 	v2Dial      func(*net.TCPAddr) error
+
+	// maxBlockRelay is the count of block-relay-only outbound slots
+	// reserved within maxDialPeers. Bitcoin Core defaults to 2
+	// (MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). Zero disables
+	// the block-relay-only bucket entirely — all dynamic dials become
+	// full-relay regardless of slot pressure. Static dials never
+	// consume from this bucket.
+	maxBlockRelay int
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -168,17 +198,18 @@ func (cfg dialConfig) withDefaults() dialConfig {
 
 func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupFunc) *dialScheduler {
 	d := &dialScheduler{
-		dialConfig:  config.withDefaults(),
-		setupFunc:   setupFunc,
-		dialing:     make(map[enode.ID]*dialTask),
-		static:      make(map[enode.ID]*dialTask),
-		peers:       make(map[enode.ID]struct{}),
-		doneCh:      make(chan *dialTask),
-		nodesIn:     make(chan *enode.Node),
-		addStaticCh: make(chan *enode.Node),
-		remStaticCh: make(chan *enode.Node),
-		addPeerCh:   make(chan *conn),
-		remPeerCh:   make(chan *conn),
+		dialConfig:     config.withDefaults(),
+		setupFunc:      setupFunc,
+		dialing:        make(map[enode.ID]*dialTask),
+		outboundGroups: make(map[string]int),
+		static:         make(map[enode.ID]*dialTask),
+		peers:          make(map[enode.ID]struct{}),
+		doneCh:         make(chan *dialTask),
+		nodesIn:        make(chan *enode.Node),
+		addStaticCh:    make(chan *enode.Node),
+		remStaticCh:    make(chan *enode.Node),
+		addPeerCh:      make(chan *conn),
+		remPeerCh:      make(chan *conn),
 	}
 	d.lastStatsLog = d.clock.Now()
 	d.ctx, d.cancel = context.WithCancel(context.Background())
@@ -265,11 +296,14 @@ loop:
 					}
 				}()
 			} else {
-				d.startDial(newDialTask(node, dynDialedConn))
+				d.startDial(newDialTask(node, d.pickDynDialFlags()))
 			}
 
 		case task := <-d.doneCh:
 			id := task.dest.ID()
+			if _, ok := d.dialing[id]; ok && task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
+				d.dialingBlockRelay--
+			}
 			delete(d.dialing, id)
 			d.updateStaticPool(id)
 			d.doneSinceLastLog++
@@ -277,6 +311,12 @@ loop:
 		case c := <-d.addPeerCh:
 			if c.is(dynDialedConn) || c.is(staticDialedConn) {
 				d.dialPeers++
+				if c.is(blockRelayConn) {
+					d.blockRelayDialed++
+				}
+				if g := outboundGroupKey(c); g != "" {
+					d.outboundGroups[g]++
+				}
 			}
 			id := c.node.ID()
 			d.peers[id] = struct{}{}
@@ -290,6 +330,16 @@ loop:
 		case c := <-d.remPeerCh:
 			if c.is(dynDialedConn) || c.is(staticDialedConn) {
 				d.dialPeers--
+				if c.is(blockRelayConn) && d.blockRelayDialed > 0 {
+					d.blockRelayDialed--
+				}
+				if g := outboundGroupKey(c); g != "" {
+					if d.outboundGroups[g] <= 1 {
+						delete(d.outboundGroups, g)
+					} else {
+						d.outboundGroups[g]--
+					}
+				}
 			}
 			delete(d.peers, c.node.ID())
 			d.updateStaticPool(c.node.ID())
@@ -427,7 +477,110 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	if d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed
 	}
+	// Anti-eclipse: refuse to add a second outbound peer in the
+	// same /16 (IPv4) or /32 (IPv6) network group. Mirrors Bitcoin
+	// Core's outbound_ipv46_peer_netgroups guard in
+	// src/net.cpp:2685. Static dials and feeler/anchor types
+	// bypass this rule by virtue of taking different code paths;
+	// the dynamic-dial scheduler's enode.Iterator is the only
+	// caller where group concentration is a concern.
+	if g := nodeNetworkGroupKey(n); g != "" {
+		if d.outboundGroups[g] > 0 {
+			return errOutboundGroupOccupied
+		}
+	}
 	return nil
+}
+
+// pickDynDialFlags chooses the connFlag set for a fresh dynamic
+// outbound dial. Returns plain dynDialedConn for full-relay slots
+// (the default) or dynDialedConn|blockRelayConn when the block-
+// relay-only bucket has room and full-relay is at target capacity.
+//
+// Bitcoin Core's order in ThreadOpenConnections (src/net.cpp:2715-
+// 2765) prioritizes full-relay first, then block-relay, then
+// feeler / extra-block-relay. We mirror the FR-then-BR step;
+// feeler / anchor live on a separate goroutine (phase 4 follow-up
+// commits) so they never reach this picker.
+//
+// "Committed" counts include in-flight dials (d.dialing /
+// d.dialingBlockRelay) so a burst of concurrent picks doesn't all
+// land in the same bucket before any peer reaches addPeerCh.
+//
+// Static dials never reach this function — staticDialedConn dials
+// take a fixed flag set in addStatic / startStaticDials.
+func (d *dialScheduler) pickDynDialFlags() connFlag {
+	if d.maxBlockRelay <= 0 {
+		return dynDialedConn
+	}
+	committedBR := d.blockRelayDialed + d.dialingBlockRelay
+	if committedBR >= d.maxBlockRelay {
+		return dynDialedConn
+	}
+	fullRelayTarget := d.maxDialPeers - d.maxBlockRelay
+	if fullRelayTarget < 0 {
+		fullRelayTarget = 0
+	}
+	committedFR := (d.dialPeers - d.blockRelayDialed) + (len(d.dialing) - d.dialingBlockRelay)
+	if committedFR < fullRelayTarget {
+		return dynDialedConn
+	}
+	return dynDialedConn | blockRelayConn
+}
+
+// outboundGroupKey returns the network-group key used to bucket
+// outbound peers for diversity accounting. Returns the empty
+// string when the conn isn't an outbound dial (inbound peers
+// don't count), the remote address can't be parsed, or the
+// address is exempt from group-diversity (loopback / link-local).
+//
+// Falls back to the conn's enode if the kernel-level fd doesn't
+// expose a TCP RemoteAddr (synthetic test conns). Never panics on
+// nil fd.
+func outboundGroupKey(c *conn) string {
+	if !c.is(dynDialedConn) && !c.is(staticDialedConn) {
+		return ""
+	}
+	if c.fd != nil {
+		if pra, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			return ipNetworkGroupKey(pra.IP)
+		}
+	}
+	if c.node != nil {
+		if ip := c.node.IP(); ip != nil {
+			return ipNetworkGroupKey(ip)
+		}
+	}
+	return ""
+}
+
+// ipNetworkGroupKey applies the loopback / link-local exemption
+// shared by outboundGroupKey and nodeNetworkGroupKey.
+func ipNetworkGroupKey(ip net.IP) string {
+	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return ""
+	}
+	return string(NetworkGroupForIP(ip))
+}
+
+// nodeNetworkGroupKey computes the same key from an enode.Node so
+// checkDial can compare a candidate against the live set without
+// having a *conn yet. Returns the empty string for addresses that
+// are exempt from group-diversity (loopback, link-local, private
+// ranges in test deployments) — a non-empty key signals a routable
+// public-Internet endpoint.
+//
+// Mirrors Bitcoin Core's m_is_local exemption (eviction.cpp:115)
+// plus the privacy-network exemption (net.cpp:2675-2683).
+func nodeNetworkGroupKey(n *enode.Node) string {
+	ip := n.IP()
+	if ip == nil {
+		return ""
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return ""
+	}
+	return string(NetworkGroupForIP(ip))
 }
 
 // startStaticDials starts n static dial tasks.
@@ -475,6 +628,9 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	hkey := string(task.dest.ID().Bytes())
 	d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
 	d.dialing[task.dest.ID()] = task
+	if task.flags&blockRelayConn != 0 {
+		d.dialingBlockRelay++
+	}
 	go func() {
 		task.run(d)
 		d.doneCh <- task

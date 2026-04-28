@@ -17,6 +17,7 @@
 package disc
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -27,15 +28,46 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
+// IsSelfFunc reports whether addr matches the local node's own
+// advertised endpoint. AddrmanBackend consults it before writing
+// gossiped entries to addrman so a peer can't (accidentally or
+// otherwise) cause us to ingest our own external IP as a peer.
+// nil disables the check.
+type IsSelfFunc func(addr *net.TCPAddr) bool
+
+// HelloProvider returns the local node's outgoing Hello (nonce,
+// listen port, services). Called once per outbound session by the
+// handler before sending. nil disables Hello sending entirely (used
+// by test backends that don't need the v2 greeting).
+type HelloProvider func() Hello
+
+// CrossDialHost is the minimal slice of *p2p.Server that
+// AddrmanBackend.HandleHello calls to resolve cross-dial duplicates
+// after a peer discloses its listen port. Defined as an interface
+// (rather than taking *p2p.Server directly) so backend tests can
+// drive the dedup hook with a stub.
+type CrossDialHost interface {
+	FindCrossDialDup(newPeer *p2p.Peer, listenPort uint16) *p2p.Peer
+}
+
+// errSelfConnect is returned from HandleHello when the remote's
+// echoed nonce matches our own. The session ends; the connection is
+// torn down with DiscSelf upstream.
+var errSelfConnect = errors.New("disc: self-connect detected via Hello nonce")
+
 // AddrmanBackend is the production Backend implementation. It routes
 // parallax-disc/1 traffic into an addrman.AddrMan for storage and
 // maintains the external-address Quorum tally. Per-peer rate-limit
 // state is kept in handler.go's state struct; the Backend provides the
 // buckets on demand via NewIngestBucket.
 type AddrmanBackend struct {
-	m   *addrman.AddrMan
-	Q   *Quorum
-	log logging.Logger
+	m               *addrman.AddrMan
+	Q               *Quorum
+	log             logging.Logger
+	isSelf          IsSelfFunc
+	helloProv       HelloProvider
+	crossDialHost   CrossDialHost
+	crossDialHostMu sync.RWMutex
 
 	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
@@ -44,11 +76,22 @@ type AddrmanBackend struct {
 	// Populated on session start by TrackHandshake, purged on
 	// PeerDisconnected.
 	handshakeByID map[enode.ID]string
+	// peerHello is the per-session record of each peer's Hello.
+	// Populated on Hello receipt, purged in PeerDisconnected.
+	// Looked up by Server.peerListenAddr to dedup cross-dial pairs
+	// (phase 2) and by future eviction telemetry (phase 3).
+	peerHello map[PeerKey]Hello
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
-// Backend interface used by Run.
-func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger) *AddrmanBackend {
+// Backend interface used by Run. isSelf may be nil when the host
+// has no notion of self (tests, fuzzing) — in production it should
+// be Server.IsSelfEndpoint so a quorum-confirmed self-IP echoed
+// back to us via gossip is dropped at the ingest boundary.
+// helloProvider may be nil when the host doesn't speak the Hello
+// extension (legacy tests). In production it returns the Hello the
+// Server wants to advertise.
+func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf IsSelfFunc, helloProvider HelloProvider) *AddrmanBackend {
 	if q == nil {
 		q = NewQuorum()
 	}
@@ -59,8 +102,11 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger) *Addrm
 		m:             m,
 		Q:             q,
 		log:           log,
+		isSelf:        isSelf,
+		helloProv:     helloProvider,
 		peerBuckets:   make(map[PeerKey]*tokenBucket),
 		handshakeByID: make(map[enode.ID]string),
+		peerHello:     make(map[PeerKey]Hello),
 	}
 }
 
@@ -163,6 +209,17 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		if err != nil {
 			continue
 		}
+		// Drop any entry that names our own advertised endpoint.
+		// Once our quorum-confirmed external IP propagates to peers
+		// (we self-advertise it on every outbound session) it can
+		// come back to us via gossip; without this filter we'd
+		// write a self-loop into addrman that survives across
+		// restarts via addrbook.rlp.
+		if b.isSelf != nil {
+			if tcp, ok := selfTCPFromEntry(e); ok && b.isSelf(tcp) {
+				continue
+			}
+		}
 		// Clamp LastSeen to [now-10min, now+10min] per PIP-0006
 		// Phase 2. Future-dating is rejected by falling back to now
 		// — matches Bitcoin's ingest, which never trusts a
@@ -263,8 +320,131 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	b.mu.Lock()
 	delete(b.peerBuckets, key)
 	delete(b.handshakeByID, peer.ID())
+	delete(b.peerHello, key)
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
+}
+
+// LocalHello returns the local node's outgoing Hello (the value sent
+// on every outbound parallax-disc/1 session). Returns the zero
+// Hello with ProtoVersion=HelloMinProtoVersion if no provider is
+// configured — keeps tests usable without a full Server context.
+func (b *AddrmanBackend) LocalHello() Hello {
+	if b.helloProv == nil {
+		return Hello{ProtoVersion: HelloMinProtoVersion}
+	}
+	return b.helloProv()
+}
+
+// HandleHello stores the peer's claimed Hello and runs the
+// self-connect check. Returns errSelfConnect when the peer's nonce
+// matches our own — the handler propagates this to end the session
+// with DiscSelf upstream.
+//
+// After storing the Hello (and only when a CrossDialHost is wired
+// — production: the Server; tests: a stub), runs the cross-dial
+// dedup hook: if any other peer's effective listen-addr matches
+// the IP+listen-port the new peer just disclosed, those two
+// connections are duplicates of the same logical neighbor.
+// Tie-break (matches Bitcoin Core's preference for outbound):
+//   - if exactly one of the two is inbound, drop it;
+//   - same-direction tie: keep the older (smaller p.created).
+//
+// Disconnection is asynchronous (Disconnect just closes the peer);
+// Server's run loop processes delpeer in the next iteration.
+func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
+	if b.helloProv != nil {
+		if local := b.helloProv(); h.Nonce == local.Nonce {
+			return errSelfConnect
+		}
+	}
+	key := peerKeyFor(peer)
+	b.mu.Lock()
+	b.peerHello[key] = h
+	b.mu.Unlock()
+
+	b.crossDialHostMu.RLock()
+	host := b.crossDialHost
+	b.crossDialHostMu.RUnlock()
+	if host == nil || h.ListenPort == 0 {
+		return nil
+	}
+	dup := host.FindCrossDialDup(peer, h.ListenPort)
+	if dup == nil {
+		return nil
+	}
+	loser := selectCrossDialLoser(dup, peer)
+	b.log.Debug("parallax-disc/1: cross-dial dup detected, dropping loser",
+		"loser", loser.RemoteAddr(), "loserInbound", loser.Inbound(),
+		"keep", winnerOf(dup, peer, loser).RemoteAddr())
+	loser.Disconnect(p2p.DiscAlreadyConnected)
+	return nil
+}
+
+// selectCrossDialLoser picks which of (existing, incoming) to drop
+// when both represent the same logical neighbor. Prefers outbound
+// retention; on same-direction ties keeps the older connection.
+// Exported only to the test scope via the test file in this
+// package (lowercase keeps the surface narrow).
+func selectCrossDialLoser(existing, incoming *p2p.Peer) *p2p.Peer {
+	existingIn := existing.Inbound()
+	incomingIn := incoming.Inbound()
+	if existingIn != incomingIn {
+		// Drop whichever IS inbound.
+		if existingIn {
+			return existing
+		}
+		return incoming
+	}
+	// Same direction. Drop the younger. p.Created() is mclock.AbsTime
+	// (monotonic, smaller=older).
+	if existing.Created() < incoming.Created() {
+		return incoming
+	}
+	return existing
+}
+
+// winnerOf returns the survivor of the (a,b) pair given which one
+// was selected as the loser. Used only for log formatting.
+func winnerOf(a, b, loser *p2p.Peer) *p2p.Peer {
+	if loser == a {
+		return b
+	}
+	return a
+}
+
+// PeerHello returns the Hello previously recorded for id, or
+// (zero, false) if no Hello has been received on the peer's session.
+// Used by Server.peerListenAddr (phase 2) to project an inbound
+// peer's effective listen endpoint for cross-dial dedup.
+func (b *AddrmanBackend) PeerHello(key PeerKey) (Hello, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h, ok := b.peerHello[key]
+	return h, ok
+}
+
+// PeerListenPort returns the listen port the peer disclosed in its
+// Hello, or (0, false) if no Hello has been received yet (or the
+// peer disclosed port=0, "unknown"). Implements
+// p2p.PeerListenPortLookup so the Server can dedup inbound peers in
+// alreadyConnectedTo and friends.
+func (b *AddrmanBackend) PeerListenPort(id enode.ID) (uint16, bool) {
+	h, ok := b.PeerHello(PeerKey(id.String()))
+	if !ok || h.ListenPort == 0 {
+		return 0, false
+	}
+	return h.ListenPort, true
+}
+
+// SetCrossDialHost wires the Server (or a test stub) for the
+// cross-dial dedup path that runs in HandleHello. Called once at
+// node setup; nil disables the dedup (Hello is still stored, but
+// the hook doesn't fire).
+func (b *AddrmanBackend) SetCrossDialHost(h CrossDialHost) {
+	b.crossDialHostMu.Lock()
+	b.crossDialHost = h
+	b.crossDialHostMu.Unlock()
 }
 
 // peerKeyFor returns the stable PeerKey for the session lifetime. We
@@ -318,3 +498,22 @@ func computeGroup(net uint8, addr []byte) []byte {
 // structurally identical (same BIP155 codes) but Go's type system
 // requires the conversion.
 func addrmanNetID(n uint8) addrman.NetID { return addrman.NetID(n) }
+
+// selfTCPFromEntry projects a PeerEntry onto the *net.TCPAddr shape
+// IsSelfFunc consumes. Returns ok=false for non-IPv4/IPv6 entries —
+// those can never be the local node's listen endpoint.
+func selfTCPFromEntry(e PeerEntry) (*net.TCPAddr, bool) {
+	switch e.NetworkID {
+	case NetIPv4:
+		if len(e.Addr) != 4 {
+			return nil, false
+		}
+		return &net.TCPAddr{IP: net.IPv4(e.Addr[0], e.Addr[1], e.Addr[2], e.Addr[3]), Port: int(e.TCPPort)}, true
+	case NetIPv6:
+		if len(e.Addr) != 16 {
+			return nil, false
+		}
+		return &net.TCPAddr{IP: append(net.IP(nil), e.Addr...), Port: int(e.TCPPort)}, true
+	}
+	return nil, false
+}

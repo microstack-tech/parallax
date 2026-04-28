@@ -126,3 +126,172 @@ func TestYourAddrUnknownPortZeroLegal(t *testing.T) {
 		t.Fatalf("YourAddr with port=0 should be valid: skip=%v err=%v", skip, err)
 	}
 }
+
+// TestRoundTripHello — full struct round-trip with no Tail. Tail
+// asymmetry is exercised by TestHelloForwardCompat below: encoding
+// an extended struct and decoding into the current one.
+func TestRoundTripHello(t *testing.T) {
+	in := Hello{
+		ProtoVersion: 1,
+		Nonce:        0xDEADBEEFCAFEBABE,
+		ListenPort:   32110,
+		Services:     ServiceNodeNetwork | ServiceRelayTx,
+	}
+	var buf bytes.Buffer
+	if err := rlp.Encode(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	var out Hello
+	if err := rlp.Decode(&buf, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ProtoVersion != in.ProtoVersion || out.Nonce != in.Nonce ||
+		out.ListenPort != in.ListenPort || out.Services != in.Services {
+		t.Fatalf("round trip altered fields: %+v vs %+v", in, out)
+	}
+}
+
+// TestRoundTripHelloEmptyTail — common case (no extension fields)
+// must round-trip cleanly. The rlp:"tail" decoder accepts an absent
+// trailing list as zero-length; assert that.
+func TestRoundTripHelloEmptyTail(t *testing.T) {
+	in := Hello{ProtoVersion: 1, Nonce: 1, ListenPort: 32110, Services: ServiceNodeNetwork}
+	var buf bytes.Buffer
+	if err := rlp.Encode(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	var out Hello
+	if err := rlp.Decode(&buf, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ProtoVersion != in.ProtoVersion || out.Nonce != in.Nonce ||
+		out.ListenPort != in.ListenPort || out.Services != in.Services {
+		t.Fatalf("round trip altered fields: %+v vs %+v", in, out)
+	}
+	if len(out.Tail) != 0 {
+		t.Fatalf("empty Tail decoded as non-empty: %x", out.Tail)
+	}
+}
+
+// TestHelloForwardCompat — a future Hello with extra trailing fields
+// must decode into the current struct without error, with the extra
+// bytes captured in Tail. This is the load-bearing wire-evolution
+// invariant.
+func TestHelloForwardCompat(t *testing.T) {
+	type futureHello struct {
+		ProtoVersion uint16
+		Nonce        uint64
+		ListenPort   uint16
+		Services     uint32
+		FutureField1 uint64
+		FutureField2 []byte
+	}
+	future := futureHello{
+		ProtoVersion: 1,
+		Nonce:        0xCAFE,
+		ListenPort:   32110,
+		Services:     ServiceNodeNetwork,
+		FutureField1: 0xABCD1234,
+		FutureField2: []byte("greetings from v3"),
+	}
+	var buf bytes.Buffer
+	if err := rlp.Encode(&buf, future); err != nil {
+		t.Fatal(err)
+	}
+	var current Hello
+	if err := rlp.Decode(&buf, &current); err != nil {
+		t.Fatalf("forward-compat decode failed: %v", err)
+	}
+	if current.ProtoVersion != future.ProtoVersion || current.Nonce != future.Nonce ||
+		current.ListenPort != future.ListenPort || current.Services != future.Services {
+		t.Fatalf("known fields not preserved: %+v vs source %+v", current, future)
+	}
+	if len(current.Tail) == 0 {
+		t.Fatalf("Tail empty after decoding future-shaped Hello; rlp:\"tail\" should capture extras")
+	}
+}
+
+// TestHelloValidate — version floor + tail-byte-budget limit.
+func TestHelloValidate(t *testing.T) {
+	bigTail := []rlp.RawValue{rlp.RawValue(bytes.Repeat([]byte{0xAA}, HelloMaxTailSize+1))}
+	smallTail := []rlp.RawValue{rlp.RawValue(bytes.Repeat([]byte{0xAA}, HelloMaxTailSize/2)),
+		rlp.RawValue(bytes.Repeat([]byte{0xBB}, HelloMaxTailSize/2))}
+	cases := []struct {
+		name    string
+		h       Hello
+		wantErr error
+	}{
+		{"ok", Hello{ProtoVersion: 1, Nonce: 1, ListenPort: 32110}, nil},
+		{"ok-with-tail-at-limit", Hello{ProtoVersion: 1, Tail: smallTail}, nil},
+		{"ok-listen-port-zero", Hello{ProtoVersion: 1, ListenPort: 0}, nil},
+		{"ok-unknown-services", Hello{ProtoVersion: 1, Services: 0xFFFFFFFF}, nil},
+		{"version-zero-fails", Hello{ProtoVersion: 0, Nonce: 1, ListenPort: 32110}, ErrHelloVersion},
+		{"tail-budget-exceeded-fails", Hello{ProtoVersion: 1, Tail: bigTail}, ErrHelloTailSize},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.h.Validate()
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("expected ok, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want wrapping %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestHelloMsgCodeIsThree — pin the wire code so a refactor can't
+// silently shift it. Bumping requires intentional protocol change.
+func TestHelloMsgCodeIsThree(t *testing.T) {
+	if HelloMsg != 0x03 {
+		t.Fatalf("HelloMsg = 0x%02x, want 0x03", HelloMsg)
+	}
+}
+
+// TestHelloServiceFlagsLayout — pin bit positions to match the
+// documented Bitcoin-Core-aligned layout. Operators reading peer
+// state across nodes depend on this alignment.
+func TestHelloServiceFlagsLayout(t *testing.T) {
+	if ServiceNodeNetwork != 1<<0 {
+		t.Errorf("ServiceNodeNetwork = 0x%x, want 0x1", ServiceNodeNetwork)
+	}
+	if ServiceNodeBloom != 1<<1 {
+		t.Errorf("ServiceNodeBloom = 0x%x, want 0x2", ServiceNodeBloom)
+	}
+	if ServiceRelayTx != 1<<2 {
+		t.Errorf("ServiceRelayTx = 0x%x, want 0x4", ServiceRelayTx)
+	}
+}
+
+// TestProtocolLengthCoversAllMessages — ProtocolLength is the
+// upper bound on codes that protoRW.WriteMsg will accept (msg.Code
+// >= rw.Length is rejected as "invalid message code: not handled").
+// A stale ProtocolLength silently drops new outbound messages —
+// this was the bug behind the v2.0-rc1 → patched-build network
+// partition (Hello at 0x03 with Length=3 → drop, peers fall back
+// to "msg before Hello" disconnect).
+//
+// Asserts every defined message-code constant fits under
+// ProtocolLength. Add a new code → bump ProtocolLength → this
+// stays green. Forget the bump → red.
+func TestProtocolLengthCoversAllMessages(t *testing.T) {
+	codes := []struct {
+		name string
+		code uint64
+	}{
+		{"GetPeersMsg", GetPeersMsg},
+		{"PeersMsg", PeersMsg},
+		{"YourAddrMsg", YourAddrMsg},
+		{"HelloMsg", HelloMsg},
+	}
+	for _, c := range codes {
+		if c.code >= ProtocolLength {
+			t.Errorf("%s = 0x%02x is >= ProtocolLength (%d); protoRW.WriteMsg will drop outgoing %s as 'invalid message code: not handled'",
+				c.name, c.code, ProtocolLength, c.name)
+		}
+	}
+}

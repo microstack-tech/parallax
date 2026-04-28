@@ -197,13 +197,18 @@ func (ps *peerSet) peersWithoutBlock(hash util.Hash) []*parallaxPeer {
 }
 
 // peersWithoutTransaction retrieves a list of peers that do not have a given
-// transaction in their set of known hashes.
+// transaction in their set of known hashes. Block-relay-only outbound
+// peers are excluded — we never relay tx to them (Bitcoin Core
+// m_relay_txs=false, src/net_processing.cpp:3681).
 func (ps *peerSet) peersWithoutTransaction(hash util.Hash) []*parallaxPeer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*parallaxPeer, 0, len(ps.peers))
 	for _, p := range ps.peers {
+		if p.BlockRelayOnly() {
+			continue
+		}
 		if !p.KnownTransaction(hash) {
 			list = append(list, p)
 		}

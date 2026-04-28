@@ -23,6 +23,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
@@ -113,6 +114,64 @@ type Peer struct {
 	pingRecv chan struct{}
 	disc     chan DiscReason
 
+	// Quality telemetry. Updated concurrently from readLoop, the
+	// prl-protocol handler, and pingLoop; consumed by the eviction
+	// algorithm (p2p/eviction.go). Mirrors Bitcoin Core's
+	// NodeEvictionCandidate fields (src/node/eviction.h:18-33).
+	//
+	// minPing is the smallest RTT observed on this session's ping
+	// exchanges, in nanoseconds. Zero before the first pong arrives.
+	// Larger values sort lower-quality during eviction.
+	minPing atomic.Int64
+	// lastPingSent records when we sent the most recent pingMsg
+	// (mclock.AbsTime as int64). Used to compute RTT on pong receipt.
+	lastPingSent atomic.Int64
+	// lastBlockRx is mclock.AbsTime of the most recent block-bearing
+	// message received from this peer (set by the prl protocol).
+	// Higher = more recently active block-relayer.
+	lastBlockRx atomic.Int64
+	// lastTxRx is mclock.AbsTime of the most recent transaction-
+	// bearing message received from this peer (set by the prl
+	// protocol). Higher = more recently active tx-relayer.
+	// Block-relay-only peers leave this at zero.
+	lastTxRx atomic.Int64
+	// bytesRx is the payload-only byte counter incremented in
+	// readLoop after each successful ReadMsg. Framing overhead is
+	// excluded; useful for admin-RPC and operator diagnostics, not
+	// consumed by the eviction algorithm (Bitcoin Core's
+	// NodeEvictionCandidate has no byte counter — see eviction.h).
+	bytesRx atomic.Uint64
+	// bytesTx is reserved for symmetric accounting at the write
+	// path. Currently always zero — instrumentation lands when an
+	// admin diagnostic actually needs it; the field is here so the
+	// shape doesn't shift later.
+	bytesTx atomic.Uint64
+	// relayTxs mirrors the peer's Hello.Services & ServiceRelayTx
+	// bit. Defaults true until Hello disclosure rules out tx relay.
+	// Used to scope the tx-time-based protection round in eviction.
+	relayTxs atomic.Bool
+	// blockRelayOnly flags an outbound peer in the dial scheduler's
+	// block-relay-only bucket (phase 4). Drops Transactions msgs and
+	// suppresses address gossip. Set once at peer attach.
+	blockRelayOnly atomic.Bool
+	// shouldDiscourage is set by MisbehavingFor when a protocol
+	// violation should cause the peer to be disconnected and added
+	// to the discourage Bloom filter. Bitcoin Core's
+	// m_should_discourage (src/net_processing.cpp). The flag is
+	// checked at session-end in run; when true, the Server's
+	// banman is notified before the connection is closed.
+	shouldDiscourage atomic.Bool
+	// discourageReason carries the human-readable misbehavior tag
+	// for logging. Set alongside shouldDiscourage; only meaningful
+	// when shouldDiscourage is true.
+	discourageReason atomic.Pointer[string]
+	// networkGroup is the cached /16-IPv4 or /32-IPv6 prefix bytes
+	// (with a network-tag byte prefix). Populated once at attach
+	// time by computeAndCacheNetworkGroup; nil for peers without a
+	// TCP RemoteAddr. Eviction protection passes consume this for
+	// anti-eclipse diversity preservation.
+	networkGroup atomic.Pointer[[]byte]
+
 	// events receives message send / receive events if set
 	events   *event.Feed
 	testPipe *MsgPipeRW // for testing
@@ -120,6 +179,21 @@ type Peer struct {
 
 // NewPeer returns a peer for testing purposes.
 func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
+	pipe, _ := net.Pipe()
+	return NewPeerForTest(id, name, caps, pipe)
+}
+
+// defaultRelayTxs sets the initial RelayTxs state. New peers are
+// assumed to relay tx until Hello receipt explicitly disclaims it.
+// Called from newPeer; exposed only as a documentation hook.
+func defaultRelayTxs(p *Peer) { p.relayTxs.Store(true) }
+
+// NewPeerForTest returns a peer backed by the supplied net.Conn so
+// callers in other packages can drive code paths that depend on
+// Peer.RemoteAddr() / Peer.LocalAddr() — for example, AddrmanBackend
+// tests that need a *net.TCPAddr remote rather than the synthetic
+// pipeAddr returned by net.Pipe.
+func NewPeerForTest(id enode.ID, name string, caps []Cap, fd net.Conn) *Peer {
 	// Generate a fake set of local protocols to match as running caps. Almost
 	// no fields needs to be meaningful here as we're only using it to cross-
 	// check with the "remote" caps array.
@@ -128,9 +202,8 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 		protos[i].Name = cap.Name
 		protos[i].Version = cap.Version
 	}
-	pipe, _ := net.Pipe()
 	node := enode.SignNull(new(enr.Record), id)
-	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
+	conn := &conn{fd: fd, transport: nil, node: node, caps: caps, name: name}
 	peer := newPeer(logging.Root(), conn, protos)
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
@@ -167,6 +240,114 @@ func (p *Peer) Name() string {
 // Fullname returns the node name that the remote node advertised.
 func (p *Peer) Fullname() string {
 	return p.rw.name
+}
+
+// Created returns the monotonic clock time at which this peer was
+// constructed. Used by cross-dial dedup and (future) eviction
+// telemetry as a "connection age" signal — smaller value = older.
+func (p *Peer) Created() mclock.AbsTime {
+	return p.created
+}
+
+// MinPing returns the smallest RTT observed on this session's
+// ping/pong exchanges, in nanoseconds. Zero if no pong has been
+// received yet.
+func (p *Peer) MinPing() time.Duration {
+	return time.Duration(p.minPing.Load())
+}
+
+// LastBlockRx returns the monotonic time of the most recent
+// block-bearing message received from this peer, or zero if none.
+func (p *Peer) LastBlockRx() mclock.AbsTime {
+	return mclock.AbsTime(p.lastBlockRx.Load())
+}
+
+// LastTxRx returns the monotonic time of the most recent transaction
+// bearing message received from this peer, or zero if none.
+func (p *Peer) LastTxRx() mclock.AbsTime {
+	return mclock.AbsTime(p.lastTxRx.Load())
+}
+
+// BytesRx returns the cumulative payload bytes received from this
+// peer since session start.
+func (p *Peer) BytesRx() uint64 { return p.bytesRx.Load() }
+
+// BytesTx returns the cumulative payload bytes sent to this peer
+// since session start.
+func (p *Peer) BytesTx() uint64 { return p.bytesTx.Load() }
+
+// RelayTxs reports whether the peer accepts tx relay (mirror of
+// Hello.Services & ServiceRelayTx). Defaults true; flipped to
+// false on Hello receipt for block-relay-only peers.
+func (p *Peer) RelayTxs() bool { return p.relayTxs.Load() }
+
+// SetRelayTxs is called by the disc protocol on Hello receipt with
+// the peer's services flags. Concurrency-safe.
+func (p *Peer) SetRelayTxs(v bool) { p.relayTxs.Store(v) }
+
+// BlockRelayOnly reports whether this is a block-relay-only outbound
+// peer. Always false for inbound peers and full-relay outbound.
+func (p *Peer) BlockRelayOnly() bool { return p.blockRelayOnly.Load() }
+
+// SetBlockRelayOnly is called by the dial scheduler at peer attach
+// time when the peer occupies a block-relay-only outbound slot.
+// Sticky for the session lifetime.
+func (p *Peer) SetBlockRelayOnly(v bool) { p.blockRelayOnly.Store(v) }
+
+// MisbehavingFor flags the peer for discourage + disconnect.
+// reason is a short tag (e.g., "oversized-msg", "invalid-header")
+// retained for log diagnostics. Idempotent: subsequent calls keep
+// the first reason. Bitcoin Core's Misbehaving() (the modern
+// post-pointscore form, src/net_processing.cpp).
+//
+// The peer disconnects on the next message dispatch; the run loop
+// notifies the BanList on session close. The wire DiscReason is
+// DiscProtocolError — we don't expose a distinct "you misbehaved"
+// reason on the wire (no benefit, and it'd help adversaries
+// calibrate their misbehavior thresholds).
+//
+// Nil-safe so fuzz tests / dispatch-only paths that don't construct
+// a Peer can still drive handler entry points without panicking.
+func (p *Peer) MisbehavingFor(reason string) {
+	if p == nil {
+		return
+	}
+	if p.shouldDiscourage.CompareAndSwap(false, true) {
+		r := reason
+		p.discourageReason.Store(&r)
+		// Async disconnect — Disconnect itself is async; we can't
+		// hold any locks here because callers are deep in protocol
+		// handlers.
+		go p.Disconnect(DiscProtocolError)
+	}
+}
+
+// ShouldDiscourage reports whether the peer was flagged for
+// discourage during the session. Used by the Server's session-end
+// hook to populate the BanList.
+func (p *Peer) ShouldDiscourage() bool { return p.shouldDiscourage.Load() }
+
+// DiscourageReason returns the misbehavior tag set by the first
+// MisbehavingFor call on this peer, or the empty string if none.
+func (p *Peer) DiscourageReason() string {
+	r := p.discourageReason.Load()
+	if r == nil {
+		return ""
+	}
+	return *r
+}
+
+// MarkBlockRx stamps the lastBlockRx telemetry to the current
+// monotonic time. Called by the prl protocol on receipt of any
+// block-bearing message.
+func (p *Peer) MarkBlockRx() {
+	p.lastBlockRx.Store(int64(mclock.Now()))
+}
+
+// MarkTxRx stamps the lastTxRx telemetry. Called by the prl
+// protocol on receipt of Transactions / PooledTransactions.
+func (p *Peer) MarkTxRx() {
+	p.lastTxRx.Store(int64(mclock.Now()))
 }
 
 // Caps returns the capabilities (supported subprotocols) of the remote peer.
@@ -246,6 +427,7 @@ func newPeer(log logging.Logger, conn *conn, protocols []Protocol) *Peer {
 		pingRecv: make(chan struct{}, 16),
 		log:      logging.New("id", conn.node.ID(), "conn", conn.flags),
 	}
+	defaultRelayTxs(p)
 	return p
 }
 
@@ -312,6 +494,12 @@ func (p *Peer) pingLoop() {
 	for {
 		select {
 		case <-ping.C:
+			// Stamp send time BEFORE the SendItems call returns so a
+			// fast pong reply (test pipes) can't observe an unset
+			// lastPingSent. The race window is harmless either way:
+			// a pong arriving before the stamp would yield a
+			// nonsense RTT and be ignored by the min-update.
+			p.lastPingSent.Store(int64(mclock.Now()))
 			if err := SendItems(p.rw, pingMsg); err != nil {
 				p.protoErr <- err
 				return
@@ -326,6 +514,33 @@ func (p *Peer) pingLoop() {
 	}
 }
 
+// recordPongRTT computes RTT from the most recent ping send time
+// and updates minPing if the new sample improves on the running
+// minimum. Called from handle() on pongMsg receipt.
+//
+// A zero lastPingSent means we received a pong without ever sending
+// a ping (test scaffolding, or an adversarial peer); skip the update.
+// Negative RTT (clock skew, monotonic-broken stub) is also ignored.
+func (p *Peer) recordPongRTT() {
+	sent := p.lastPingSent.Load()
+	if sent == 0 {
+		return
+	}
+	rtt := int64(mclock.Now()) - sent
+	if rtt <= 0 {
+		return
+	}
+	for {
+		cur := p.minPing.Load()
+		if cur != 0 && rtt >= cur {
+			return
+		}
+		if p.minPing.CompareAndSwap(cur, rtt) {
+			return
+		}
+	}
+}
+
 func (p *Peer) readLoop(errc chan<- error) {
 	defer p.wg.Done()
 	for {
@@ -334,6 +549,10 @@ func (p *Peer) readLoop(errc chan<- error) {
 			errc <- err
 			return
 		}
+		// Payload-only counter — framing overhead is excluded so
+		// inter-peer comparisons remain meaningful regardless of
+		// transport (rlpx vs v2Transport may differ on framing).
+		p.bytesRx.Add(uint64(msg.Size))
 		msg.ReceivedAt = time.Now()
 		if err = p.handle(msg); err != nil {
 			errc <- err
@@ -350,6 +569,9 @@ func (p *Peer) handle(msg Msg) error {
 		case p.pingRecv <- struct{}{}:
 		case <-p.closed:
 		}
+	case msg.Code == pongMsg:
+		msg.Discard()
+		p.recordPongRTT()
 	case msg.Code == discMsg:
 		// This is the last message. We don't need to discard or
 		// check errors because, the connection will be closed after it.

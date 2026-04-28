@@ -317,6 +317,7 @@ func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(ann); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	// Mark the hashes as present at the remote node
 	for _, block := range *ann {
 		peer.markBlock(block.Hash)
@@ -334,6 +335,7 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	if err := ann.sanityCheck(); err != nil {
 		return err
 	}
+	peer.MarkBlockRx()
 	if hash := types.DeriveSha(ann.Block.Transactions(), trie.NewStackTrie(nil)); hash != ann.Block.TxHash() {
 		logging.Warn("Propagated block has invalid body", "have", hash, "exp", ann.Block.TxHash())
 		return nil // TODO(karalabe): return error eventually, but wait a few releases
@@ -353,6 +355,7 @@ func handleBlockHeaders66(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(res); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	metadata := func() any {
 		hashes := make([]util.Hash, len(res.BlockHeadersPacket))
 		for i, header := range res.BlockHeadersPacket {
@@ -373,6 +376,7 @@ func handleBlockBodies66(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(res); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkBlockRx()
 	metadata := func() any {
 		txsHashes := make([]util.Hash, len(res.BlockBodiesPacket))
 		hasher := trie.NewStackTrie(nil)
@@ -423,6 +427,13 @@ func handleReceipts66(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers MUST NOT relay tx in either direction
+	// (Bitcoin Core src/net_processing.cpp:3681 m_relay_txs gate).
+	// Silently drop to avoid leaking which of our outbound slots is
+	// the block-relay-only one.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// New transaction announcement arrived, make sure we have
 	// a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
@@ -440,6 +451,13 @@ func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) 
 }
 
 func handleGetPooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers should never request pooled tx from us
+	// (we advertised m_relay_txs=false in Hello.Services). Treat the
+	// request as a protocol-discipline violation: drop without
+	// answering. Silent so an attacker can't probe the bit.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Decode the pooled transactions retrieval message
 	var query GetPooledTransactionsPacket66
 	if err := msg.Decode(&query); err != nil {
@@ -478,6 +496,12 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsPac
 }
 
 func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers MUST NOT push tx to us. Drop silently —
+	// stamping lastTxRx for them would also corrupt the eviction
+	// "newest tx among tx-relayers" round (eviction.cpp:194).
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
@@ -487,6 +511,7 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkTxRx()
 	for i, tx := range txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
@@ -498,6 +523,10 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
+	// Same block-relay-only rule as handleTransactions.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
@@ -507,6 +536,7 @@ func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error 
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	peer.MarkTxRx()
 	for i, tx := range txs.PooledTransactionsPacket {
 		// Validate and mark the remote transaction
 		if tx == nil {

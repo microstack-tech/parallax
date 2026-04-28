@@ -71,15 +71,32 @@ type Backend interface {
 	// known (connection torn down, never parallax-disc/1-negotiated).
 	PeerHandshake(id enode.ID) string
 
+	// LocalHello returns the Hello the handler should send on the
+	// outgoing greeting. Carries the local nonce, listen port, and
+	// services flag. Bitcoin Core analog: PushNodeVersion.
+	LocalHello() Hello
+
+	// HandleHello consumes the peer's Hello on receipt. Must run the
+	// self-connect nonce check (returning an error to end the
+	// session if the peer's nonce matches our own) and may store
+	// the Hello for later lookup.
+	HandleHello(peer *p2p.Peer, h Hello) error
+
 	// Log returns the logger to use for protocol-level events.
 	Log() logging.Logger
 }
 
 // state holds per-peer handler state — one struct per session.
 type state struct {
+	// sentHello / gotHello track the v2 Hello exchange. Hello is the
+	// first message in both directions; receiving any other message
+	// before Hello is a protocol violation. Once gotHello is set,
+	// it's never reset — a second Hello is also a violation.
+	sentHello atomic.Bool
+	gotHello  atomic.Bool
+
 	// sentYourAddr: we've written our YourAddr message for this
-	// session. Each side sends exactly one, as the first message after
-	// capability negotiation.
+	// session. Each side sends exactly one, immediately after Hello.
 	sentYourAddr atomic.Bool
 
 	// gotYourAddr: we've seen the peer's YourAddr for this session.
@@ -120,9 +137,18 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 
 	st := &state{}
 
-	// First action on both sides: send YourAddr reporting the remote's
-	// observed TCP source. Order-independent because RLPx is
-	// multiplexed — either message may arrive first at the receiver.
+	// First action on both sides: send Hello carrying the local
+	// nonce, listen port, and services flag. Receivers compare the
+	// nonce against their own to detect self-connect, and use the
+	// listen port to dedup cross-dial pairs (phase 2). Bitcoin Core
+	// analog: PushNodeVersion (src/net.cpp).
+	if err := sendHello(backend, peer, rw, st); err != nil {
+		log.Debug("parallax-disc/1: Hello send failed", "err", err)
+	}
+
+	// YourAddr follows Hello: peer's view of our remote source for
+	// quorum. Order-independent on the wire because RLPx is
+	// multiplexed — but logically Hello must precede YourAddr.
 	if err := sendYourAddr(backend, peer, rw, st); err != nil {
 		log.Debug("parallax-disc/1: YourAddr send failed", "err", err)
 	}
@@ -131,7 +157,14 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// outbound peers get addr(self) + getaddr, inbound peers get
 	// nothing unsolicited. The distinction matters because an inbound
 	// peer could be an adversary probing our addrbook.
-	if !peer.Inbound() {
+	//
+	// Block-relay-only outbound peers also skip both: by spec they
+	// don't participate in address gossip (Bitcoin Core
+	// src/net_processing.cpp:3681 — fRelayTxes=false implies no
+	// addr or addr_v2 relay). Self-advertise leaks our endpoint to
+	// a peer that won't gossip it; GetPeers solicits gossip from a
+	// peer we shouldn't accept gossip from.
+	if !peer.Inbound() && !peer.BlockRelayOnly() {
 		if err := sendSelfAdvertise(backend, rw); err != nil {
 			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
 		}
@@ -171,7 +204,11 @@ func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
 
 // handleOne reads and dispatches one inbound message. Returns on read
 // error, oversized payload, or protocol violation — the caller closes
-// the session.
+// the session. Protocol-discipline violations (oversized payload,
+// pre-Hello message, malformed decode) also flag the peer for
+// discourage via MisbehavingFor so the BanMan layer's accept-time
+// check can hard-reject reconnects from this source under inbound
+// saturation.
 func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
 	msg, err := rw.ReadMsg()
 	if err != nil {
@@ -180,10 +217,23 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 	defer msg.Discard()
 
 	if msg.Size > MaxMessageSize {
+		peer.MisbehavingFor("disc-oversized-msg")
 		return fmt.Errorf("disc: message too large: %d > %d", msg.Size, MaxMessageSize)
 	}
 
+	// Enforce the protocol's first-message ordering: Hello must be
+	// the first message on every session. Anything else before Hello
+	// is a violation. Once gotHello is true, the rule is satisfied.
+	// The Hello message itself bypasses the gate (it's allowed to
+	// be the first thing we see).
+	if msg.Code != HelloMsg && !st.gotHello.Load() {
+		peer.MisbehavingFor("disc-pre-hello-msg")
+		return fmt.Errorf("disc: msg 0x%02x before Hello", msg.Code)
+	}
+
 	switch msg.Code {
+	case HelloMsg:
+		return handleHello(backend, peer, st, msg)
 	case GetPeersMsg:
 		return handleGetPeers(backend, peer, rw, st, msg)
 	case PeersMsg:
@@ -198,7 +248,15 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	var req GetPeers
 	if err := msg.Decode(&req); err != nil {
 		// GetPeers has no payload; anything is a decode error.
+		peer.MisbehavingFor("disc-getpeers-decode")
 		return fmt.Errorf("disc: GetPeers decode: %w", err)
+	}
+	// Block-relay-only outbound peers don't participate in address
+	// gossip (Bitcoin Core src/net_processing.cpp:3681). Silently
+	// drop the request without responding — answering would leak
+	// our addrbook sample to a peer that committed not to gossip.
+	if peer.BlockRelayOnly() {
+		return nil
 	}
 	count := st.getPeersReceived.Add(1)
 	if count > 1 {
@@ -260,9 +318,11 @@ func poissonDelay(mean time.Duration) time.Duration {
 func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
 	var pkt Peers
 	if err := msg.Decode(&pkt); err != nil {
+		peer.MisbehavingFor("disc-peers-decode")
 		return fmt.Errorf("disc: Peers decode: %w", err)
 	}
 	if err := pkt.Validate(); err != nil {
+		peer.MisbehavingFor("disc-peers-validate")
 		return err
 	}
 	st.peersReceived.Add(1)
@@ -276,6 +336,7 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	selfAdvertise := len(pkt.Entries) == 1 && st.peersReceived.Load() == 1
 	if !solicited && !selfAdvertise {
 		if st.peersUnsolicited.Add(1) > 1 {
+			peer.MisbehavingFor("disc-unsolicited-peers")
 			return errors.New("disc: too many unsolicited Peers messages")
 		}
 	}
@@ -285,6 +346,7 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	for i := range pkt.Entries {
 		skip, err := pkt.Entries[i].Validate()
 		if err != nil {
+			peer.MisbehavingFor("disc-peerentry-shape")
 			return err
 		}
 		if skip {
@@ -299,15 +361,18 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
 	var y YourAddr
 	if err := msg.Decode(&y); err != nil {
+		peer.MisbehavingFor("disc-youraddr-decode")
 		return fmt.Errorf("disc: YourAddr decode: %w", err)
 	}
 	skip, err := y.Validate()
 	if err != nil {
+		peer.MisbehavingFor("disc-youraddr-shape")
 		return err
 	}
 	if !st.gotYourAddr.CompareAndSwap(false, true) {
 		// Bitcoin's version message is single-shot; we mirror that —
 		// a second YourAddr is a protocol violation.
+		peer.MisbehavingFor("disc-double-youraddr")
 		return errors.New("disc: multiple YourAddr messages from one peer")
 	}
 	if skip {
@@ -315,6 +380,47 @@ func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) err
 	}
 	backend.HandleYourAddr(peer, y.NetworkID, y.Addr, y.TCPPort)
 	return nil
+}
+
+// sendHello writes the local node's Hello (nonce, listen port,
+// services). Idempotent via the CAS on sentHello — runs at most
+// once per session, even if Run is restarted by a higher layer.
+//
+// On block-relay-only outbound sessions, ServiceRelayTx is cleared
+// so the peer treats us as a block-relay-only neighbor on their
+// side too (mirrors Bitcoin Core's PushNodeVersion which sets
+// fRelay=false on m_block_relay_only outbound; src/net.cpp).
+func sendHello(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
+	if !st.sentHello.CompareAndSwap(false, true) {
+		return nil
+	}
+	h := backend.LocalHello()
+	if peer.BlockRelayOnly() {
+		h.Services &^= ServiceRelayTx
+	}
+	return p2p.Send(rw, HelloMsg, h)
+}
+
+// handleHello processes the peer's Hello on the receive side.
+// Single-shot per session via gotHello — a second Hello is a
+// protocol violation. Decode + Validate + delegate to backend; the
+// backend runs the self-connect nonce check and stores the entry
+// for later cross-dial dedup lookups.
+func handleHello(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
+	var h Hello
+	if err := msg.Decode(&h); err != nil {
+		peer.MisbehavingFor("disc-hello-decode")
+		return fmt.Errorf("disc: Hello decode: %w", err)
+	}
+	if !st.gotHello.CompareAndSwap(false, true) {
+		peer.MisbehavingFor("disc-double-hello")
+		return errors.New("disc: multiple Hello messages from one peer")
+	}
+	if err := h.Validate(); err != nil {
+		peer.MisbehavingFor("disc-hello-validate")
+		return err
+	}
+	return backend.HandleHello(peer, h)
 }
 
 // sendYourAddr is the handshake-time "here's what I see as your source"

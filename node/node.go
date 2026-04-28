@@ -602,7 +602,28 @@ func (n *Node) setupAddrManAndDisc() error {
 	// Register the subprotocol. Append directly to Protocols — we're
 	// still in initializingState (Start's state machine has flipped
 	// to runningState but the server hasn't started yet).
-	backend := disc.NewAddrmanBackend(m, nil, n.log)
+	helloProvider := func() disc.Hello {
+		var listen uint16
+		if ln := n.server.LocalNode(); ln != nil {
+			if port := ln.Node().TCP(); port > 0 {
+				listen = uint16(port)
+			}
+		}
+		return disc.Hello{
+			ProtoVersion: disc.HelloMinProtoVersion,
+			Nonce:        n.server.HelloNonce(),
+			ListenPort:   listen,
+			Services:     disc.ServiceNodeNetwork | disc.ServiceRelayTx,
+		}
+	}
+	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint, helloProvider)
+	// Bidirectional wiring for cross-dial dedup:
+	//   Server → backend.PeerListenPort to resolve inbound peers'
+	//     listen ports in alreadyConnectedTo / peerListenAddr.
+	//   backend → server.FindCrossDialDup to scan peers when a
+	//     Hello arrives and disconnect duplicates.
+	n.server.SetPeerListenPortLookup(backend)
+	backend.SetCrossDialHost(n.server)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
 	return nil

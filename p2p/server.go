@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	crand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -33,6 +35,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -56,6 +59,12 @@ const (
 	// Connectivity defaults.
 	defaultMaxPendingPeers = 50
 	defaultDialRatio       = 3
+
+	// defaultMaxBlockRelayPeers is the default number of outbound
+	// slots reserved for block-relay-only peers. Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS (src/net.h:73). Operators can
+	// override via Config.MaxBlockRelayPeers.
+	defaultMaxBlockRelayPeers = 2
 
 	// This time limits inbound connection attempts per source IP.
 	inboundThrottleTime = 30 * time.Second
@@ -205,6 +214,35 @@ type Config struct {
 	// exposed alongside them.
 	LegacyDiscoveryMode string `toml:",omitempty"`
 
+	// MaxBlockRelayPeers is the count of outbound peers reserved for
+	// block-relay-only slots (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73 = 2). Block-
+	// relay-only peers do not relay transactions or addresses;
+	// they're anti-eclipse insurance over and above full-relay.
+	// Counted against the existing outbound budget (DialRatio), so
+	// raising this lowers the full-relay slot count by the same
+	// amount. Zero disables the block-relay-only bucket entirely;
+	// every outbound dial becomes full-relay.
+	MaxBlockRelayPeers int `toml:",omitempty"`
+
+	// BanList is the BanMan instance the inbound-accept path consults
+	// to reject banned and (under saturation) discouraged source IPs.
+	// Operator-controlled persistence lives in p2p/banman; the Server
+	// only reads. nil disables ban / discourage gating — useful in
+	// ephemeral tests.
+	BanList *banman.BanMan `toml:"-"`
+
+	// AnchorsPath is the location of anchors.dat. On clean shutdown
+	// the (IP, listen-port) of currently-connected block-relay-only
+	// outbound peers are persisted there (capped at
+	// MaxBlockRelayAnchors); on next startup those peers are
+	// redialed as block-relay-only and the file is deleted. Mirrors
+	// Bitcoin Core's m_anchors / anchors.dat (src/net.cpp:57).
+	// Empty disables anchor persistence — useful for ephemeral
+	// tests and for nodes that don't run any block-relay-only
+	// peers (MaxBlockRelayPeers=0).
+	AnchorsPath string `toml:",omitempty"`
+
 	// AddrBookPath is where the addrbook persists across restarts.
 	// Defaults to <datadir>/addrbook.rlp via the node layer. If
 	// empty, the addrman still runs in-memory but nothing is
@@ -250,6 +288,22 @@ type Server struct {
 	ntab      *discover.UDPv4
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
+
+	// helloNonce is a 64-bit random value generated once per Server
+	// lifetime and embedded in every parallax-disc/1 Hello we send.
+	// Receiving our own nonce back identifies a self-connect (the
+	// protocol-level analog of Bitcoin Core's nLocalHostNonce, src/
+	// net.cpp PushNodeVersion). Read-only after setupLocalNode; safe
+	// for concurrent reads from peer goroutines without locking.
+	helloNonce uint64
+
+	// peerListenLookup is the disc-protocol's per-peer Hello cache
+	// projected as "given this peer ID, what listen port did they
+	// disclose?". Used by peerListenAddr to dedup inbound peers
+	// (whose RemoteAddr port is ephemeral) against outbound dials.
+	// Set once at node setup before Start; nil during tests that
+	// don't wire the disc backend.
+	peerListenLookup PeerListenPortLookup
 
 	// addrbook is the PIP-0006 address manager. Populated only when
 	// Config.ExperimentalAddrMan is true. Feeds the dialer as an
@@ -324,6 +378,13 @@ const (
 	// code paths keep their original semantics after the Phase 2b
 	// changes.
 	v2DialedConn
+	// blockRelayConn marks an outbound peer occupying a block-relay-
+	// only slot in the dial scheduler. Block-relay-only peers do not
+	// relay transactions or addresses (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). The bit
+	// propagates to *Peer.blockRelayOnly at attach time so the prl
+	// and disc protocol handlers can suppress tx and address gossip.
+	blockRelayConn
 )
 
 // conn wraps a network connection with information gathered
@@ -375,6 +436,9 @@ func (f connFlag) String() string {
 	if f&inboundConn != 0 {
 		s += "-inbound"
 	}
+	if f&blockRelayConn != 0 {
+		s += "-blockrelay"
+	}
 	if s != "" {
 		s = s[1:]
 	}
@@ -404,6 +468,50 @@ func (c *conn) set(f connFlag, val bool) {
 // LocalNode returns the local node record.
 func (srv *Server) LocalNode() *enode.LocalNode {
 	return srv.localnode
+}
+
+// HelloNonce returns the per-startup random nonce embedded in every
+// outgoing parallax-disc/1 Hello. Bitcoin Core analog: nLocalHostNonce
+// (src/net.cpp PushNodeVersion). Stable for the Server's lifetime;
+// safe for concurrent reads.
+func (srv *Server) HelloNonce() uint64 {
+	return srv.helloNonce
+}
+
+// PeerListenPortLookup is the minimal surface peerListenAddr needs
+// to consult an external per-peer listen-port store. The
+// parallax-disc/1 AddrmanBackend records a peer's claimed listen
+// port from their Hello message and implements this interface so
+// the Server can resolve inbound peers' true listen address (their
+// kernel RemoteAddr port is ephemeral, not their listen port).
+//
+// Returning ok=false means the peer hasn't disclosed a port (yet)
+// or doesn't speak the disc protocol — peerListenAddr in turn
+// reports unknown for that peer, which behaves correctly in the
+// dedup paths (no false positives).
+type PeerListenPortLookup interface {
+	PeerListenPort(id enode.ID) (uint16, bool)
+}
+
+// SetPeerListenPortLookup wires the disc backend (or any other
+// per-peer listen-port store) into the Server. Called once at node
+// setup before Start; subsequent calls overwrite. Concurrent reads
+// from peer goroutines see the latest value via plain field access
+// — node setup runs before any peer goroutine, so the
+// happens-before is established by Start's startup barrier.
+func (srv *Server) SetPeerListenPortLookup(l PeerListenPortLookup) {
+	srv.peerListenLookup = l
+}
+
+// initHelloNonce draws a 64-bit value from crypto/rand. Called once
+// from setupLocalNode before any peer can be accepted.
+func (srv *Server) initHelloNonce() error {
+	var buf [8]byte
+	if _, err := crand.Read(buf[:]); err != nil {
+		return fmt.Errorf("hello nonce init: %w", err)
+	}
+	srv.helloNonce = binary.BigEndian.Uint64(buf[:])
+	return nil
 }
 
 // Peers returns all connected peers.
@@ -530,6 +638,11 @@ func (srv *Server) Stop() {
 			srv.log.Info("addrbook saved", "path", srv.AddrBookPath, "entries", srv.addrbook.Size(nil, nil))
 		}
 	}
+	// Persist block-relay-only anchors so the next startup can
+	// re-attach to the same peers in the same role. Bitcoin Core
+	// m_anchors / anchors.dat (src/net.cpp:57). Disabled when
+	// AnchorsPath is empty.
+	srv.persistAnchors()
 }
 
 // Start starts running the server.
@@ -598,6 +711,7 @@ func (srv *Server) Start() (err error) {
 		return err
 	}
 	srv.setupDialScheduler()
+	srv.replayAnchors()
 
 	srv.loopWG.Add(1)
 	go srv.run()
@@ -718,6 +832,16 @@ func (srv *Server) warnOnLegacyUDPDominance() {
 }
 
 func (srv *Server) setupLocalNode() error {
+	// Generate the per-startup self-connect nonce. Drawn from
+	// crypto/rand so adversaries can't predict it; uint64 space is
+	// large enough that collision probability across the network is
+	// negligible (birthday bound ~2^32 distinct nodes before any
+	// pair shares a nonce, and even then only matters if those two
+	// nodes happen to dial each other).
+	if err := srv.initHelloNonce(); err != nil {
+		return err
+	}
+
 	// Create the devp2p handshake.
 	pubkey := crypto.FromECDSAPub(&srv.PrivateKey.PublicKey)
 	srv.ourHandshake = &protoHandshake{Version: baseProtocolVersion, Name: srv.Name, ID: pubkey[1:]}
@@ -884,6 +1008,7 @@ func (srv *Server) setupDialScheduler() {
 		clock:          srv.clock,
 		v2Predicate:    hasV2TransportENR,
 		v2Dial:         srv.DialV2,
+		maxBlockRelay:  srv.maxBlockRelayDial(),
 	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
@@ -903,9 +1028,27 @@ func (srv *Server) setupDialScheduler() {
 		// when the addrbook has none (e.g., a freshly-installed
 		// v1.x-only network), the goroutine idles on its internal
 		// backoff.
-		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond)
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.IsSelfEndpoint)
 		srv.loopWG.Add(1)
 		go srv.runV2Dialer()
+
+		// Background feeler. Periodically tests one addrman entry
+		// for reachability without occupying an outbound slot —
+		// Bitcoin Core's anti-eclipse / addrman-freshness feeler
+		// (src/net.cpp:2796-2810). Refreshes LastSuccess on hits,
+		// records failures otherwise.
+		srv.loopWG.Add(1)
+		go srv.runFeeler()
+
+		// Cold-start addrfetch. One-shot bootstrap-only dial when
+		// the addrman is below addrFetchThreshold so a fresh
+		// install can populate addrbook from a few peers' GetPeers
+		// responses (Bitcoin Core ConnectionType::ADDR_FETCH,
+		// src/net.cpp:2422). No-op once the addrman has filled up.
+		if len(srv.BootstrapNodesV2) > 0 {
+			srv.loopWG.Add(1)
+			go srv.runAddrFetch()
+		}
 	}
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
 	for _, n := range srv.StaticNodes {
@@ -1001,15 +1144,36 @@ func (srv *Server) runV2Dialer() {
 // own — short-circuit here before the TCP connection spends kernel
 // resources on a duplicate handshake.
 func (srv *Server) DialV2(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, 0)
+}
+
+// DialV2BlockRelay opens a v2-handshake TCP connection like DialV2
+// but tags the resulting conn with the block-relay-only flag. Used
+// at startup to replay anchors.dat — anchor peers are persisted
+// outbound block-relay-only peers, so they should reattach in the
+// same role.
+func (srv *Server) DialV2BlockRelay(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, blockRelayConn)
+}
+
+// dialV2WithFlags is the shared implementation. extra is OR'd into
+// the standard (dynDialedConn|v2DialedConn) flag set so the caller
+// can request block-relay-only or other future variants without
+// duplicating the cooldown / self-endpoint / dedup checks.
+func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if addr == nil {
 		return errors.New("v2 dial: nil address")
 	}
 	if !srv.v2DialCooldownCheckAndMark(addr) {
 		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
 	}
+	if srv.IsSelfEndpoint(addr) {
+		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
+		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
+	}
 	already := srv.alreadyConnectedTo(addr)
 	peerCount := len(srv.Peers())
-	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount)
+	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount, "extra", extra)
 	if already {
 		// Refresh LastTry without counting a failure. addrman's
 		// Select chance weighting drops ~100x for 10 min once
@@ -1025,7 +1189,8 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
-	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil); err != nil {
+	// extra carries blockRelayConn for anchor replays.
+	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|extra, nil); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
 		// object was constructed, so the delpeer path never runs
 		// and addrman never learns the entry is unreachable. Record
@@ -1073,6 +1238,15 @@ const v2DialCooldown = 30 * time.Second
 // real failure.
 var errV2DialCooldown = errors.New("v2 dial cooldown")
 
+// errV2DialSelf is the sentinel returned by DialV2 when the dial
+// target matches this node's own advertised (IP, TCP) endpoint.
+// v2 sessions derive node.ID from ephemeral X25519 keys, so the
+// node.ID-keyed self-check in postHandshakeChecks cannot fire for
+// v2 peers — without this guard, a node behind a hairpinning NAT
+// dials its own external IP and accepts the looped-back TCP
+// connection as a peer.
+var errV2DialSelf = errors.New("v2 dial self")
+
 // v2DialCooldownCheckAndMark returns true and records addr's dial
 // timestamp if the cooldown has elapsed; returns false otherwise.
 // Serialized so concurrent callers (runV2Dialer, dial-scheduler v2
@@ -1098,20 +1272,126 @@ func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
 	return true
 }
 
-// alreadyConnectedTo reports whether any current peer has a RemoteAddr
-// matching addr's (IP, port). Used by DialV2 to dedupe v2 targets
-// that can't be caught by node.ID-keyed matching.
+// IsSelfEndpoint reports whether addr matches this node's own
+// advertised (IP, TCP) endpoint. Exported so external wiring (the
+// disc-protocol AddrmanBackend, the addrman V2Iter) can consult
+// the same source of truth as the dial / handshake guards. Used
+// to short-circuit v2 dials
+// that would hairpin through the NAT and arrive back at our own
+// listener, and as a defense-in-depth check in postHandshakeChecks
+// for v2 connections that bypass the dial guard. Returns false
+// when localnode's TCP port is 0 (not yet published by
+// setupListening) so the check can't false-positive in the
+// startup window — DialV2 is reachable from admin RPC paths that
+// may run before that point.
+func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
+	if addr == nil || srv.localnode == nil {
+		return false
+	}
+	n := srv.localnode.Node()
+	selfPort := n.TCP()
+	if selfPort == 0 {
+		return false
+	}
+	return addr.Port == selfPort && addr.IP.Equal(n.IP())
+}
+
+// peerListenAddr returns the peer's effective (IP, listen-port) for
+// dedup. For outbound peers, RemoteAddr is the dial target — its port
+// IS the peer's listen port. For inbound peers, RemoteAddr's port is
+// the ephemeral source they connected from; substitute the listen
+// port the peer disclosed via parallax-disc/1 Hello when available.
+// Returns ok=false in two cases:
+//   - non-TCP RemoteAddr (test pipes, tunneled transports);
+//   - inbound peer with no disclosed listen port yet (pre-Hello window
+//     or v1 peer that doesn't speak the extension).
+//
+// Callers using this for dedup must treat ok=false as "no signal" —
+// it's not safe to assume the peer's listen address.
+func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
+	pra, ok := p.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return nil, false
+	}
+	if !p.rw.is(inboundConn) {
+		return pra, true
+	}
+	if srv.peerListenLookup == nil {
+		return nil, false
+	}
+	port, ok := srv.peerListenLookup.PeerListenPort(p.ID())
+	if !ok || port == 0 {
+		return nil, false
+	}
+	return &net.TCPAddr{IP: pra.IP, Port: int(port)}, true
+}
+
+// PeerListenAddr is the exported wrapper around peerListenAddr.
+// Used by the parallax-disc/1 AddrmanBackend's cross-dial dedup
+// hook so the disc package doesn't need to duplicate the
+// outbound/inbound branching logic.
+func (srv *Server) PeerListenAddr(p *Peer) (*net.TCPAddr, bool) {
+	return srv.peerListenAddr(p)
+}
+
+// alreadyConnectedTo reports whether any current peer's effective
+// listen-addr matches addr's (IP, port). Used by DialV2 to dedupe v2
+// dial targets that can't be caught by node.ID-keyed matching.
+//
+// Inbound peers contribute to this check only after disclosing their
+// listen port via Hello; in the brief window between TCP-up and Hello
+// receipt, an outbound dial to the same logical peer can race through.
+// The post-Hello cross-dial dedup hook in AddrmanBackend.HandleHello
+// resolves the resulting duplicate by dropping the inbound side.
 func (srv *Server) alreadyConnectedTo(addr *net.TCPAddr) bool {
 	for _, p := range srv.Peers() {
-		pra, ok := p.RemoteAddr().(*net.TCPAddr)
+		la, ok := srv.peerListenAddr(p)
 		if !ok {
 			continue
 		}
-		if pra.Port == addr.Port && pra.IP.Equal(addr.IP) {
+		if la.Port == addr.Port && la.IP.Equal(addr.IP) {
 			return true
 		}
 	}
 	return false
+}
+
+// FindCrossDialDup looks for an existing peer (other than newPeer)
+// whose effective listen-addr matches (newPeer.IP, listenPort).
+// Returns nil if none. Called by AddrmanBackend.HandleHello after
+// a peer discloses its listen port: if a duplicate exists, one of
+// the two connections must be torn down to avoid double-counting
+// the logical neighbor. Tie-break logic lives at the call site.
+func (srv *Server) FindCrossDialDup(newPeer *Peer, listenPort uint16) *Peer {
+	return srv.findCrossDialDupIn(srv.Peers(), newPeer, listenPort)
+}
+
+// findCrossDialDupIn is the testable core: same logic but operates
+// over a caller-supplied peer slice instead of pulling the current
+// set through the run loop. Tests synthesize fake peers and drive
+// it directly without standing up Start().
+func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort uint16) *Peer {
+	if newPeer == nil || listenPort == 0 {
+		return nil
+	}
+	pra, ok := newPeer.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return nil
+	}
+	target := &net.TCPAddr{IP: pra.IP, Port: int(listenPort)}
+	for _, p := range peers {
+		if p == newPeer {
+			continue
+		}
+		la, ok := srv.peerListenAddr(p)
+		if !ok {
+			continue
+		}
+		if la.Port == target.Port && la.IP.Equal(target.IP) {
+			return p
+		}
+	}
+	return nil
 }
 
 // logStartup emits the node's starting address as plain ip:port
@@ -1276,6 +1556,74 @@ func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
 	return addrman.NetAddr{}, false
 }
 
+// replayAnchors reads the persisted block-relay-only anchor list
+// (anchors.dat) and re-dials each entry as block-relay-only. The
+// file is deleted immediately after a successful read so a crash
+// during startup doesn't replay the same anchors twice (matches
+// Bitcoin Core src/net.cpp:2715-2716 post-read delete).
+//
+// Each replay dial runs in its own goroutine so a slow DNS / dial
+// doesn't block server startup. Failures are logged but never
+// propagated — anchors are best-effort hints.
+func (srv *Server) replayAnchors() {
+	if srv.AnchorsPath == "" || srv.NoDial {
+		return
+	}
+	addrs, err := loadAnchors(srv.AnchorsPath)
+	if err != nil {
+		srv.log.Warn("anchors: load failed; skipping replay", "path", srv.AnchorsPath, "err", err)
+		return
+	}
+	// Delete the file unconditionally, even on a clean read, so a
+	// crash mid-startup doesn't double-dial. Bitcoin parity.
+	if err := removeAnchors(srv.AnchorsPath); err != nil {
+		srv.log.Warn("anchors: remove after load failed", "path", srv.AnchorsPath, "err", err)
+	}
+	if len(addrs) == 0 {
+		return
+	}
+	srv.log.Info("anchors: replaying block-relay-only peers", "count", len(addrs))
+	for _, a := range addrs {
+		srv.loopWG.Add(1)
+		go func() {
+			defer srv.loopWG.Done()
+			if err := srv.DialV2BlockRelay(a); err != nil {
+				srv.log.Trace("anchor dial failed", "addr", a, "err", err)
+			}
+		}()
+	}
+}
+
+// persistAnchors snapshots the (IP, listen-port) of currently-
+// connected block-relay-only outbound peers (capped at
+// MaxBlockRelayAnchors) to anchors.dat. Called from Stop after
+// loopWG so the peer set is settled. Best-effort: errors are
+// logged, never propagated.
+func (srv *Server) persistAnchors() {
+	if srv.AnchorsPath == "" {
+		return
+	}
+	addrs := make([]*net.TCPAddr, 0, MaxBlockRelayAnchors)
+	for _, p := range srv.Peers() {
+		if !p.BlockRelayOnly() {
+			continue
+		}
+		la, ok := srv.peerListenAddr(p)
+		if !ok {
+			continue
+		}
+		addrs = append(addrs, la)
+		if len(addrs) >= MaxBlockRelayAnchors {
+			break
+		}
+	}
+	if err := saveAnchors(srv.AnchorsPath, addrs); err != nil {
+		srv.log.Warn("anchors: save failed on shutdown", "path", srv.AnchorsPath, "err", err)
+		return
+	}
+	srv.log.Info("anchors: saved", "path", srv.AnchorsPath, "count", len(addrs))
+}
+
 // addrmanAttempt records a failed connection attempt in the addrman.
 // No-op when ExperimentalAddrMan is off.
 func (srv *Server) addrmanAttempt(p *Peer) {
@@ -1335,6 +1683,27 @@ func (srv *Server) maxDialedConns() (limit int) {
 		limit = 1
 	}
 	return limit
+}
+
+// maxBlockRelayDial returns the count of outbound slots reserved
+// for block-relay-only peers. Capped at maxDialedConns()/2 so a
+// pathological config can't push every outbound dial into the
+// block-relay bucket and starve full-relay traffic.
+func (srv *Server) maxBlockRelayDial() int {
+	if srv.NoDial || srv.MaxPeers == 0 {
+		return 0
+	}
+	want := srv.MaxBlockRelayPeers
+	if want == 0 {
+		want = defaultMaxBlockRelayPeers
+	}
+	if want < 0 {
+		return 0
+	}
+	if cap := srv.maxDialedConns() / 2; want > cap {
+		want = cap
+	}
+	return want
 }
 
 func (srv *Server) setupListening() error {
@@ -1481,6 +1850,22 @@ running:
 			if pd.err != nil && !pd.Inbound() {
 				srv.addrmanAttempt(pd.Peer)
 			}
+			// Discourage hook: if the peer was flagged for
+			// misbehavior during the session, add its source IP to
+			// the ephemeral discourage filter. The filter is
+			// consulted by postHandshakeChecks to reject the same
+			// source if it tries to reconnect into a saturated
+			// inbound pool. Bitcoin Core src/net_processing.cpp
+			// MaybeDiscourageAndDisconnect.
+			if srv.BanList != nil && pd.ShouldDiscourage() {
+				if remote, ok := pd.RemoteAddr().(*net.TCPAddr); ok {
+					srv.BanList.Discourage(remote.IP)
+					srv.log.Debug("discouraging misbehaving peer",
+						"id", pd.ID(),
+						"addr", remote.IP,
+						"reason", pd.DiscourageReason())
+				}
+			}
 		}
 	}
 
@@ -1505,11 +1890,35 @@ running:
 }
 
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
+	// Saturation handling for inbound: instead of hard-rejecting,
+	// run the Bitcoin-Core-style eviction algorithm to free a slot
+	// by dropping the lowest-quality existing inbound peer. If
+	// eviction succeeds, accept the new peer optimistically — the
+	// run loop processes the loser's delpeer asynchronously, so
+	// inboundCount transiently exceeds the cap.
+	//
+	// MaxPeers (total) saturation still hard-rejects: total cap is
+	// a system-resource ceiling, not subject to eviction. Inbound-
+	// only is what the algorithm targets.
+	// Discouraged-at-saturation rejection (Bitcoin Core
+	// src/net.cpp:1808). At inbound saturation we'd normally evict
+	// to make room. If the candidate's IP is in our discourage
+	// filter (an in-memory record of recent misbehavior),
+	// hard-reject before evicting — there's no point displacing a
+	// well-behaved peer to admit one we already know is misbehaving.
+	// Trusted peers bypass.
+	if srv.BanList != nil && !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns() {
+		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsDiscouraged(remote.IP) {
+			return DiscTooManyPeers
+		}
+	}
 	switch {
 	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
 		return DiscTooManyPeers
 	case !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns():
-		return DiscTooManyPeers
+		if !srv.evictInbound(peers) {
+			return DiscTooManyPeers
+		}
 	case peers[c.node.ID()] != nil:
 		return DiscAlreadyConnected
 	case c.node.ID() == srv.localnode.ID():
@@ -1520,8 +1929,19 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	// fresh-looking ID that the map above can't flag. Fall back to
 	// (IP, TCP port) matching — if a peer on the same address is
 	// already connected, treat this as a duplicate.
+	//
+	// Also catch v2 self-connections that the node.ID check above
+	// can't see: the kernel-level remote of an outbound dial is
+	// the dial target, so if it matches our own advertised endpoint
+	// the connection is a hairpin. DialV2 already rejects this at
+	// the dial site; the check here covers the narrow window where
+	// localnode's IP updates between the dial and this checkpoint,
+	// and any future code path that bypasses DialV2.
 	if _, isV2 := c.transport.(*v2Transport); isV2 {
 		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+			if srv.IsSelfEndpoint(remote) {
+				return DiscSelf
+			}
 			for _, p := range peers {
 				pra, ok := p.RemoteAddr().(*net.TCPAddr)
 				if !ok {
@@ -1695,6 +2115,16 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	// Reject connections that do not match NetRestrict.
 	if srv.NetRestrict != nil && !srv.NetRestrict.Contains(remoteIP) {
 		return fmt.Errorf("not in netrestrict list")
+	}
+	// Hard-reject banned IPs (Bitcoin Core src/net.cpp:1800
+	// AcceptConnection ban check). Trusted-list status would
+	// override this in Bitcoin Core's CNode permissions, but at
+	// this stage of the connection we don't yet know whether the
+	// remote is one of our trusted nodes — if an operator wants
+	// a banned subnet to still reach trusted peers they should
+	// unban, not work around it here.
+	if srv.BanList != nil && srv.BanList.IsBanned(remoteIP) {
+		return fmt.Errorf("banned")
 	}
 	// Reject Internet peers that try too often. Allow up to
 	// maxInboundConnAttemptsPerIP concurrent in-window attempts from
@@ -1909,6 +2339,17 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 		// If message events are enabled, pass the peerFeed
 		// to the peer.
 		p.events = &srv.peerFeed
+	}
+	// Cache the peer's network-group bytes once. Eviction passes
+	// read this on every candidate without recomputing.
+	p.computeAndCacheNetworkGroup()
+	// Block-relay-only is a sticky outbound-slot tag set by the dial
+	// scheduler. Mirrors Bitcoin Core's m_relays_txs=false on
+	// block-relay-only peers (src/net_processing.cpp:3681): no tx
+	// traffic, no address gossip. Inbound peers never carry the bit.
+	if c.is(blockRelayConn) {
+		p.SetBlockRelayOnly(true)
+		p.SetRelayTxs(false)
 	}
 	go srv.runPeer(p)
 	return p

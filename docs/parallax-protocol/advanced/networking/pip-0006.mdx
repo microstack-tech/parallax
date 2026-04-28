@@ -74,7 +74,7 @@ downgrade-then-upgrade never loses the original file.
 
 ## Operator RPC
 
-Five admin RPCs are exposed once the node is running:
+Five admin RPCs manage the addrbook itself:
 
 - `admin_addnode <ip:port | enode://…>` — pin a peer as
   `source=manual`; persists across restarts and is dialed before
@@ -87,8 +87,16 @@ Five admin RPCs are exposed once the node is running:
 - `admin_dialV2 <ip:port>` — directly dial a remote over the v2
   handshake. Operator-testing entry point.
 
+Three more manage the persistent ban list (see
+[Peer management](peer-management) for behaviour):
+
+- `admin_setban <subnet> <add|remove> [bantime] [absolute]`
+- `admin_listbanned`
+- `admin_clearbanned`
+
 Corresponding `parallax-cli` subcommands are `addnode`, `removenode`,
-`addrbook-status`, `addrbook-resetkey`, `dialv2`.
+`addrbook-status`, `addrbook-resetkey`, `dialv2`, `setban`,
+`listbanned`, `clearbanned`.
 
 ## Deprecation timeline
 
