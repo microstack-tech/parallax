@@ -266,3 +266,32 @@ func TestHelloServiceFlagsLayout(t *testing.T) {
 		t.Errorf("ServiceRelayTx = 0x%x, want 0x4", ServiceRelayTx)
 	}
 }
+
+// TestProtocolLengthCoversAllMessages — ProtocolLength is the
+// upper bound on codes that protoRW.WriteMsg will accept (msg.Code
+// >= rw.Length is rejected as "invalid message code: not handled").
+// A stale ProtocolLength silently drops new outbound messages —
+// this was the bug behind the v2.0-rc1 → patched-build network
+// partition (Hello at 0x03 with Length=3 → drop, peers fall back
+// to "msg before Hello" disconnect).
+//
+// Asserts every defined message-code constant fits under
+// ProtocolLength. Add a new code → bump ProtocolLength → this
+// stays green. Forget the bump → red.
+func TestProtocolLengthCoversAllMessages(t *testing.T) {
+	codes := []struct {
+		name string
+		code uint64
+	}{
+		{"GetPeersMsg", GetPeersMsg},
+		{"PeersMsg", PeersMsg},
+		{"YourAddrMsg", YourAddrMsg},
+		{"HelloMsg", HelloMsg},
+	}
+	for _, c := range codes {
+		if c.code >= ProtocolLength {
+			t.Errorf("%s = 0x%02x is >= ProtocolLength (%d); protoRW.WriteMsg will drop outgoing %s as 'invalid message code: not handled'",
+				c.name, c.code, ProtocolLength, c.name)
+		}
+	}
+}
