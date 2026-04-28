@@ -272,10 +272,10 @@ func TestHandleHelloNonceNearMissAccepted(t *testing.T) {
 	peer := p2p.NewPeerForTest(id, "test", nil, a)
 
 	cases := []uint64{
-		localNonce ^ 1,                  // single-bit flip in low byte
-		localNonce ^ (1 << 63),          // single-bit flip in high byte
-		localNonce + 1,                  // adjacent integer
-		localNonce - 1,                  // adjacent integer
+		localNonce ^ 1,         // single-bit flip in low byte
+		localNonce ^ (1 << 63), // single-bit flip in high byte
+		localNonce + 1,         // adjacent integer
+		localNonce - 1,         // adjacent integer
 		(localNonce >> 8) | ((localNonce & 0xFF) << 56), // byte rotation — same bits
 	}
 	for _, nonce := range cases {

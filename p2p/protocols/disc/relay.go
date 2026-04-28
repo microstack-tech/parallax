@@ -155,12 +155,6 @@ func (b *AddrmanBackend) relayAddressAt(originator *p2p.Peer, entry PeerEntry, r
 	}
 }
 
-// relayCandidate is the snapshot tuple a relay pick operates over.
-type relayCandidate struct {
-	key   PeerKey
-	state *peerRelayState
-}
-
 // snapshotRelayCandidates copies the currently-registered outboxes
 // excluding originator. Holds b.mu only for the snapshot duration —
 // the picker runs unlocked against the snapshot. Returns a map keyed

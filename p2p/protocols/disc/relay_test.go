@@ -577,4 +577,3 @@ func TestRelayAddressRaceWithUnregister(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
-
