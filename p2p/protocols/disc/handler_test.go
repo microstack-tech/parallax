@@ -109,6 +109,13 @@ func (b *testBackend) HandleHello(_ *p2p.Peer, h Hello) error {
 // end so the test can send messages. The session loop returns when the
 // app side closes the pipe.
 func runHandler(t *testing.T, backend Backend) (app *p2p.MsgPipeRW, done <-chan error) {
+	return runHandlerWithPeer(t, backend, nil)
+}
+
+// runHandlerWithPeer is the runHandler variant that lets the caller
+// configure the *p2p.Peer before Run starts. Tests use this to flip
+// block-relay-only or other peer flags.
+func runHandlerWithPeer(t *testing.T, backend Backend, configure func(*p2p.Peer)) (app *p2p.MsgPipeRW, done <-chan error) {
 	t.Helper()
 	// Disable Poisson jitter for the duration of the test — a 2s
 	// mean per response wrecks suite runtime.
@@ -119,6 +126,9 @@ func runHandler(t *testing.T, backend Backend) (app *p2p.MsgPipeRW, done <-chan 
 	var id enode.ID
 	_, _ = rand.Read(id[:])
 	peer := p2p.NewPeer(id, "test", nil)
+	if configure != nil {
+		configure(peer)
+	}
 	ch := make(chan error, 1)
 	go func() {
 		ch <- Run(backend, peer, netRW)
@@ -127,6 +137,150 @@ func runHandler(t *testing.T, backend Backend) (app *p2p.MsgPipeRW, done <-chan 
 		appRW.Close()
 	})
 	return appRW, ch
+}
+
+// TestHandlerBlockRelayOnlyHelloClearsRelayTxBit — when the peer is
+// flagged block-relay-only, the outgoing Hello clears the
+// ServiceRelayTx bit (Bitcoin Core PushNodeVersion fRelay=false on
+// m_block_relay_only outbound, src/net.cpp). Other Services bits
+// pass through untouched.
+func TestHandlerBlockRelayOnlyHelloClearsRelayTxBit(t *testing.T) {
+	b := &testBackend{
+		obsOK: true,
+		localHello: Hello{
+			ProtoVersion: HelloMinProtoVersion,
+			Nonce:        0xDEADBEEF,
+			ListenPort:   32110,
+			Services:     ServiceNodeNetwork | ServiceRelayTx,
+		},
+	}
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+
+	msg, err := app.ReadMsg()
+	if err != nil {
+		t.Fatalf("ReadMsg: %v", err)
+	}
+	if msg.Code != HelloMsg {
+		t.Fatalf("first msg = 0x%02x, want HelloMsg", msg.Code)
+	}
+	var h Hello
+	if err := msg.Decode(&h); err != nil {
+		t.Fatalf("decode Hello: %v", err)
+	}
+	if h.Services&ServiceRelayTx != 0 {
+		t.Errorf("BR Hello kept ServiceRelayTx bit: %#x", h.Services)
+	}
+	if h.Services&ServiceNodeNetwork == 0 {
+		t.Errorf("BR Hello dropped non-RelayTx bits: %#x (want NodeNetwork preserved)", h.Services)
+	}
+}
+
+// TestHandlerBlockRelayOnlySkipsAddressGossip — outbound block-relay-
+// only peers must not be sent self-advertise nor GetPeers. The
+// outgoing greeting is Hello + YourAddr only; the third message must
+// time out (handler is awaiting input, not pushing more out).
+func TestHandlerBlockRelayOnlySkipsAddressGossip(t *testing.T) {
+	self := PeerEntry{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 32110, KeyType: KeyTypeNone}
+	b := &testBackend{
+		obsOK:      true,
+		self:       &self,
+		localHello: Hello{ProtoVersion: HelloMinProtoVersion, ListenPort: 32110, Services: ServiceNodeNetwork},
+	}
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+
+	// Greeting must be exactly Hello + YourAddr.
+	first, err := app.ReadMsg()
+	if err != nil {
+		t.Fatalf("ReadMsg #1: %v", err)
+	}
+	if first.Code != HelloMsg {
+		t.Fatalf("first msg = 0x%02x, want HelloMsg", first.Code)
+	}
+	first.Discard()
+
+	second, err := app.ReadMsg()
+	if err != nil {
+		t.Fatalf("ReadMsg #2: %v", err)
+	}
+	if second.Code != YourAddrMsg {
+		t.Fatalf("second msg = 0x%02x, want YourAddrMsg", second.Code)
+	}
+	second.Discard()
+
+	// No third message should arrive: the handler is now in handleOne
+	// reading from the wire. Anything else (Peers/self or GetPeers)
+	// would be a regression. Use a short deadline to confirm the
+	// pipe is idle.
+	done := make(chan struct{})
+	go func() {
+		_, _ = app.ReadMsg()
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("handler emitted a third greeting message; block-relay-only must skip self-advertise + GetPeers")
+	case <-time.After(150 * time.Millisecond):
+		// Expected: no further outbound traffic.
+	}
+}
+
+// TestHandlerBlockRelayOnlyDropsIncomingGetPeers — receiving a
+// GetPeers from a block-relay-only peer is silently dropped (no
+// Peers reply). The handler must not throw an error.
+func TestHandlerBlockRelayOnlyDropsIncomingGetPeers(t *testing.T) {
+	b := &testBackend{
+		obsOK:      true,
+		sample:     []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 30303, KeyType: KeyTypeNone}},
+		localHello: Hello{ProtoVersion: HelloMinProtoVersion, ListenPort: 32110, Services: ServiceNodeNetwork},
+	}
+	app, done := runHandlerWithPeer(t, b, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+
+	// Greeting: Hello + YourAddr (no GetPeers because BR). Each
+	// message's payload must be Discarded so the MsgPipe writer
+	// side unblocks (WriteMsg waits on payload consumption).
+	if msg, err := app.ReadMsg(); err != nil || msg.Code != HelloMsg {
+		t.Fatalf("greeting #1: code=0x%02x err=%v", msg.Code, err)
+	} else {
+		msg.Discard()
+	}
+	if msg, err := app.ReadMsg(); err != nil || msg.Code != YourAddrMsg {
+		t.Fatalf("greeting #2: code=0x%02x err=%v", msg.Code, err)
+	} else {
+		msg.Discard()
+	}
+	// Open the gate by sending a Hello.
+	sendTestHello(t, app)
+
+	// Now send GetPeers — should be silently dropped, no Peers reply.
+	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
+		t.Fatalf("send GetPeers: %v", err)
+	}
+
+	noReply := make(chan struct{})
+	go func() {
+		_, _ = app.ReadMsg()
+		close(noReply)
+	}()
+	select {
+	case <-noReply:
+		t.Fatal("handler answered GetPeers from block-relay-only peer")
+	case <-time.After(150 * time.Millisecond):
+		// Expected silence.
+	}
+
+	// Handler should still be alive (GetPeers drop is not a
+	// disconnect-worthy violation).
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited unexpectedly: %v", err)
+	default:
+	}
 }
 
 // TestHandlerSendsHelloThenYourAddr — both sides write Hello first

@@ -313,6 +313,121 @@ func TestDialSchedManyStaticNodes(t *testing.T) {
 	})
 }
 
+// TestPickDynDialFlagsBlockRelayBucket — full-relay slots fill
+// first; once full-relay is at target, picker switches to
+// block-relay. Once block-relay is at target, picker stays on
+// dynDialedConn (the next free slot is a full-relay one again).
+//
+// Mirrors Bitcoin Core's ThreadOpenConnections type-priority order
+// (src/net.cpp:2715-2765): full-relay before block-relay-only.
+func TestPickDynDialFlagsBlockRelayBucket(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name             string
+		maxDial          int
+		maxBR            int
+		dialPeers        int
+		blockRelayDialed int
+		want             connFlag
+	}{
+		{name: "br-disabled", maxDial: 10, maxBR: 0, dialPeers: 0, want: dynDialedConn},
+		{name: "first-dial-fr", maxDial: 10, maxBR: 2, dialPeers: 0, want: dynDialedConn},
+		{name: "fr-not-yet-full", maxDial: 10, maxBR: 2, dialPeers: 5, want: dynDialedConn},
+		{name: "fr-just-filled-br-empty", maxDial: 10, maxBR: 2, dialPeers: 8, want: dynDialedConn | blockRelayConn},
+		{name: "fr-full-br-half", maxDial: 10, maxBR: 2, dialPeers: 9, blockRelayDialed: 1, want: dynDialedConn | blockRelayConn},
+		{name: "fr-full-br-full", maxDial: 10, maxBR: 2, dialPeers: 10, blockRelayDialed: 2, want: dynDialedConn},
+		{name: "br-target-larger-than-budget-clamped", maxDial: 4, maxBR: 4, dialPeers: 0, want: dynDialedConn | blockRelayConn},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			d := &dialScheduler{
+				dialConfig:       dialConfig{maxDialPeers: tc.maxDial, maxBlockRelay: tc.maxBR},
+				dialPeers:        tc.dialPeers,
+				blockRelayDialed: tc.blockRelayDialed,
+			}
+			if got := d.pickDynDialFlags(); got != tc.want {
+				t.Fatalf("pickDynDialFlags = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDialSchedBlockRelayBucketFills — end-to-end through the
+// scheduler: a maxDial=4 / maxBR=2 scheduler dials 4 nodes; the
+// first two are tagged dynDialedConn (full-relay), the last two
+// dynDialedConn|blockRelayConn. Verifies blockRelayDialed counts
+// match, and that the BR flag flows through to the conn.
+func TestDialSchedBlockRelayBucketFills(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 4,
+		maxDialPeers:   4,
+		maxBlockRelay:  2,
+	}
+	var (
+		clock    = new(mclock.Simulated)
+		iterator = newDialTestIterator()
+		dialer   = newDialTestDialer()
+		resolver = new(dialTestResolver)
+		setupCh  = make(chan *conn, 16)
+	)
+	config.clock = clock
+	config.dialer = dialer
+	config.resolver = resolver
+	config.log = testlog.Logger(t, logging.LvlTrace)
+	config.rand = rand.New(rand.NewSource(0x1111))
+
+	var dialsched *dialScheduler
+	setup := func(fd net.Conn, f connFlag, node *enode.Node) error {
+		c := &conn{flags: f, node: node}
+		dialsched.peerAdded(c)
+		setupCh <- c
+		return nil
+	}
+	dialsched = newDialScheduler(config, iterator, setup)
+	defer dialsched.stop()
+
+	nodes := []*enode.Node{
+		newNode(uintID(0x11), "1.0.0.1:32110"),
+		newNode(uintID(0x12), "2.0.0.1:32110"),
+		newNode(uintID(0x13), "3.0.0.1:32110"),
+		newNode(uintID(0x14), "4.0.0.1:32110"),
+	}
+	iterator.addNodes(nodes)
+	ids := []enode.ID{nodes[0].ID(), nodes[1].ID(), nodes[2].ID(), nodes[3].ID()}
+	if err := dialer.waitForDials(nodes); err != nil {
+		t.Fatalf("waitForDials: %v", err)
+	}
+	if err := dialer.completeDials(ids, nil); err != nil {
+		t.Fatalf("completeDials: %v", err)
+	}
+
+	got := make(map[enode.ID]connFlag)
+	for i := 0; i < len(nodes); i++ {
+		select {
+		case c := <-setupCh:
+			got[c.node.ID()] = c.flags
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for setup of dial %d", i)
+		}
+	}
+
+	frCount, brCount := 0, 0
+	for _, f := range got {
+		if f&blockRelayConn != 0 {
+			brCount++
+		} else {
+			frCount++
+		}
+	}
+	if frCount != 2 || brCount != 2 {
+		t.Fatalf("flag distribution wrong: fr=%d br=%d (want 2/2). Map=%v", frCount, brCount, got)
+	}
+}
+
 // TestDialSchedNetworkGroupDiversity — once an outbound peer in a
 // /16 IPv4 group is established, new candidates in the same group
 // are skipped. Different groups still dial. Mirrors Bitcoin Core's

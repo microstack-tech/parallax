@@ -427,6 +427,13 @@ func handleReceipts66(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers MUST NOT relay tx in either direction
+	// (Bitcoin Core src/net_processing.cpp:3681 m_relay_txs gate).
+	// Silently drop to avoid leaking which of our outbound slots is
+	// the block-relay-only one.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// New transaction announcement arrived, make sure we have
 	// a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
@@ -444,6 +451,13 @@ func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) 
 }
 
 func handleGetPooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers should never request pooled tx from us
+	// (we advertised m_relay_txs=false in Hello.Services). Treat the
+	// request as a protocol-discipline violation: drop without
+	// answering. Silent so an attacker can't probe the bit.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Decode the pooled transactions retrieval message
 	var query GetPooledTransactionsPacket66
 	if err := msg.Decode(&query); err != nil {
@@ -482,6 +496,12 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsPac
 }
 
 func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	// Block-relay-only peers MUST NOT push tx to us. Drop silently —
+	// stamping lastTxRx for them would also corrupt the eviction
+	// "newest tx among tx-relayers" round (eviction.cpp:194).
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
@@ -503,6 +523,10 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
+	// Same block-relay-only rule as handleTransactions.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
