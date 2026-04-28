@@ -270,7 +270,7 @@ func TestEthClient(t *testing.T) {
 			func(t *testing.T) { testBalanceAt(t, client) },
 		},
 		"TxInBlockInterrupted": {
-			func(t *testing.T) { testTransactionInBlockInterrupted(t, client) },
+			func(t *testing.T) { testTransactionInBlock(t, client) },
 		},
 		"ChainID": {
 			func(t *testing.T) { testChainID(t, client) },
@@ -387,7 +387,7 @@ func testBalanceAt(t *testing.T, client *rpc.Client) {
 	}
 }
 
-func testTransactionInBlockInterrupted(t *testing.T, client *rpc.Client) {
+func testTransactionInBlock(t *testing.T, client *rpc.Client) {
 	ec := NewClient(client)
 
 	// Get current block by number.
@@ -396,20 +396,26 @@ func testTransactionInBlockInterrupted(t *testing.T, client *rpc.Client) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Test tx in block interupted.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	tx, err := ec.TransactionInBlock(ctx, block.Hash(), 0)
-	if tx != nil {
-		t.Fatal("transaction should be nil")
-	}
-	if err == nil || err == parallax.ErrNotFound {
-		t.Fatal("error should not be nil/notfound")
-	}
-
 	// Test tx in block not found.
 	if _, err := ec.TransactionInBlock(context.Background(), block.Hash(), 20); err != parallax.ErrNotFound {
 		t.Fatal("error should be parallax.ErrNotFound")
+	}
+
+	// Test tx in block found.
+	tx, err := ec.TransactionInBlock(context.Background(), block.Hash(), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tx.Hash() != testTx1.Hash() {
+		t.Fatalf("unexpected transaction: %v", tx)
+	}
+
+	tx, err = ec.TransactionInBlock(context.Background(), block.Hash(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tx.Hash() != testTx2.Hash() {
+		t.Fatalf("unexpected transaction: %v", tx)
 	}
 }
 
