@@ -19,6 +19,7 @@ package disc
 import (
 	"crypto/rand"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -436,11 +437,11 @@ func TestRelayDrainSkipsKnownAddr(t *testing.T) {
 
 	outbox := make(chan PeerEntry, 1)
 	outbox <- entry
-	close(outbox)
+	stop := make(chan struct{})
 
 	done := make(chan struct{})
 	go func() {
-		runRelayDrain(peer, rwInner, st, outbox, logging.Root())
+		runRelayDrain(peer, rwInner, st, outbox, stop, logging.Root())
 		close(done)
 	}()
 
@@ -461,13 +462,119 @@ func TestRelayDrainSkipsKnownAddr(t *testing.T) {
 	case msg := <-gotMsg:
 		t.Fatalf("drain re-sent a known entry: code=%d", msg.Code)
 	case err := <-gotErr:
-		// Pipe closed because outbox closed → drain returned →
-		// rwInner closed by defer in Run. Acceptable shutdown shape.
+		// Pipe closed → drain returned → rwInner closed by defer in Run.
+		// Acceptable shutdown shape.
 		_ = err
 	case <-time.After(200 * time.Millisecond):
 		// Outcome we want: drain consumed the entry, didn't write,
-		// then closed (no message was emitted).
+		// then waited on stop. Signal it to exit.
 	}
+	close(stop)
 	<-done
+}
+
+// TestRelayAddressRaceWithUnregister stress-tests the lifecycle gap
+// between RelayAddress's snapshot of peerOutboxes and an Unregister
+// running in parallel. Pre-fix, the unregister path closed the outbox
+// and a still-in-flight RelayAddress would panic on send-to-closed-
+// channel inside the select-with-default (default catches "full",
+// not "closed"). Post-fix, the outbox is never closed; unregister
+// signals via a stop chan and the relay's three-way select drops
+// cleanly. This test runs many parallel RelayAddress + Unregister
+// pairs against a churning peer set; any panic fails the test.
+func TestRelayAddressRaceWithUnregister(t *testing.T) {
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 7)
+	}
+	b := newRelayBackendForTest(t, key)
+
+	const peers = 8
+	type fake struct {
+		peer *p2p.Peer
+		ch   chan PeerEntry
+		key  PeerKey
+		conn []interface{ Close() error }
+	}
+	mk := func(name string) fake {
+		a, d, err := pipes.TCPPipe()
+		if err != nil {
+			t.Fatalf("TCPPipe: %v", err)
+		}
+		var id enode.ID
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		p := p2p.NewPeerForTest(id, name, nil, a)
+		ch := make(chan PeerEntry, 4)
+		return fake{peer: p, ch: ch, key: peerKeyFor(p), conn: []interface{ Close() error }{a, d}}
+	}
+	pool := make([]fake, peers)
+	for i := range pool {
+		pool[i] = mk(fmt.Sprintf("p%d", i))
+		b.RegisterPeerOutbox(pool[i].key, pool[i].ch)
+	}
+	defer func() {
+		for _, f := range pool {
+			for _, c := range f.conn {
+				_ = c.Close()
+			}
+		}
+	}()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Senders: continuously fan out random entries through RelayAddress.
+	// If the previous fix is reverted, these will panic on a closed
+	// channel send under churn.
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(seed byte) {
+			defer wg.Done()
+			i := byte(0)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				entry := PeerEntry{
+					NetworkID: NetIPv4,
+					Addr:      []byte{8, 8, seed, i},
+					TCPPort:   30303,
+					KeyType:   KeyTypeNone,
+				}
+				b.RelayAddress(nil, entry, true)
+				i++
+			}
+		}(byte(w))
+	}
+
+	// Churner: rapidly unregister and re-register peers, draining
+	// their outboxes to keep the buffer from saturating.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for _, f := range pool {
+				b.UnregisterPeerOutbox(f.key)
+				b.RegisterPeerOutbox(f.key, f.ch)
+				select {
+				case <-f.ch:
+				default:
+				}
+			}
+		}
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
 

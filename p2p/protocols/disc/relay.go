@@ -40,27 +40,58 @@ const RelayFanOutMax = 2
 
 // peerRelayState is per-peer relay-side bookkeeping owned by the
 // backend. The outbox channel is fed by RelayAddress and drained by
-// the peer's handler.Run goroutine.
+// the peer's handler.Run goroutine. stop is closed by
+// UnregisterPeerOutbox so the drain goroutine exits; the outbox
+// channel itself is NEVER closed by the backend — closing it would
+// race with concurrent in-flight RelayAddress sends that already hold
+// the channel pointer via snapshotRelayCandidates and would panic the
+// daemon under peer churn.
 type peerRelayState struct {
 	outbox chan<- PeerEntry
+	stop   chan struct{}
 }
 
 // RegisterPeerOutbox records a peer's relay outbox channel. The
 // handler.Run goroutine spawns a drain sub-goroutine that consumes
 // from outbox and emits Peers messages to the peer (gated on the
-// peer's known-addr bloom). Idempotent on re-register.
-func (b *AddrmanBackend) RegisterPeerOutbox(key PeerKey, outbox chan<- PeerEntry) {
+// peer's known-addr bloom). Returns the stop channel the drain must
+// select on so it exits when UnregisterPeerOutbox runs. Idempotent on
+// re-register: an existing entry's stop is closed first so the prior
+// drain unwinds.
+func (b *AddrmanBackend) RegisterPeerOutbox(key PeerKey, outbox chan<- PeerEntry) <-chan struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.peerOutboxes[key] = &peerRelayState{outbox: outbox}
+	if prev, ok := b.peerOutboxes[key]; ok {
+		select {
+		case <-prev.stop:
+		default:
+			close(prev.stop)
+		}
+	}
+	st := &peerRelayState{outbox: outbox, stop: make(chan struct{})}
+	b.peerOutboxes[key] = st
+	return st.stop
 }
 
 // UnregisterPeerOutbox is the matching cleanup. Called from
-// handler.Run's defer chain on session close.
+// handler.Run's defer chain on session close. Closes the stop channel
+// (signalling the drain to exit) but NEVER closes the outbox itself —
+// any in-flight RelayAddress send that already snapshotted this peer's
+// state must complete (or hit the non-blocking default) without
+// hitting a closed channel. Idempotent.
 func (b *AddrmanBackend) UnregisterPeerOutbox(key PeerKey) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	st, ok := b.peerOutboxes[key]
+	if !ok {
+		return
+	}
 	delete(b.peerOutboxes, key)
+	select {
+	case <-st.stop:
+	default:
+		close(st.stop)
+	}
 }
 
 // RelayAddress fans out a freshly-ingested address to 1-2 peers
@@ -110,7 +141,12 @@ func (b *AddrmanBackend) relayAddressAt(originator *p2p.Peer, entry PeerEntry, r
 		if state == nil {
 			continue
 		}
+		// Three-way select: drain has exited (stop closed) wins
+		// before the send, so a torn-down peer doesn't accumulate
+		// dead entries; channel-full hits default and drops. The
+		// outbox is never closed, so a select-send to it can't panic.
 		select {
+		case <-state.stop:
 		case state.outbox <- entry:
 		default:
 			b.log.Trace("parallax-disc/1: relay outbox full, dropping",

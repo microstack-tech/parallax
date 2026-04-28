@@ -179,21 +179,32 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// repeat what the peer already told us). Buffer 16 means we drop
 	// at most a small burst if the underlying connection is slow —
 	// Bitcoin's behavior.
+	//
+	// Lifecycle: RegisterPeerOutbox returns a stop channel the drain
+	// selects on; UnregisterPeerOutbox closes it. The outbox itself is
+	// NEVER closed by either side — closing would race with concurrent
+	// in-flight RelayAddress sends that snapshotted the outbox pointer
+	// before we unregistered, and Go panics on send to a closed channel
+	// even inside a select-with-default (default fires only on full,
+	// not on closed). The drain exits on stop OR on a wire-write error.
 	type outboxRegistrar interface {
-		RegisterPeerOutbox(PeerKey, chan<- PeerEntry)
+		RegisterPeerOutbox(PeerKey, chan<- PeerEntry) <-chan struct{}
 		UnregisterPeerOutbox(PeerKey)
 	}
-	var outbox chan PeerEntry
+	var (
+		outbox chan PeerEntry
+		stop   <-chan struct{}
+	)
 	if reg, ok := backend.(outboxRegistrar); ok {
 		outbox = make(chan PeerEntry, relayOutboxBuffer)
-		reg.RegisterPeerOutbox(peerKeyFor(peer), outbox)
+		stop = reg.RegisterPeerOutbox(peerKeyFor(peer), outbox)
 	}
 
 	relayDone := make(chan struct{})
 	if outbox != nil {
 		go func() {
 			defer close(relayDone)
-			runRelayDrain(peer, rw, st, outbox, log)
+			runRelayDrain(peer, rw, st, outbox, stop, log)
 		}()
 	} else {
 		close(relayDone)
@@ -203,11 +214,11 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		// Release per-peer state from the backend's maps on session
 		// close. AddrmanBackend exposes PeerDisconnected; other
 		// backends may not, so check via type assertion.
+		// UnregisterPeerOutbox closes the stop channel, which the
+		// drain selects on; we then wait for the drain to exit. We do
+		// NOT close the outbox — see the lifecycle comment above.
 		if reg, ok := backend.(outboxRegistrar); ok {
 			reg.UnregisterPeerOutbox(peerKeyFor(peer))
-		}
-		if outbox != nil {
-			close(outbox)
 		}
 		<-relayDone
 		if cleaner, ok := backend.(interface{ PeerDisconnected(*p2p.Peer) }); ok {
@@ -237,11 +248,18 @@ const relayOutboxBuffer = 16
 // st.knownAddr), which is the m_addr_known dedup half of Bitcoin's
 // RelayAddress contract.
 //
-// Returns when the outbox closes (session ending) or when a write
-// fails (the peer goroutine exits anyway and we want to avoid
-// leaking a goroutine on a torn connection).
-func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-chan PeerEntry, log logging.Logger) {
-	for entry := range outbox {
+// Returns when stop fires (UnregisterPeerOutbox closed it on session
+// teardown) or when a wire write fails. The outbox is never closed,
+// so the drain cannot rely on a range-loop termination; the explicit
+// stop-channel select is what unwinds the goroutine.
+func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-chan PeerEntry, stop <-chan struct{}, log logging.Logger) {
+	for {
+		var entry PeerEntry
+		select {
+		case <-stop:
+			return
+		case entry = <-outbox:
+		}
 		key := addressKey(entry.NetworkID, entry.Addr, entry.TCPPort)
 		if st.knownAddr.Contains(key) {
 			// Peer already knows. Bitcoin: m_addr_known dedup.
