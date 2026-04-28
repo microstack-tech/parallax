@@ -18,7 +18,9 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -264,9 +266,25 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 		return nil, nil, err
 	}
 
-	// YourAddr is mandatory as the first parallax-disc/1 message after
-	// negotiation. Zero-filled — we are not dialable from the peer's
-	// perspective during a crawl.
+	// Hello is the first parallax-disc/1 message the peer expects on
+	// every session. Sending anything else first trips the server's
+	// "msg 0x?? before Hello" gate and ends the session immediately.
+	// We have no listen port (we don't accept inbound) and no services
+	// to advertise; the random nonce is just there to satisfy the
+	// peer's self-connect check (they compare it against their own
+	// nonce, which we obviously don't share).
+	helloMsgPayload, err := rlp.EncodeToBytes(disc.Hello{
+		ProtoVersion: disc.HelloMinProtoVersion,
+		Nonce:        randomDiscHelloNonce(),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := wc.WriteMsg(uint64(discOffset)+disc.HelloMsg, helloMsgPayload); err != nil {
+		return nil, nil, fmt.Errorf("write disc Hello: %w", err)
+	}
+	// YourAddr follows Hello on every session. Zero-filled — we are
+	// not dialable from the peer's perspective during a crawl.
 	yourAddrPayload, err := rlp.EncodeToBytes(disc.YourAddr{})
 	if err != nil {
 		return nil, nil, err
@@ -482,6 +500,25 @@ func (v *v2WireConn) ReadMsg() (uint64, []byte, error) {
 	return code, rest, nil
 }
 func (v *v2WireConn) Close() error { return v.c.Close() }
+
+// randomDiscHelloNonce returns a fresh 64-bit value for the
+// disc/1 Hello.Nonce field. The crawler sends a one-shot Hello,
+// so per-process randomness is enough — there's no equivalent of
+// the daemon's per-startup persistent nonce. crypto/rand never
+// fails on a healthy host; on the off chance it does we fall back
+// to a non-zero sentinel rather than crash a probe run.
+func randomDiscHelloNonce() uint64 {
+	var b [8]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return 0xDEADBEEFCAFE0001
+	}
+	n := binary.BigEndian.Uint64(b[:])
+	if n == 0 {
+		// 0 is a sentinel some implementations reserve. Bump it.
+		n = 1
+	}
+	return n
+}
 
 // v2SessionIDBytes mirrors p2p/transport_v2.go's identity derivation:
 // the Hello.ID for a v2 peer is the local X25519 ephemeral pubkey
