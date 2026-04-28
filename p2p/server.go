@@ -59,6 +59,12 @@ const (
 	defaultMaxPendingPeers = 50
 	defaultDialRatio       = 3
 
+	// defaultMaxBlockRelayPeers is the default number of outbound
+	// slots reserved for block-relay-only peers. Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS (src/net.h:73). Operators can
+	// override via Config.MaxBlockRelayPeers.
+	defaultMaxBlockRelayPeers = 2
+
 	// This time limits inbound connection attempts per source IP.
 	inboundThrottleTime = 30 * time.Second
 
@@ -207,6 +213,17 @@ type Config struct {
 	// exposed alongside them.
 	LegacyDiscoveryMode string `toml:",omitempty"`
 
+	// MaxBlockRelayPeers is the count of outbound peers reserved for
+	// block-relay-only slots (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73 = 2). Block-
+	// relay-only peers do not relay transactions or addresses;
+	// they're anti-eclipse insurance over and above full-relay.
+	// Counted against the existing outbound budget (DialRatio), so
+	// raising this lowers the full-relay slot count by the same
+	// amount. Zero disables the block-relay-only bucket entirely;
+	// every outbound dial becomes full-relay.
+	MaxBlockRelayPeers int `toml:",omitempty"`
+
 	// AddrBookPath is where the addrbook persists across restarts.
 	// Defaults to <datadir>/addrbook.rlp via the node layer. If
 	// empty, the addrman still runs in-memory but nothing is
@@ -342,6 +359,13 @@ const (
 	// code paths keep their original semantics after the Phase 2b
 	// changes.
 	v2DialedConn
+	// blockRelayConn marks an outbound peer occupying a block-relay-
+	// only slot in the dial scheduler. Block-relay-only peers do not
+	// relay transactions or addresses (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). The bit
+	// propagates to *Peer.blockRelayOnly at attach time so the prl
+	// and disc protocol handlers can suppress tx and address gossip.
+	blockRelayConn
 )
 
 // conn wraps a network connection with information gathered
@@ -392,6 +416,9 @@ func (f connFlag) String() string {
 	}
 	if f&inboundConn != 0 {
 		s += "-inbound"
+	}
+	if f&blockRelayConn != 0 {
+		s += "-blockrelay"
 	}
 	if s != "" {
 		s = s[1:]
@@ -956,6 +983,7 @@ func (srv *Server) setupDialScheduler() {
 		clock:          srv.clock,
 		v2Predicate:    hasV2TransportENR,
 		v2Dial:         srv.DialV2,
+		maxBlockRelay:  srv.maxBlockRelayDial(),
 	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
@@ -1526,6 +1554,27 @@ func (srv *Server) maxDialedConns() (limit int) {
 		limit = 1
 	}
 	return limit
+}
+
+// maxBlockRelayDial returns the count of outbound slots reserved
+// for block-relay-only peers. Capped at maxDialedConns()/2 so a
+// pathological config can't push every outbound dial into the
+// block-relay bucket and starve full-relay traffic.
+func (srv *Server) maxBlockRelayDial() int {
+	if srv.NoDial || srv.MaxPeers == 0 {
+		return 0
+	}
+	want := srv.MaxBlockRelayPeers
+	if want == 0 {
+		want = defaultMaxBlockRelayPeers
+	}
+	if want < 0 {
+		return 0
+	}
+	if cap := srv.maxDialedConns() / 2; want > cap {
+		want = cap
+	}
+	return want
 }
 
 func (srv *Server) setupListening() error {
@@ -2127,6 +2176,14 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 	// Cache the peer's network-group bytes once. Eviction passes
 	// read this on every candidate without recomputing.
 	p.computeAndCacheNetworkGroup()
+	// Block-relay-only is a sticky outbound-slot tag set by the dial
+	// scheduler. Mirrors Bitcoin Core's m_relays_txs=false on
+	// block-relay-only peers (src/net_processing.cpp:3681): no tx
+	// traffic, no address gossip. Inbound peers never carry the bit.
+	if c.is(blockRelayConn) {
+		p.SetBlockRelayOnly(true)
+		p.SetRelayTxs(false)
+	}
 	go srv.runPeer(p)
 	return p
 }

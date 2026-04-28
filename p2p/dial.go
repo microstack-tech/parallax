@@ -110,6 +110,20 @@ type dialScheduler struct {
 	peers     map[enode.ID]struct{}  // all connected peers
 	dialPeers int                    // current number of dialed peers
 
+	// blockRelayDialed counts the subset of dialPeers that occupy
+	// block-relay-only slots (Bitcoin Core's
+	// MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). Updated at
+	// peerAdded / peerRemoved time when c.is(blockRelayConn).
+	blockRelayDialed int
+
+	// dialingBlockRelay counts the subset of in-flight dials
+	// (d.dialing) that were launched as block-relay-only. Combined
+	// with blockRelayDialed it gives the picker the "committed"
+	// BR-bucket size, so a burst of four concurrent picks doesn't
+	// all classify as full-relay just because no peer has reached
+	// addPeerCh yet.
+	dialingBlockRelay int
+
 	// outboundGroups counts how many currently-dialed peers occupy
 	// each network group (Bitcoin Core IPv4 /16, IPv6 /32). Used by
 	// checkDial to enforce one-outbound-per-group anti-eclipse
@@ -153,6 +167,14 @@ type dialConfig struct {
 	// that don't want the v2 branch.
 	v2Predicate func(*enode.Node) bool
 	v2Dial      func(*net.TCPAddr) error
+
+	// maxBlockRelay is the count of block-relay-only outbound slots
+	// reserved within maxDialPeers. Bitcoin Core defaults to 2
+	// (MAX_BLOCK_RELAY_ONLY_CONNECTIONS, src/net.h:73). Zero disables
+	// the block-relay-only bucket entirely — all dynamic dials become
+	// full-relay regardless of slot pressure. Static dials never
+	// consume from this bucket.
+	maxBlockRelay int
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -274,11 +296,14 @@ loop:
 					}
 				}()
 			} else {
-				d.startDial(newDialTask(node, dynDialedConn))
+				d.startDial(newDialTask(node, d.pickDynDialFlags()))
 			}
 
 		case task := <-d.doneCh:
 			id := task.dest.ID()
+			if _, ok := d.dialing[id]; ok && task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
+				d.dialingBlockRelay--
+			}
 			delete(d.dialing, id)
 			d.updateStaticPool(id)
 			d.doneSinceLastLog++
@@ -286,6 +311,9 @@ loop:
 		case c := <-d.addPeerCh:
 			if c.is(dynDialedConn) || c.is(staticDialedConn) {
 				d.dialPeers++
+				if c.is(blockRelayConn) {
+					d.blockRelayDialed++
+				}
 				if g := outboundGroupKey(c); g != "" {
 					d.outboundGroups[g]++
 				}
@@ -302,6 +330,9 @@ loop:
 		case c := <-d.remPeerCh:
 			if c.is(dynDialedConn) || c.is(staticDialedConn) {
 				d.dialPeers--
+				if c.is(blockRelayConn) && d.blockRelayDialed > 0 {
+					d.blockRelayDialed--
+				}
 				if g := outboundGroupKey(c); g != "" {
 					if d.outboundGroups[g] <= 1 {
 						delete(d.outboundGroups, g)
@@ -461,6 +492,42 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	return nil
 }
 
+// pickDynDialFlags chooses the connFlag set for a fresh dynamic
+// outbound dial. Returns plain dynDialedConn for full-relay slots
+// (the default) or dynDialedConn|blockRelayConn when the block-
+// relay-only bucket has room and full-relay is at target capacity.
+//
+// Bitcoin Core's order in ThreadOpenConnections (src/net.cpp:2715-
+// 2765) prioritizes full-relay first, then block-relay, then
+// feeler / extra-block-relay. We mirror the FR-then-BR step;
+// feeler / anchor live on a separate goroutine (phase 4 follow-up
+// commits) so they never reach this picker.
+//
+// "Committed" counts include in-flight dials (d.dialing /
+// d.dialingBlockRelay) so a burst of concurrent picks doesn't all
+// land in the same bucket before any peer reaches addPeerCh.
+//
+// Static dials never reach this function — staticDialedConn dials
+// take a fixed flag set in addStatic / startStaticDials.
+func (d *dialScheduler) pickDynDialFlags() connFlag {
+	if d.maxBlockRelay <= 0 {
+		return dynDialedConn
+	}
+	committedBR := d.blockRelayDialed + d.dialingBlockRelay
+	if committedBR >= d.maxBlockRelay {
+		return dynDialedConn
+	}
+	fullRelayTarget := d.maxDialPeers - d.maxBlockRelay
+	if fullRelayTarget < 0 {
+		fullRelayTarget = 0
+	}
+	committedFR := (d.dialPeers - d.blockRelayDialed) + (len(d.dialing) - d.dialingBlockRelay)
+	if committedFR < fullRelayTarget {
+		return dynDialedConn
+	}
+	return dynDialedConn | blockRelayConn
+}
+
 // outboundGroupKey returns the network-group key used to bucket
 // outbound peers for diversity accounting. Returns the empty
 // string when the conn isn't an outbound dial (inbound peers
@@ -561,6 +628,9 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	hkey := string(task.dest.ID().Bytes())
 	d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
 	d.dialing[task.dest.ID()] = task
+	if task.flags&blockRelayConn != 0 {
+		d.dialingBlockRelay++
+	}
 	go func() {
 		task.run(d)
 		d.doneCh <- task

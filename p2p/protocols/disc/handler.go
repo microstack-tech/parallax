@@ -142,7 +142,7 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// nonce against their own to detect self-connect, and use the
 	// listen port to dedup cross-dial pairs (phase 2). Bitcoin Core
 	// analog: PushNodeVersion (src/net.cpp).
-	if err := sendHello(backend, rw, st); err != nil {
+	if err := sendHello(backend, peer, rw, st); err != nil {
 		log.Debug("parallax-disc/1: Hello send failed", "err", err)
 	}
 
@@ -157,7 +157,14 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// outbound peers get addr(self) + getaddr, inbound peers get
 	// nothing unsolicited. The distinction matters because an inbound
 	// peer could be an adversary probing our addrbook.
-	if !peer.Inbound() {
+	//
+	// Block-relay-only outbound peers also skip both: by spec they
+	// don't participate in address gossip (Bitcoin Core
+	// src/net_processing.cpp:3681 — fRelayTxes=false implies no
+	// addr or addr_v2 relay). Self-advertise leaks our endpoint to
+	// a peer that won't gossip it; GetPeers solicits gossip from a
+	// peer we shouldn't accept gossip from.
+	if !peer.Inbound() && !peer.BlockRelayOnly() {
 		if err := sendSelfAdvertise(backend, rw); err != nil {
 			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
 		}
@@ -236,6 +243,13 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	if err := msg.Decode(&req); err != nil {
 		// GetPeers has no payload; anything is a decode error.
 		return fmt.Errorf("disc: GetPeers decode: %w", err)
+	}
+	// Block-relay-only outbound peers don't participate in address
+	// gossip (Bitcoin Core src/net_processing.cpp:3681). Silently
+	// drop the request without responding — answering would leak
+	// our addrbook sample to a peer that committed not to gossip.
+	if peer.BlockRelayOnly() {
+		return nil
 	}
 	count := st.getPeersReceived.Add(1)
 	if count > 1 {
@@ -357,11 +371,20 @@ func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) err
 // sendHello writes the local node's Hello (nonce, listen port,
 // services). Idempotent via the CAS on sentHello — runs at most
 // once per session, even if Run is restarted by a higher layer.
-func sendHello(backend Backend, rw p2p.MsgReadWriter, st *state) error {
+//
+// On block-relay-only outbound sessions, ServiceRelayTx is cleared
+// so the peer treats us as a block-relay-only neighbor on their
+// side too (mirrors Bitcoin Core's PushNodeVersion which sets
+// fRelay=false on m_block_relay_only outbound; src/net.cpp).
+func sendHello(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
 	if !st.sentHello.CompareAndSwap(false, true) {
 		return nil
 	}
-	return p2p.Send(rw, HelloMsg, backend.LocalHello())
+	h := backend.LocalHello()
+	if peer.BlockRelayOnly() {
+		h.Services &^= ServiceRelayTx
+	}
+	return p2p.Send(rw, HelloMsg, h)
 }
 
 // handleHello processes the peer's Hello on the receive side.
