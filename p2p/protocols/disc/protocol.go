@@ -29,8 +29,12 @@ const ProtocolName = "parallax-disc"
 const ProtocolVersion uint = 1
 
 // ProtocolLength is the number of message codes in parallax-disc/1. Must
-// be exactly one past the highest code used (YourAddrMsg = 0x02, so 3).
-const ProtocolLength uint64 = 3
+// be exactly one past the highest code used. Currently HelloMsg = 0x03,
+// so 4. p2p's protoRW.WriteMsg rejects msg.Code >= rw.Length with
+// "invalid message code: not handled" — a stale value here silently
+// drops outgoing Hello messages and partitions the network from
+// patched peers.
+const ProtocolLength uint64 = 4
 
 // MaxMessageSize caps the size of a single inbound message. Chosen so
 // that a full 1000-entry `Peers` message fits comfortably:
