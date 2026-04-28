@@ -622,13 +622,13 @@ type teeWriter struct {
 	buf *bytes.Buffer
 }
 
-func (t *teeWriter) Read([]byte) (int, error)          { return 0, io.EOF }
-func (t *teeWriter) Close() error                      { return nil }
-func (t *teeWriter) LocalAddr() net.Addr               { return dummyAddr{} }
-func (t *teeWriter) RemoteAddr() net.Addr              { return dummyAddr{} }
-func (t *teeWriter) SetDeadline(time.Time) error       { return nil }
-func (t *teeWriter) SetReadDeadline(time.Time) error   { return nil }
-func (t *teeWriter) SetWriteDeadline(time.Time) error  { return nil }
+func (t *teeWriter) Read([]byte) (int, error)         { return 0, io.EOF }
+func (t *teeWriter) Close() error                     { return nil }
+func (t *teeWriter) LocalAddr() net.Addr              { return dummyAddr{} }
+func (t *teeWriter) RemoteAddr() net.Addr             { return dummyAddr{} }
+func (t *teeWriter) SetDeadline(time.Time) error      { return nil }
+func (t *teeWriter) SetReadDeadline(time.Time) error  { return nil }
+func (t *teeWriter) SetWriteDeadline(time.Time) error { return nil }
 func (t *teeWriter) Write(p []byte) (int, error) {
 	t.buf.Write(p)
 	return len(p), nil
