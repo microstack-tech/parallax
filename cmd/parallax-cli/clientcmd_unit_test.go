@@ -246,3 +246,23 @@ func TestClientSugarCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// TestSetbanCommandRegistered — sanity-check that the three new ban
+// commands are wired into the sugar list with the right shape.
+func TestBanCommandsRegistered(t *testing.T) {
+	want := map[string]bool{
+		"setban":      false,
+		"listbanned":  false,
+		"clearbanned": false,
+	}
+	for _, c := range clientSugarCommands {
+		if _, ok := want[c.Name]; ok {
+			want[c.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("ban command %q not registered in clientSugarCommands", name)
+		}
+	}
+}
