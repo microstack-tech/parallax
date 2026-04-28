@@ -31,6 +31,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/util/hexutil"
@@ -255,6 +256,138 @@ func (api *privateAdminAPI) DialV2(address string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// Setban adds or removes an entry in the persistent ban list.
+// Mirrors Bitcoin Core's setban RPC (src/rpc/net.cpp:740).
+//
+// Arguments:
+//
+//   - subnet:   IP or CIDR. "1.2.3.4" → /32, "1.2.3.0/24" → CIDR.
+//   - command:  "add" or "remove".
+//   - bantime:  seconds. 0 → DefaultBanDuration. Honored only on
+//     command="add".
+//   - absolute: when true, bantime is a Unix timestamp; when false,
+//     a relative offset from now. Default false. Honored only on
+//     command="add".
+//
+// On "add" the matching live peers are also disconnected. On
+// "remove" returns an error if the subnet wasn't previously banned
+// (Bitcoin parity, src/rpc/net.cpp:817).
+func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64, absolute *bool) (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	bm := server.BanList
+	if bm == nil {
+		return false, errors.New("ban subsystem is not initialized")
+	}
+	netw, err := parseBanSubnet(subnet)
+	if err != nil {
+		return false, err
+	}
+	switch command {
+	case "add":
+		duration := time.Duration(0) // banman.New default
+		if bantime != nil && *bantime != 0 {
+			if absolute != nil && *absolute {
+				until := time.Unix(*bantime, 0)
+				if !until.After(time.Now()) {
+					return false, errors.New("absolute bantime must be in the future")
+				}
+				duration = time.Until(until)
+			} else {
+				if *bantime < 0 {
+					return false, errors.New("bantime cannot be negative")
+				}
+				duration = time.Duration(*bantime) * time.Second
+			}
+		}
+		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
+			return false, err
+		}
+		// Bitcoin parity: kick any matching live peers (rpc/net.cpp:808-811).
+		for _, p := range server.Peers() {
+			ra, ok := p.RemoteAddr().(*net.TCPAddr)
+			if !ok {
+				continue
+			}
+			if netw.Contains(ra.IP) {
+				p.Disconnect(p2p.DiscRequested)
+			}
+		}
+		return true, nil
+	case "remove":
+		ok, err := bm.UnbanSubnet(netw)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, fmt.Errorf("subnet %s is not currently banned", subnet)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("invalid command %q (want add|remove)", command)
+}
+
+// Listbanned returns the active (non-expired) entries from the ban
+// list. Mirrors src/rpc/net.cpp:820.
+func (api *privateAdminAPI) Listbanned() ([]banman.BanInfo, error) {
+	server := api.node.Server()
+	if server == nil {
+		return nil, ErrNodeStopped
+	}
+	bm := server.BanList
+	if bm == nil {
+		return nil, errors.New("ban subsystem is not initialized")
+	}
+	return bm.ListBanned(), nil
+}
+
+// Clearbanned removes every entry from the persistent ban list.
+// Mirrors src/rpc/net.cpp:868. Does NOT clear the in-memory
+// discourage filter — that surface is restart-cleared by design.
+func (api *privateAdminAPI) Clearbanned() (bool, error) {
+	server := api.node.Server()
+	if server == nil {
+		return false, ErrNodeStopped
+	}
+	bm := server.BanList
+	if bm == nil {
+		return false, errors.New("ban subsystem is not initialized")
+	}
+	if err := bm.ClearBanned(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// parseBanSubnet accepts either a plain IP ("1.2.3.4") which
+// implies /32 (IPv4) or /128 (IPv6), or a CIDR ("10.0.0.0/24").
+// Empty / malformed inputs return an error verbatim suitable for
+// RPC.
+func parseBanSubnet(s string) (*net.IPNet, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, errors.New("subnet is empty")
+	}
+	// CIDR form?
+	if strings.Contains(s, "/") {
+		_, subnet, err := net.ParseCIDR(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q: %w", s, err)
+		}
+		return subnet, nil
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP %q", s)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}, nil
+	}
+	return &net.IPNet{IP: ip.To16(), Mask: net.CIDRMask(128, 128)}, nil
 }
 
 // AddrbookResetKey regenerates the addrman's nKey and clears the tried
