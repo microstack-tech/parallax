@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/netparams"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -53,8 +54,9 @@ var parallaxDiscCrawlerCommand = cli.Command{
 			Value: "parallax-disc.json",
 		},
 		cli.StringFlag{
-			Name:  "bootnodes",
-			Usage: "Comma-separated seed addresses (ip:port or enode://...). Added to the queue alongside loaded state.",
+			Name: "bootnodes",
+			Usage: "Comma-separated seed addresses (ip:port or enode://...). Added to the queue alongside loaded state. " +
+				"Defaults to netparams.MainnetBootnodesV2 when unset and --state has no entries.",
 			Value: "",
 		},
 		cli.IntFlag{
@@ -519,8 +521,17 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	for _, n := range state.Nodes {
 		w.registerAndEnqueue(parentCtx, n)
 	}
-	// Seed from --bootnodes.
-	for _, raw := range strings.Split(ctx.String("bootnodes"), ",") {
+	// Seed from --bootnodes. When the flag is unset and the loaded
+	// state is empty, fall back to the compiled-in v2 mainnet bootnode
+	// list so a fresh crawler can cold-start without operator config —
+	// the same list the daemon's v2 dial scheduler uses.
+	bootRaw := ctx.String("bootnodes")
+	bootList := strings.Split(bootRaw, ",")
+	if strings.TrimSpace(bootRaw) == "" && len(state.Nodes) == 0 {
+		bootList = netparams.MainnetBootnodesV2
+		fmt.Fprintf(os.Stderr, "no --bootnodes and empty state: defaulting to MainnetBootnodesV2 (%d entries)\n", len(bootList))
+	}
+	for _, raw := range bootList {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
@@ -534,7 +545,7 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	}
 
 	if atomic.LoadInt64(&w.outstanding) == 0 {
-		return fmt.Errorf("no seeds: provide --bootnodes or a non-empty --state file")
+		return fmt.Errorf("no seeds: --bootnodes parsed empty, --state has no entries, and MainnetBootnodesV2 is empty")
 	}
 
 	if err := w.run(parentCtx); err != nil {
