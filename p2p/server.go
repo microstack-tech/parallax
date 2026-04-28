@@ -224,6 +224,17 @@ type Config struct {
 	// every outbound dial becomes full-relay.
 	MaxBlockRelayPeers int `toml:",omitempty"`
 
+	// AnchorsPath is the location of anchors.dat. On clean shutdown
+	// the (IP, listen-port) of currently-connected block-relay-only
+	// outbound peers are persisted there (capped at
+	// MaxBlockRelayAnchors); on next startup those peers are
+	// redialed as block-relay-only and the file is deleted. Mirrors
+	// Bitcoin Core's m_anchors / anchors.dat (src/net.cpp:57).
+	// Empty disables anchor persistence — useful for ephemeral
+	// tests and for nodes that don't run any block-relay-only
+	// peers (MaxBlockRelayPeers=0).
+	AnchorsPath string `toml:",omitempty"`
+
 	// AddrBookPath is where the addrbook persists across restarts.
 	// Defaults to <datadir>/addrbook.rlp via the node layer. If
 	// empty, the addrman still runs in-memory but nothing is
@@ -619,6 +630,11 @@ func (srv *Server) Stop() {
 			srv.log.Info("addrbook saved", "path", srv.AddrBookPath, "entries", srv.addrbook.Size(nil, nil))
 		}
 	}
+	// Persist block-relay-only anchors so the next startup can
+	// re-attach to the same peers in the same role. Bitcoin Core
+	// m_anchors / anchors.dat (src/net.cpp:57). Disabled when
+	// AnchorsPath is empty.
+	srv.persistAnchors()
 }
 
 // Start starts running the server.
@@ -687,6 +703,7 @@ func (srv *Server) Start() (err error) {
 		return err
 	}
 	srv.setupDialScheduler()
+	srv.replayAnchors()
 
 	srv.loopWG.Add(1)
 	go srv.run()
@@ -1119,6 +1136,23 @@ func (srv *Server) runV2Dialer() {
 // own — short-circuit here before the TCP connection spends kernel
 // resources on a duplicate handshake.
 func (srv *Server) DialV2(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, 0)
+}
+
+// DialV2BlockRelay opens a v2-handshake TCP connection like DialV2
+// but tags the resulting conn with the block-relay-only flag. Used
+// at startup to replay anchors.dat — anchor peers are persisted
+// outbound block-relay-only peers, so they should reattach in the
+// same role.
+func (srv *Server) DialV2BlockRelay(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, blockRelayConn)
+}
+
+// dialV2WithFlags is the shared implementation. extra is OR'd into
+// the standard (dynDialedConn|v2DialedConn) flag set so the caller
+// can request block-relay-only or other future variants without
+// duplicating the cooldown / self-endpoint / dedup checks.
+func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if addr == nil {
 		return errors.New("v2 dial: nil address")
 	}
@@ -1131,7 +1165,7 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	}
 	already := srv.alreadyConnectedTo(addr)
 	peerCount := len(srv.Peers())
-	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount)
+	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount, "extra", extra)
 	if already {
 		// Refresh LastTry without counting a failure. addrman's
 		// Select chance weighting drops ~100x for 10 min once
@@ -1147,7 +1181,8 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
-	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn, nil); err != nil {
+	// extra carries blockRelayConn for anchor replays.
+	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|extra, nil); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
 		// object was constructed, so the delpeer path never runs
 		// and addrman never learns the entry is unreachable. Record
@@ -1511,6 +1546,75 @@ func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
 		return a, true
 	}
 	return addrman.NetAddr{}, false
+}
+
+// replayAnchors reads the persisted block-relay-only anchor list
+// (anchors.dat) and re-dials each entry as block-relay-only. The
+// file is deleted immediately after a successful read so a crash
+// during startup doesn't replay the same anchors twice (matches
+// Bitcoin Core src/net.cpp:2715-2716 post-read delete).
+//
+// Each replay dial runs in its own goroutine so a slow DNS / dial
+// doesn't block server startup. Failures are logged but never
+// propagated — anchors are best-effort hints.
+func (srv *Server) replayAnchors() {
+	if srv.AnchorsPath == "" || srv.NoDial {
+		return
+	}
+	addrs, err := loadAnchors(srv.AnchorsPath)
+	if err != nil {
+		srv.log.Warn("anchors: load failed; skipping replay", "path", srv.AnchorsPath, "err", err)
+		return
+	}
+	// Delete the file unconditionally, even on a clean read, so a
+	// crash mid-startup doesn't double-dial. Bitcoin parity.
+	if err := removeAnchors(srv.AnchorsPath); err != nil {
+		srv.log.Warn("anchors: remove after load failed", "path", srv.AnchorsPath, "err", err)
+	}
+	if len(addrs) == 0 {
+		return
+	}
+	srv.log.Info("anchors: replaying block-relay-only peers", "count", len(addrs))
+	for _, a := range addrs {
+		a := a
+		srv.loopWG.Add(1)
+		go func() {
+			defer srv.loopWG.Done()
+			if err := srv.DialV2BlockRelay(a); err != nil {
+				srv.log.Trace("anchor dial failed", "addr", a, "err", err)
+			}
+		}()
+	}
+}
+
+// persistAnchors snapshots the (IP, listen-port) of currently-
+// connected block-relay-only outbound peers (capped at
+// MaxBlockRelayAnchors) to anchors.dat. Called from Stop after
+// loopWG so the peer set is settled. Best-effort: errors are
+// logged, never propagated.
+func (srv *Server) persistAnchors() {
+	if srv.AnchorsPath == "" {
+		return
+	}
+	addrs := make([]*net.TCPAddr, 0, MaxBlockRelayAnchors)
+	for _, p := range srv.Peers() {
+		if !p.BlockRelayOnly() {
+			continue
+		}
+		la, ok := srv.peerListenAddr(p)
+		if !ok {
+			continue
+		}
+		addrs = append(addrs, la)
+		if len(addrs) >= MaxBlockRelayAnchors {
+			break
+		}
+	}
+	if err := saveAnchors(srv.AnchorsPath, addrs); err != nil {
+		srv.log.Warn("anchors: save failed on shutdown", "path", srv.AnchorsPath, "err", err)
+		return
+	}
+	srv.log.Info("anchors: saved", "path", srv.AnchorsPath, "count", len(addrs))
 }
 
 // addrmanAttempt records a failed connection attempt in the addrman.
