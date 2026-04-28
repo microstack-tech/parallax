@@ -1240,6 +1240,12 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if cfg.P2P.AddrBookPath == "" && cfg.DataDir != "" {
 		cfg.P2P.AddrBookPath = filepath.Join(cfg.DataDir, "addrbook.rlp")
 	}
+	// Default the anchors location to <datadir>/anchors.dat. An empty
+	// AnchorsPath disables block-relay-only anchor persistence (fine
+	// for ephemeral tests and nodes with MaxBlockRelayPeers=0).
+	if cfg.P2P.AnchorsPath == "" && cfg.DataDir != "" {
+		cfg.P2P.AnchorsPath = filepath.Join(cfg.DataDir, "anchors.dat")
+	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {
 		cfg.JWTSecret = ctx.GlobalString(JWTSecretFlag.Name)
