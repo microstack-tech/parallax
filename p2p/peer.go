@@ -154,6 +154,17 @@ type Peer struct {
 	// block-relay-only bucket (phase 4). Drops Transactions msgs and
 	// suppresses address gossip. Set once at peer attach.
 	blockRelayOnly atomic.Bool
+	// shouldDiscourage is set by MisbehavingFor when a protocol
+	// violation should cause the peer to be disconnected and added
+	// to the discourage Bloom filter. Bitcoin Core's
+	// m_should_discourage (src/net_processing.cpp). The flag is
+	// checked at session-end in run; when true, the Server's
+	// banman is notified before the connection is closed.
+	shouldDiscourage atomic.Bool
+	// discourageReason carries the human-readable misbehavior tag
+	// for logging. Set alongside shouldDiscourage; only meaningful
+	// when shouldDiscourage is true.
+	discourageReason atomic.Pointer[string]
 	// networkGroup is the cached /16-IPv4 or /32-IPv6 prefix bytes
 	// (with a network-tag byte prefix). Populated once at attach
 	// time by computeAndCacheNetworkGroup; nil for peers without a
@@ -282,6 +293,49 @@ func (p *Peer) BlockRelayOnly() bool { return p.blockRelayOnly.Load() }
 // time when the peer occupies a block-relay-only outbound slot.
 // Sticky for the session lifetime.
 func (p *Peer) SetBlockRelayOnly(v bool) { p.blockRelayOnly.Store(v) }
+
+// MisbehavingFor flags the peer for discourage + disconnect.
+// reason is a short tag (e.g., "oversized-msg", "invalid-header")
+// retained for log diagnostics. Idempotent: subsequent calls keep
+// the first reason. Bitcoin Core's Misbehaving() (the modern
+// post-pointscore form, src/net_processing.cpp).
+//
+// The peer disconnects on the next message dispatch; the run loop
+// notifies the BanList on session close. The wire DiscReason is
+// DiscProtocolError — we don't expose a distinct "you misbehaved"
+// reason on the wire (no benefit, and it'd help adversaries
+// calibrate their misbehavior thresholds).
+//
+// Nil-safe so fuzz tests / dispatch-only paths that don't construct
+// a Peer can still drive handler entry points without panicking.
+func (p *Peer) MisbehavingFor(reason string) {
+	if p == nil {
+		return
+	}
+	if p.shouldDiscourage.CompareAndSwap(false, true) {
+		r := reason
+		p.discourageReason.Store(&r)
+		// Async disconnect — Disconnect itself is async; we can't
+		// hold any locks here because callers are deep in protocol
+		// handlers.
+		go p.Disconnect(DiscProtocolError)
+	}
+}
+
+// ShouldDiscourage reports whether the peer was flagged for
+// discourage during the session. Used by the Server's session-end
+// hook to populate the BanList.
+func (p *Peer) ShouldDiscourage() bool { return p.shouldDiscourage.Load() }
+
+// DiscourageReason returns the misbehavior tag set by the first
+// MisbehavingFor call on this peer, or the empty string if none.
+func (p *Peer) DiscourageReason() string {
+	r := p.discourageReason.Load()
+	if r == nil {
+		return ""
+	}
+	return *r
+}
 
 // MarkBlockRx stamps the lastBlockRx telemetry to the current
 // monotonic time. Called by the prl protocol on receipt of any
