@@ -204,7 +204,11 @@ func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
 
 // handleOne reads and dispatches one inbound message. Returns on read
 // error, oversized payload, or protocol violation — the caller closes
-// the session.
+// the session. Protocol-discipline violations (oversized payload,
+// pre-Hello message, malformed decode) also flag the peer for
+// discourage via MisbehavingFor so the BanMan layer's accept-time
+// check can hard-reject reconnects from this source under inbound
+// saturation.
 func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state) error {
 	msg, err := rw.ReadMsg()
 	if err != nil {
@@ -213,6 +217,7 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 	defer msg.Discard()
 
 	if msg.Size > MaxMessageSize {
+		peer.MisbehavingFor("disc-oversized-msg")
 		return fmt.Errorf("disc: message too large: %d > %d", msg.Size, MaxMessageSize)
 	}
 
@@ -222,6 +227,7 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 	// The Hello message itself bypasses the gate (it's allowed to
 	// be the first thing we see).
 	if msg.Code != HelloMsg && !st.gotHello.Load() {
+		peer.MisbehavingFor("disc-pre-hello-msg")
 		return fmt.Errorf("disc: msg 0x%02x before Hello", msg.Code)
 	}
 
@@ -242,6 +248,7 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	var req GetPeers
 	if err := msg.Decode(&req); err != nil {
 		// GetPeers has no payload; anything is a decode error.
+		peer.MisbehavingFor("disc-getpeers-decode")
 		return fmt.Errorf("disc: GetPeers decode: %w", err)
 	}
 	// Block-relay-only outbound peers don't participate in address
@@ -311,9 +318,11 @@ func poissonDelay(mean time.Duration) time.Duration {
 func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
 	var pkt Peers
 	if err := msg.Decode(&pkt); err != nil {
+		peer.MisbehavingFor("disc-peers-decode")
 		return fmt.Errorf("disc: Peers decode: %w", err)
 	}
 	if err := pkt.Validate(); err != nil {
+		peer.MisbehavingFor("disc-peers-validate")
 		return err
 	}
 	st.peersReceived.Add(1)
@@ -327,6 +336,7 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	selfAdvertise := len(pkt.Entries) == 1 && st.peersReceived.Load() == 1
 	if !solicited && !selfAdvertise {
 		if st.peersUnsolicited.Add(1) > 1 {
+			peer.MisbehavingFor("disc-unsolicited-peers")
 			return errors.New("disc: too many unsolicited Peers messages")
 		}
 	}
@@ -336,6 +346,7 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	for i := range pkt.Entries {
 		skip, err := pkt.Entries[i].Validate()
 		if err != nil {
+			peer.MisbehavingFor("disc-peerentry-shape")
 			return err
 		}
 		if skip {
@@ -350,15 +361,18 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 func handleYourAddr(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
 	var y YourAddr
 	if err := msg.Decode(&y); err != nil {
+		peer.MisbehavingFor("disc-youraddr-decode")
 		return fmt.Errorf("disc: YourAddr decode: %w", err)
 	}
 	skip, err := y.Validate()
 	if err != nil {
+		peer.MisbehavingFor("disc-youraddr-shape")
 		return err
 	}
 	if !st.gotYourAddr.CompareAndSwap(false, true) {
 		// Bitcoin's version message is single-shot; we mirror that —
 		// a second YourAddr is a protocol violation.
+		peer.MisbehavingFor("disc-double-youraddr")
 		return errors.New("disc: multiple YourAddr messages from one peer")
 	}
 	if skip {
@@ -395,12 +409,15 @@ func sendHello(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 func handleHello(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error {
 	var h Hello
 	if err := msg.Decode(&h); err != nil {
+		peer.MisbehavingFor("disc-hello-decode")
 		return fmt.Errorf("disc: Hello decode: %w", err)
 	}
 	if !st.gotHello.CompareAndSwap(false, true) {
+		peer.MisbehavingFor("disc-double-hello")
 		return errors.New("disc: multiple Hello messages from one peer")
 	}
 	if err := h.Validate(); err != nil {
+		peer.MisbehavingFor("disc-hello-validate")
 		return err
 	}
 	return backend.HandleHello(peer, h)

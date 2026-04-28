@@ -35,6 +35,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/crypto"
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/discover"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -223,6 +224,13 @@ type Config struct {
 	// amount. Zero disables the block-relay-only bucket entirely;
 	// every outbound dial becomes full-relay.
 	MaxBlockRelayPeers int `toml:",omitempty"`
+
+	// BanList is the BanMan instance the inbound-accept path consults
+	// to reject banned and (under saturation) discouraged source IPs.
+	// Operator-controlled persistence lives in p2p/banman; the Server
+	// only reads. nil disables ban / discourage gating — useful in
+	// ephemeral tests.
+	BanList *banman.BanMan `toml:"-"`
 
 	// AnchorsPath is the location of anchors.dat. On clean shutdown
 	// the (IP, listen-port) of currently-connected block-relay-only
@@ -1843,6 +1851,22 @@ running:
 			if pd.err != nil && !pd.Inbound() {
 				srv.addrmanAttempt(pd.Peer)
 			}
+			// Discourage hook: if the peer was flagged for
+			// misbehavior during the session, add its source IP to
+			// the ephemeral discourage filter. The filter is
+			// consulted by postHandshakeChecks to reject the same
+			// source if it tries to reconnect into a saturated
+			// inbound pool. Bitcoin Core src/net_processing.cpp
+			// MaybeDiscourageAndDisconnect.
+			if srv.BanList != nil && pd.ShouldDiscourage() {
+				if remote, ok := pd.RemoteAddr().(*net.TCPAddr); ok {
+					srv.BanList.Discourage(remote.IP)
+					srv.log.Debug("discouraging misbehaving peer",
+						"id", pd.ID(),
+						"addr", remote.IP,
+						"reason", pd.DiscourageReason())
+				}
+			}
 		}
 	}
 
@@ -1877,6 +1901,18 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	// MaxPeers (total) saturation still hard-rejects: total cap is
 	// a system-resource ceiling, not subject to eviction. Inbound-
 	// only is what the algorithm targets.
+	// Discouraged-at-saturation rejection (Bitcoin Core
+	// src/net.cpp:1808). At inbound saturation we'd normally evict
+	// to make room. If the candidate's IP is in our discourage
+	// filter (an in-memory record of recent misbehavior),
+	// hard-reject before evicting — there's no point displacing a
+	// well-behaved peer to admit one we already know is misbehaving.
+	// Trusted peers bypass.
+	if srv.BanList != nil && !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns() {
+		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsDiscouraged(remote.IP) {
+			return DiscTooManyPeers
+		}
+	}
 	switch {
 	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
 		return DiscTooManyPeers
@@ -2080,6 +2116,16 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	// Reject connections that do not match NetRestrict.
 	if srv.NetRestrict != nil && !srv.NetRestrict.Contains(remoteIP) {
 		return fmt.Errorf("not in netrestrict list")
+	}
+	// Hard-reject banned IPs (Bitcoin Core src/net.cpp:1800
+	// AcceptConnection ban check). Trusted-list status would
+	// override this in Bitcoin Core's CNode permissions, but at
+	// this stage of the connection we don't yet know whether the
+	// remote is one of our trusted nodes — if an operator wants
+	// a banned subnet to still reach trusted peers they should
+	// unban, not work around it here.
+	if srv.BanList != nil && srv.BanList.IsBanned(remoteIP) {
+		return fmt.Errorf("banned")
 	}
 	// Reject Internet peers that try too often. Allow up to
 	// maxInboundConnAttemptsPerIP concurrent in-window attempts from
