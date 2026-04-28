@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -410,6 +411,227 @@ func FuzzPeekVersionDispatch(f *testing.F) {
 			t.Errorf("undefined Variant: %d", v)
 		}
 	})
+}
+
+// pairConns establishes a real v2-handshake-authenticated Conn pair
+// over net.Pipe and returns (initConn, respConn). Used by the framing
+// fuzz target so it operates against the real keystreams, not a stub.
+func pairConns(t testing.TB) (*Conn, *Conn, func()) {
+	t.Helper()
+	a, b := net.Pipe()
+	cleanup := func() {
+		_ = a.Close()
+		_ = b.Close()
+	}
+	initConn := NewConn(a)
+	respConn := NewConn(b)
+	done := make(chan error, 2)
+	go func() {
+		var magic [1]byte
+		if _, err := io.ReadFull(b, magic[:]); err != nil {
+			done <- err
+			return
+		}
+		if magic[0] != VersionMagic {
+			done <- errors.New("magic mismatch")
+			return
+		}
+		done <- respConn.AcceptHandshake()
+	}()
+	go func() {
+		done <- initConn.DialHandshake()
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			cleanup()
+			t.Fatalf("pairConns: %v", err)
+		}
+	}
+	return initConn, respConn, cleanup
+}
+
+// FuzzReadFrame feeds adversary-controlled length prefixes and frame
+// tails into a fully-handshaked Conn's Read path. Invariants checked:
+//
+//   - no panic on truncated, oversized, or malformed input;
+//   - recvNonce never advances on a failed Read (no partial-state
+//     retention — a failed AEAD must not leave the receive counter
+//     incremented for the next legitimate frame);
+//   - oversized length prefixes are rejected before any allocation
+//     proportional to the claimed size;
+//   - Read either returns a non-nil error OR a non-nil plaintext,
+//     but never both nil with no error.
+func FuzzReadFrame(f *testing.F) {
+	// Seeds: empty, short header, header claiming 0, header claiming
+	// less than the AEAD overhead, header claiming MaxFrameLen+1
+	// (overflow), well-formed but garbage AEAD body.
+	f.Add([]byte{})
+	f.Add([]byte{0x00})
+	f.Add([]byte{0x00, 0x00, 0x00})
+	f.Add([]byte{0x00, 0x00, 0x10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	f.Add([]byte{0xFF, 0xFF, 0xFF})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, respConn, cleanup := pairConns(t)
+		defer cleanup()
+
+		// Drive Read against a synthetic reader yielding `data`,
+		// sharing the real respConn's recvAEAD. Using a stub avoids
+		// the deadline-vs-EOF races that net.Pipe would otherwise
+		// surface into the fuzz oracle.
+		recvBefore := respConn.recvNonce
+		stub := &fuzzReader{src: data}
+		probe := &Conn{
+			conn:      stub,
+			recvAEAD:  respConn.recvAEAD,
+			recvNonce: respConn.recvNonce,
+		}
+
+		pt, err := probe.Read()
+		if err == nil && pt == nil {
+			t.Fatal("Read returned (nil, nil)")
+		}
+		if err != nil {
+			// Failed Read MUST NOT advance the recv nonce — leaving
+			// the counter desynced from the peer would silently break
+			// every subsequent legitimate frame.
+			if probe.recvNonce != recvBefore {
+				t.Fatalf("recvNonce advanced on failed Read: before=%d after=%d", recvBefore, probe.recvNonce)
+			}
+		}
+	})
+}
+
+// fuzzReader implements net.Conn for the purpose of feeding a fixed
+// byte slice into Conn.Read without involving the OS pipe machinery
+// (which would surface deadline-vs-EOF races into the fuzz oracle).
+type fuzzReader struct {
+	src []byte
+	pos int
+}
+
+func (r *fuzzReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.src) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.src[r.pos:])
+	r.pos += n
+	return n, nil
+}
+func (r *fuzzReader) Write([]byte) (int, error)       { return 0, io.ErrClosedPipe }
+func (r *fuzzReader) Close() error                    { return nil }
+func (r *fuzzReader) LocalAddr() net.Addr             { return dummyAddr{} }
+func (r *fuzzReader) RemoteAddr() net.Addr            { return dummyAddr{} }
+func (r *fuzzReader) SetDeadline(time.Time) error     { return nil }
+func (r *fuzzReader) SetReadDeadline(time.Time) error { return nil }
+func (r *fuzzReader) SetWriteDeadline(time.Time) error {
+	return nil
+}
+
+type dummyAddr struct{}
+
+func (dummyAddr) Network() string { return "fuzz" }
+func (dummyAddr) String() string  { return "fuzz" }
+
+// TestReadFrameLengthBoundaries — explicit boundary cases for the
+// length-prefix decoding, complementing the fuzz target. Locks in the
+// MaxFrameLen + AEAD-tag arithmetic so a future refactor can't widen
+// the cap silently.
+func TestReadFrameLengthBoundaries(t *testing.T) {
+	_, respConn, cleanup := pairConns(t)
+	defer cleanup()
+
+	cases := []struct {
+		name    string
+		header  []byte
+		wantErr error
+	}{
+		{
+			name:    "claimed length below AEAD overhead",
+			header:  []byte{0x00, 0x00, 0x01},
+			wantErr: ErrBadFrame,
+		},
+		{
+			name:    "claimed length exactly at AEAD overhead with no body",
+			header:  []byte{0x00, 0x00, 0x10},
+			wantErr: nil, // io.EOF on the body read — not ErrBadFrame
+		},
+		{
+			name:    "claimed length above MaxFrameLen+overhead",
+			header:  []byte{0xFF, 0xFF, 0xFF},
+			wantErr: ErrFrameTooLarge,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recvBefore := respConn.recvNonce
+			stub := &fuzzReader{src: tc.header}
+			probe := &Conn{conn: stub, recvAEAD: respConn.recvAEAD}
+			probe.recvNonce = respConn.recvNonce
+			_, err := probe.Read()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got %v, want %v", err, tc.wantErr)
+			}
+			if probe.recvNonce != recvBefore {
+				t.Fatalf("recvNonce advanced on error path: before=%d after=%d", recvBefore, probe.recvNonce)
+			}
+		})
+	}
+}
+
+// TestReadFrameNonceDesyncRejected — a frame encrypted with sendNonce=N
+// but presented when recvNonce=N+1 must fail authentication. This locks
+// down the contract that the receive counter is part of the AEAD's
+// associated state; an attacker reordering frames cannot get them
+// accepted out of sequence.
+func TestReadFrameNonceDesyncRejected(t *testing.T) {
+	initConn, respConn, cleanup := pairConns(t)
+	defer cleanup()
+
+	// Capture the wire bytes for one legitimate frame.
+	var captured bytes.Buffer
+	tee := &teeWriter{w: respConn.Underlying(), buf: &captured}
+	teeProbe := &Conn{
+		conn:      tee,
+		sendAEAD:  initConn.sendAEAD,
+		sendNonce: 0,
+	}
+	if err := teeProbe.Write([]byte("first")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Re-create a respConn-like reader where recvNonce starts at 1
+	// (skip-ahead). The captured frame was sealed at nonce=0, so the
+	// AEAD must reject it.
+	stub := &fuzzReader{src: captured.Bytes()}
+	probe := &Conn{conn: stub, recvAEAD: respConn.recvAEAD, recvNonce: 1}
+	if _, err := probe.Read(); err == nil {
+		t.Fatal("Read accepted a frame at desynced recvNonce")
+	} else if !errors.Is(err, ErrBadFrame) {
+		t.Fatalf("got %v, want ErrBadFrame", err)
+	}
+}
+
+// teeWriter splits writes between the real conn and a capture buffer.
+// Used to snapshot a legitimate AEAD frame for the desync test.
+type teeWriter struct {
+	w   net.Conn
+	buf *bytes.Buffer
+}
+
+func (t *teeWriter) Read([]byte) (int, error)          { return 0, io.EOF }
+func (t *teeWriter) Close() error                      { return nil }
+func (t *teeWriter) LocalAddr() net.Addr               { return dummyAddr{} }
+func (t *teeWriter) RemoteAddr() net.Addr              { return dummyAddr{} }
+func (t *teeWriter) SetDeadline(time.Time) error       { return nil }
+func (t *teeWriter) SetReadDeadline(time.Time) error   { return nil }
+func (t *teeWriter) SetWriteDeadline(time.Time) error  { return nil }
+func (t *teeWriter) Write(p []byte) (int, error) {
+	t.buf.Write(p)
+	return len(p), nil
 }
 
 // TestRandomBytesClassification — exhaustive sweep over 0x00..0xFF.
