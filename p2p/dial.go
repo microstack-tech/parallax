@@ -203,13 +203,13 @@ func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupF
 		dialing:        make(map[enode.ID]*dialTask),
 		outboundGroups: make(map[string]int),
 		static:         make(map[enode.ID]*dialTask),
-		peers:       make(map[enode.ID]struct{}),
-		doneCh:      make(chan *dialTask),
-		nodesIn:     make(chan *enode.Node),
-		addStaticCh: make(chan *enode.Node),
-		remStaticCh: make(chan *enode.Node),
-		addPeerCh:   make(chan *conn),
-		remPeerCh:   make(chan *conn),
+		peers:          make(map[enode.ID]struct{}),
+		doneCh:         make(chan *dialTask),
+		nodesIn:        make(chan *enode.Node),
+		addStaticCh:    make(chan *enode.Node),
+		remStaticCh:    make(chan *enode.Node),
+		addPeerCh:      make(chan *conn),
+		remPeerCh:      make(chan *conn),
 	}
 	d.lastStatsLog = d.clock.Now()
 	d.ctx, d.cancel = context.WithCancel(context.Background())

@@ -1219,9 +1219,25 @@ func TestPeerTelemetryConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Add(3)
-		go func() { defer wg.Done(); for range 100 { p.MarkBlockRx() } }()
-		go func() { defer wg.Done(); for range 100 { p.MarkTxRx() } }()
-		go func() { defer wg.Done(); for range 100 { _ = p.MinPing(); _ = p.RelayTxs() } }()
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				p.MarkBlockRx()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				p.MarkTxRx()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = p.MinPing()
+				_ = p.RelayTxs()
+			}
+		}()
 	}
 	wg.Wait()
 	if p.LastBlockRx() == 0 {

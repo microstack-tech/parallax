@@ -340,7 +340,6 @@ func TestPickDynDialFlagsBlockRelayBucket(t *testing.T) {
 		{name: "br-target-larger-than-budget-clamped", maxDial: 4, maxBR: 4, dialPeers: 0, want: dynDialedConn | blockRelayConn},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			d := &dialScheduler{
 				dialConfig:       dialConfig{maxDialPeers: tc.maxDial, maxBlockRelay: tc.maxBR},

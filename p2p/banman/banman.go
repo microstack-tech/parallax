@@ -59,7 +59,7 @@ const DefaultBanDuration = 24 * time.Hour
 // Reasons recorded in banlist.json. Free-form strings; these
 // constants are the canonical values used by the RPC layer.
 const (
-	ReasonManual         = "manual"
+	ReasonManual          = "manual"
 	ReasonNodeMisbehavior = "node-misbehavior"
 )
 
