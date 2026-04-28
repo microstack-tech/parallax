@@ -436,6 +436,53 @@ Requires the node to be running with --experimental-addrman.`,
 		Category:  "CLIENT COMMANDS",
 	}
 
+	// setbanCommand drives the persistent ban list via admin_setban.
+	// Argument shape: <subnet> <add|remove> [bantime] [absolute].
+	// bantime defaults to the daemon's DefaultBanDuration (24h);
+	// absolute=true switches bantime from "seconds from now" to
+	// "Unix timestamp".
+	setbanCommand = cli.Command{
+		Action:    utils.MigrateFlags(clientSetban),
+		Name:      "setban",
+		Usage:     "Add or remove an entry from the persistent ban list",
+		ArgsUsage: "<subnet> <add|remove> [bantime] [absolute]",
+		Flags:     clientCommandFlags,
+		Category:  "CLIENT COMMANDS",
+		Description: `
+Manages the persistent ban list (banlist.json). subnet accepts either a
+plain IP ("1.2.3.4" — implies /32) or CIDR ("10.0.0.0/24"). On "add" any
+currently-connected peer in the matching range is also disconnected.
+
+bantime defaults to 24h on add; pass 0 for the default. When absolute=true,
+bantime is interpreted as a Unix timestamp instead of a relative offset.
+On "remove" further arguments are ignored.
+
+Uses admin_setban.`,
+	}
+
+	listbannedCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientListbanned),
+		Name:     "listbanned",
+		Usage:    "List currently-active (non-expired) ban list entries",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+		Description: `
+Returns the persistent ban list as JSON. Each entry has address (CIDR),
+ban_created and banned_until (Unix seconds), and an optional reason tag.
+Uses admin_listbanned.`,
+	}
+
+	clearbannedCommand = cli.Command{
+		Action:   utils.MigrateFlags(clientClearbanned),
+		Name:     "clearbanned",
+		Usage:    "Remove every entry from the persistent ban list",
+		Flags:    clientCommandFlags,
+		Category: "CLIENT COMMANDS",
+		Description: `
+Wipes banlist.json. Does NOT clear the in-memory discourage filter —
+that's restart-cleared by design. Uses admin_clearbanned.`,
+	}
+
 	addTrustedCommand = cli.Command{
 		Action:    utils.MigrateFlags(clientAddTrusted),
 		Name:      "addtrusted",
@@ -725,6 +772,9 @@ var clientSugarCommands = []cli.Command{
 	addrbookStatusCommand,
 	addrbookResetKeyCommand,
 	dialV2Command,
+	setbanCommand,
+	listbannedCommand,
+	clearbannedCommand,
 	miningCommand,
 	startMiningCommand,
 	stopMiningCommand,
@@ -1689,6 +1739,89 @@ func clientAddrbookResetKey(ctx *cli.Context) error {
 		return fmt.Errorf("admin_addrbookResetKey returned false")
 	}
 	fmt.Println("addrbook nKey regenerated and tried table cleared")
+	return nil
+}
+
+// banInfo mirrors banman.BanInfo's wire shape so parallax-cli has no
+// import on p2p/banman (keeps the CLI binary slim, same pattern used
+// for addrbookStatus).
+type banInfo struct {
+	Subnet     string `json:"address"`
+	BanCreated int64  `json:"ban_created"`
+	BannedTill int64  `json:"banned_until"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// clientSetban invokes admin_setban with the argument shape
+// <subnet> <add|remove> [bantime] [absolute]. Trailing optional
+// arguments are only forwarded when the user supplies them, so
+// the daemon's *int64 / *bool parameters stay nil and the default
+// branches fire (see the handler in node/api.go).
+func clientSetban(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) < 2 {
+		return fmt.Errorf("usage: setban <subnet> <add|remove> [bantime] [absolute]")
+	}
+	subnet := args.Get(0)
+	command := args.Get(1)
+	switch command {
+	case "add", "remove":
+	default:
+		return fmt.Errorf("invalid command %q (want add or remove)", command)
+	}
+
+	// Build the argument list to forward. Trailing optionals are
+	// only sent when the user supplies them, so the daemon's *int64
+	// / *bool pointers stay nil and the default branches fire.
+	rpcArgs := []interface{}{subnet, command}
+	if len(args) >= 3 && args.Get(2) != "" {
+		secs, err := strconv.ParseInt(args.Get(2), 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid bantime %q: %w", args.Get(2), err)
+		}
+		rpcArgs = append(rpcArgs, secs)
+		if len(args) >= 4 && args.Get(3) != "" {
+			abs, err := strconv.ParseBool(args.Get(3))
+			if err != nil {
+				return fmt.Errorf("invalid absolute flag %q: %w", args.Get(3), err)
+			}
+			rpcArgs = append(rpcArgs, abs)
+		}
+	}
+
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_setban", rpcArgs...); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_setban returned false")
+	}
+	return nil
+}
+
+// clientListbanned prints the active ban list as pretty-printed JSON.
+// Empty list prints "[]" so scripts piping through jq don't choke on
+// an unexpected null.
+func clientListbanned(ctx *cli.Context) error {
+	var entries []banInfo
+	if err := callRPC(ctx, &entries, "admin_listbanned"); err != nil {
+		return err
+	}
+	if entries == nil {
+		entries = []banInfo{}
+	}
+	return printJSON(entries)
+}
+
+// clientClearbanned wipes the persistent ban list.
+func clientClearbanned(ctx *cli.Context) error {
+	var ok bool
+	if err := callRPC(ctx, &ok, "admin_clearbanned"); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("admin_clearbanned returned false")
+	}
 	return nil
 }
 
