@@ -110,13 +110,32 @@ func saveAnchors(path string, addrs []*net.TCPAddr) error {
 		return fmt.Errorf("anchors: mkdir: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if err := writeFileSync(tmp, buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("anchors: write tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("anchors: rename: %w", err)
 	}
 	return nil
+}
+
+// writeFileSync is os.WriteFile plus an fsync before close. Without
+// the sync, a crash shortly after the rename can leave an empty or
+// truncated file at the final path on journaled filesystems — the
+// rename is durable before the data is.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // loadAnchors reads anchors.dat and returns the persisted (IP,

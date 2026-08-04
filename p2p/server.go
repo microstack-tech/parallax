@@ -1338,11 +1338,22 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 		// and addrman never learns the entry is unreachable. Record
 		// it here so IsTerrible can eventually evict it — except for
 		// feelers, where the failure is often our own admission
-		// rejection (e.g. DiscTooManyPeers at saturation) rather than
-		// a reachability problem, and counting it would penalize an
-		// address we have no evidence against.
+		// rejection rather than a reachability problem, and counting
+		// it would penalize an address we have no evidence against.
+		//
+		// A DiscReason-typed error means the TCP connect and enough
+		// of the handshake succeeded for a protocol-level rejection —
+		// our own admission checks (saturation, duplicate, self) or
+		// the remote's. Either way the address is provably reachable:
+		// refresh LastTry so Select stops re-picking it for a while,
+		// but don't count a failure toward IsTerrible.
 		if !extraHas(extra, feelerConn) {
-			srv.addrmanAttemptByTCP(addr, true)
+			var reason DiscReason
+			if errors.As(err, &reason) {
+				srv.addrmanAttemptByTCP(addr, false)
+			} else {
+				srv.addrmanAttemptByTCP(addr, true)
+			}
 		}
 		return err
 	}
@@ -1885,7 +1896,14 @@ func (srv *Server) replayAnchors() {
 	}
 	addrs, err := loadAnchors(srv.AnchorsPath)
 	if err != nil {
-		srv.log.Warn("anchors: load failed; skipping replay", "path", srv.AnchorsPath, "err", err)
+		// Delete the unreadable file: anchors are ephemeral hints,
+		// and keeping a corrupt one around just repeats this warning
+		// on every startup forever. Core deletes anchors.dat after
+		// reading it regardless of parse outcome.
+		srv.log.Warn("anchors: load failed; deleting file", "path", srv.AnchorsPath, "err", err)
+		if rerr := removeAnchors(srv.AnchorsPath); rerr != nil {
+			srv.log.Warn("anchors: remove unreadable file failed", "path", srv.AnchorsPath, "err", rerr)
+		}
 		return
 	}
 	// Delete the file unconditionally, even on a clean read, so a
@@ -2362,7 +2380,16 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 				}
 				c.evicted = true
 			}
-		} else if len(peers) >= srv.MaxPeers {
+		} else if len(peers) >= srv.MaxPeers && !c.is(feelerConn) {
+			// Feelers are exempt from the MaxPeers ceiling: Core
+			// makes feeler connections regardless of its limits
+			// (they're never counted toward outbound totals). A
+			// feeler exists to verify reachability and feed the
+			// tried table; at most one is in flight and it self-
+			// disconnects after feelerLifetime, so the overshoot is
+			// bounded and transient. Rejecting it at saturation
+			// would silently stop tried-table maintenance exactly
+			// when the node is busiest.
 			return DiscTooManyPeers
 		}
 	}

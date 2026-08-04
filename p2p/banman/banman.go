@@ -330,13 +330,31 @@ func (b *BanMan) Dump() error {
 		return fmt.Errorf("banman: mkdir: %w", err)
 	}
 	tmp := b.file + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := writeFileSync(tmp, raw, 0o600); err != nil {
 		return fmt.Errorf("banman: write tmp: %w", err)
 	}
 	if err := os.Rename(tmp, b.file); err != nil {
 		return fmt.Errorf("banman: rename: %w", err)
 	}
 	return nil
+}
+
+// writeFileSync is os.WriteFile plus an fsync before close, so the
+// data is durable before the rename that publishes it — a crash
+// can't leave an empty banlist at the final path.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // Load reads banlist.json. Missing file → empty banlist (the
