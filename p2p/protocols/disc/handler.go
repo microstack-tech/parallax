@@ -185,7 +185,7 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// not on closed). The drain exits on stop OR on a wire-write error.
 	type outboxRegistrar interface {
 		RegisterPeerOutbox(PeerKey, chan<- PeerEntry) <-chan struct{}
-		UnregisterPeerOutbox(PeerKey)
+		UnregisterPeerOutbox(PeerKey, <-chan struct{})
 	}
 	var (
 		outbox chan PeerEntry
@@ -231,8 +231,11 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		// UnregisterPeerOutbox closes the stop channel, which the
 		// drain selects on; we then wait for the drain to exit. We do
 		// NOT close the outbox — see the lifecycle comment above.
+		// Passing our stop token scopes the cleanup to THIS session's
+		// registration: if a re-register replaced it, the replacement
+		// stays untouched.
 		if reg, ok := backend.(outboxRegistrar); ok {
-			reg.UnregisterPeerOutbox(peerKeyFor(peer))
+			reg.UnregisterPeerOutbox(peerKeyFor(peer), stop)
 		}
 		<-relayDone
 		if cleaner, ok := backend.(interface{ PeerDisconnected(*p2p.Peer) }); ok {

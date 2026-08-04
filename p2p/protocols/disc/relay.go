@@ -74,16 +74,24 @@ func (b *AddrmanBackend) RegisterPeerOutbox(key PeerKey, outbox chan<- PeerEntry
 }
 
 // UnregisterPeerOutbox is the matching cleanup. Called from
-// handler.Run's defer chain on session close. Closes the stop channel
-// (signalling the drain to exit) but NEVER closes the outbox itself —
-// any in-flight RelayAddress send that already snapshotted this peer's
-// state must complete (or hit the non-blocking default) without
-// hitting a closed channel. Idempotent.
-func (b *AddrmanBackend) UnregisterPeerOutbox(key PeerKey) {
+// handler.Run's defer chain on session close with the stop channel
+// that session's Register returned: the registration is only removed
+// when it still belongs to that session. Without the ownership check,
+// a session replaced via re-register would — in its deferred
+// cleanup — tear down the REPLACEMENT session's outbox, silently
+// dropping that peer from relay fan-out for its whole lifetime.
+// Closes the stop channel (signalling the drain to exit) but NEVER
+// closes the outbox itself — any in-flight RelayAddress send that
+// already snapshotted this peer's state must complete (or hit the
+// non-blocking default) without hitting a closed channel. Idempotent.
+func (b *AddrmanBackend) UnregisterPeerOutbox(key PeerKey, stop <-chan struct{}) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	st, ok := b.peerOutboxes[key]
-	if !ok {
+	if !ok || st.stop != stop {
+		// Unknown key, or the registration belongs to a different
+		// session (including callers that never registered and pass
+		// nil): nothing of ours to clean up.
 		return
 	}
 	delete(b.peerOutboxes, key)

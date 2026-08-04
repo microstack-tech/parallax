@@ -567,10 +567,11 @@ func TestRelayAddressRaceWithUnregister(t *testing.T) {
 
 	const peers = 8
 	type fake struct {
-		peer *p2p.Peer
-		ch   chan PeerEntry
-		key  PeerKey
-		conn []interface{ Close() error }
+		peer   *p2p.Peer
+		ch     chan PeerEntry
+		key    PeerKey
+		stopCh <-chan struct{}
+		conn   []interface{ Close() error }
 	}
 	mk := func(name string) fake {
 		a, d, err := pipes.TCPPipe()
@@ -588,7 +589,7 @@ func TestRelayAddressRaceWithUnregister(t *testing.T) {
 	pool := make([]fake, peers)
 	for i := range pool {
 		pool[i] = mk(fmt.Sprintf("p%d", i))
-		b.RegisterPeerOutbox(pool[i].key, pool[i].ch)
+		pool[i].stopCh = b.RegisterPeerOutbox(pool[i].key, pool[i].ch)
 	}
 	defer func() {
 		for _, f := range pool {
@@ -638,11 +639,11 @@ func TestRelayAddressRaceWithUnregister(t *testing.T) {
 				return
 			default:
 			}
-			for _, f := range pool {
-				b.UnregisterPeerOutbox(f.key)
-				b.RegisterPeerOutbox(f.key, f.ch)
+			for i := range pool {
+				b.UnregisterPeerOutbox(pool[i].key, pool[i].stopCh)
+				pool[i].stopCh = b.RegisterPeerOutbox(pool[i].key, pool[i].ch)
 				select {
-				case <-f.ch:
+				case <-pool[i].ch:
 				default:
 				}
 			}
@@ -652,4 +653,50 @@ func TestRelayAddressRaceWithUnregister(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+// TestUnregisterOutboxScopedToSession — a session's deferred
+// unregister must not tear down a registration that replaced it.
+// Without the stop-token ownership check, the replaced session's
+// cleanup deleted the NEW session's outbox, silently dropping that
+// peer from relay fan-out for its whole lifetime.
+func TestUnregisterOutboxScopedToSession(t *testing.T) {
+	var key [32]byte
+	b := newRelayBackendForTest(t, key)
+
+	k := PeerKey("same-peer")
+	oldBox := make(chan PeerEntry, 1)
+	newBox := make(chan PeerEntry, 1)
+
+	oldStop := b.RegisterPeerOutbox(k, oldBox)
+	// Re-register (replacement session): the old stop must fire.
+	newStop := b.RegisterPeerOutbox(k, newBox)
+	select {
+	case <-oldStop:
+	default:
+		t.Fatal("re-register did not stop the previous registration")
+	}
+
+	// The replaced session's deferred cleanup runs with ITS token:
+	// the replacement must survive.
+	b.UnregisterPeerOutbox(k, oldStop)
+	select {
+	case <-newStop:
+		t.Fatal("stale unregister stopped the replacement session")
+	default:
+	}
+	if _, ok := b.peerOutboxes[k]; !ok {
+		t.Fatal("stale unregister deleted the replacement session's outbox")
+	}
+
+	// The replacement's own cleanup still works.
+	b.UnregisterPeerOutbox(k, newStop)
+	select {
+	case <-newStop:
+	default:
+		t.Fatal("owned unregister did not stop the registration")
+	}
+	if _, ok := b.peerOutboxes[k]; ok {
+		t.Fatal("owned unregister left the outbox registered")
+	}
 }

@@ -242,7 +242,7 @@ func (b *outboxTrackingBackend) RegisterPeerOutbox(_ PeerKey, _ chan<- PeerEntry
 	return make(chan struct{})
 }
 
-func (b *outboxTrackingBackend) UnregisterPeerOutbox(_ PeerKey) {}
+func (b *outboxTrackingBackend) UnregisterPeerOutbox(_ PeerKey, _ <-chan struct{}) {}
 
 func (b *outboxTrackingBackend) wasRegistered() bool {
 	b.mu.Lock()
