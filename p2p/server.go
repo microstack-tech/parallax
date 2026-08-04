@@ -1574,6 +1574,20 @@ func (srv *Server) FindCrossDialDup(newPeer *Peer, listenPort uint16) *Peer {
 // over a caller-supplied peer slice instead of pulling the current
 // set through the run loop. Tests synthesize fake peers and drive
 // it directly without standing up Start().
+//
+// Trust model (security): the listen port is only verified for an
+// OUTBOUND newPeer — there we dialed the endpoint ourselves, so
+// RemoteAddr() is its real (IP, port) and we ignore the self-claimed
+// Hello port. For an INBOUND newPeer the Hello port is unverified: a
+// peer sharing a source IP (CGNAT/shared host/NAT) could pre-claim a
+// victim's listen port to make an honest connection look like a
+// duplicate. To keep the dedup from being weaponized while preserving
+// the legitimate symmetric-dial case it exists for, a match requires a
+// trusted anchor on at least one side: we never dedup two connections
+// whose linkage rests solely on unverified inbound Hello ports. Because
+// the tie-break (selectCrossDialLoser) always drops the inbound side of
+// a mixed pair, this guarantees an existing honest connection is never
+// torn down on the strength of another inbound peer's port claim.
 func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort uint16) *Peer {
 	if newPeer == nil || listenPort == 0 {
 		return nil
@@ -1582,9 +1596,26 @@ func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort u
 	if !ok {
 		return nil
 	}
-	target := &net.TCPAddr{IP: pra.IP, Port: int(listenPort)}
+	newInbound := newPeer.rw.is(inboundConn)
+	// Trusted target port: for an outbound newPeer use the dial-target
+	// port (RemoteAddr), not the self-claimed Hello port, so an outbound
+	// peer can't inject a victim's port via Hello.
+	targetPort := int(listenPort)
+	if !newInbound {
+		targetPort = pra.Port
+	}
+	target := &net.TCPAddr{IP: pra.IP, Port: targetPort}
 	for _, p := range peers {
 		if p == newPeer {
+			continue
+		}
+		// Refuse to dedup when both sides are inbound: the match would
+		// rest entirely on unverified Hello ports, and the loser could
+		// be an honest connection an attacker framed by pre-claiming its
+		// port. Legitimate cross-dial duplicates always involve an
+		// outbound leg (our dial to the peer, or the peer's dial to us),
+		// which is preserved below.
+		if newInbound && p.rw.is(inboundConn) {
 			continue
 		}
 		la, ok := srv.peerListenAddr(p)

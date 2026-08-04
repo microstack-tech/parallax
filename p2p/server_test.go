@@ -1068,18 +1068,65 @@ func TestFindCrossDialDupZeroPort(t *testing.T) {
 	}
 }
 
-// TestFindCrossDialDupInboundWithLookup — finds an inbound peer as
-// the duplicate when its disclosed listen port (via lookup) matches.
+// TestFindCrossDialDupInboundWithLookup — the legitimate symmetric-dial
+// case where the new peer is our OUTBOUND leg and the existing inbound
+// leg is the same node: we dialed (8.8.8.8, 32110) and the inbound peer
+// from that IP disclosed listen port 32110. The outbound leg's port is
+// its trusted dial target (RemoteAddr), which is what anchors the match.
 func TestFindCrossDialDupInboundWithLookup(t *testing.T) {
 	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
 	id := randomID()
 	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{id: 32110}})
 	existing := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
-	newPeer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, false /*outbound*/)
+	// Outbound leg: dial target (RemoteAddr) IS (8.8.8.8, 32110), the
+	// peer's real listen endpoint — the port we actually connected to.
+	newPeer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}, false /*outbound*/)
 
 	dup := srv.findCrossDialDupIn([]*Peer{existing}, newPeer, 32110)
 	if dup != existing {
 		t.Fatalf("must find existing inbound as duplicate; got %v want %v", dup, existing.ID())
+	}
+}
+
+// TestFindCrossDialDupInboundClaimDoesNotEvictHonest — DEFECT 3
+// regression (attack case A). An inbound peer sharing a source IP with
+// an existing honest inbound connection pre-claims that connection's
+// listen port. Because both connections are inbound, their linkage
+// would rest entirely on unverified Hello ports, so the dedup must NOT
+// fire — otherwise the attacker could get the honest connection torn
+// down as a bogus duplicate.
+func TestFindCrossDialDupInboundClaimDoesNotEvictHonest(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	victimID := randomID()
+	// The honest inbound victim disclosed listen port 32110.
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{victimID: 32110}})
+	victim := makeFakePeer(t, victimID, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
+	// Attacker: inbound, same source IP, claiming the victim's port.
+	attacker := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, true /*inbound*/)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{victim}, attacker, 32110); dup != nil {
+		t.Fatalf("inbound peer's port claim must not match an existing inbound peer; got %v", dup.ID())
+	}
+}
+
+// TestFindCrossDialDupOutboundClaimIgnoresHelloPort — DEFECT 3
+// regression (attack case B). An OUTBOUND peer (one we dialed) claims,
+// via Hello, a listen port different from where we actually dialed it —
+// here the victim's port. The match must use the trusted dial-target
+// port (RemoteAddr), not the self-claimed Hello port, so the attacker
+// can't make an existing honest inbound connection look like a
+// duplicate and get it evicted.
+func TestFindCrossDialDupOutboundClaimIgnoresHelloPort(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	victimID := randomID()
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{victimID: 32110}})
+	victim := makeFakePeer(t, victimID, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
+	// Attacker: we dialed it at (8.8.8.8, 44444); its Hello lies that it
+	// listens on 32110 (the victim's port).
+	attacker := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, false /*outbound*/)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{victim}, attacker, 32110); dup != nil {
+		t.Fatalf("outbound peer's Hello-claimed port must not evict an existing connection; got %v", dup.ID())
 	}
 }
 
