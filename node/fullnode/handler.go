@@ -233,6 +233,22 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return p.RequestTxs(hashes)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, h.txpool.AddRemotes, fetchTx)
+
+	// Eviction-protection telemetry. Bitcoin Core stamps m_last_block_time /
+	// m_last_tx_time only when a peer's block is accepted as new or its tx
+	// enters the mempool (net_processing.cpp), so an attacker can't earn
+	// eviction protection without doing useful work. Stamp at the same
+	// acceptance points here rather than on message receipt.
+	h.blockFetcher.SetBlockAcceptedHook(func(id string) {
+		if p := h.peers.peer(id); p != nil {
+			p.MarkBlockRx()
+		}
+	})
+	h.txFetcher.SetTxAcceptedHook(func(id string) {
+		if p := h.peers.peer(id); p != nil {
+			p.MarkTxRx()
+		}
+	})
 	h.chainSync = newChainSyncer(h)
 	return h, nil
 }

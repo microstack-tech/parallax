@@ -1535,3 +1535,40 @@ func containsHash(slice []util.Hash, hash util.Hash) bool {
 	}
 	return false
 }
+
+// Tests that the tx-accepted hook fires only for deliveries that put at least
+// one novel transaction into the pool — duplicates and rejects don't count —
+// since eviction protection (p2p.Peer.MarkTxRx) hangs off it.
+func TestTransactionFetcherAcceptedHook(t *testing.T) {
+	var (
+		accepted []string
+		mode     error
+	)
+	f := NewTxFetcher(
+		func(util.Hash) bool { return false },
+		func(txs []*types.Transaction) []error {
+			errs := make([]error, len(txs))
+			for i := range errs {
+				errs[i] = mode
+			}
+			return errs
+		},
+		func(string, []util.Hash) error { return nil },
+	)
+	f.SetTxAcceptedHook(func(peer string) { accepted = append(accepted, peer) })
+	f.Start()
+	defer f.Stop()
+
+	// A delivery with pool-accepted transactions credits the peer once
+	mode = nil
+	f.Enqueue("A", []*types.Transaction{testTxs[0], testTxs[1]}, false)
+	// All-duplicate and all-rejected deliveries credit nobody
+	mode = validation.ErrAlreadyKnown
+	f.Enqueue("B", []*types.Transaction{testTxs[0]}, false)
+	mode = validation.ErrUnderpriced
+	f.Enqueue("C", []*types.Transaction{testTxs[2]}, false)
+
+	if len(accepted) != 1 || accepted[0] != "A" {
+		t.Fatalf("accepted hook peers: have %v, want [A]", accepted)
+	}
+}

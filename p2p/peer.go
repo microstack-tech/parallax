@@ -126,14 +126,17 @@ type Peer struct {
 	// lastPingSent records when we sent the most recent pingMsg
 	// (mclock.AbsTime as int64). Used to compute RTT on pong receipt.
 	lastPingSent atomic.Int64
-	// lastBlockRx is mclock.AbsTime of the most recent block-bearing
-	// message received from this peer (set by the prl protocol).
-	// Higher = more recently active block-relayer.
+	// lastBlockRx is mclock.AbsTime of the most recent novel valid
+	// block accepted from this peer (stamped by the block fetcher's
+	// acceptance hook, mirroring Core's m_last_block_time on
+	// new_block==true). Higher = more recently useful block-relayer.
+	// Cheap announcements and duplicate blocks never move it.
 	lastBlockRx atomic.Int64
-	// lastTxRx is mclock.AbsTime of the most recent transaction-
-	// bearing message received from this peer (set by the prl
-	// protocol). Higher = more recently active tx-relayer.
-	// Block-relay-only peers leave this at zero.
+	// lastTxRx is mclock.AbsTime of the most recent transaction from
+	// this peer accepted into the txpool (stamped by the tx fetcher's
+	// acceptance hook, mirroring Core's m_last_tx_time on mempool
+	// accept). Duplicates and rejects never move it; block-relay-only
+	// peers leave it at zero.
 	lastTxRx atomic.Int64
 	// bytesRx is the payload-only byte counter incremented in
 	// readLoop after each successful ReadMsg. Framing overhead is
@@ -353,14 +356,18 @@ func (p *Peer) DiscourageReason() string {
 }
 
 // MarkBlockRx stamps the lastBlockRx telemetry to the current
-// monotonic time. Called by the prl protocol on receipt of any
-// block-bearing message.
+// monotonic time. Called when a novel valid block sourced from this
+// peer is accepted into the chain — never on mere message receipt,
+// so eviction protection can't be earned without useful work
+// (Bitcoin Core net_processing.cpp, m_last_block_time).
 func (p *Peer) MarkBlockRx() {
 	p.lastBlockRx.Store(int64(mclock.Now()))
 }
 
-// MarkTxRx stamps the lastTxRx telemetry. Called by the prl
-// protocol on receipt of Transactions / PooledTransactions.
+// MarkTxRx stamps the lastTxRx telemetry. Called when a transaction
+// sourced from this peer is accepted into the txpool — never on
+// mere message receipt (Bitcoin Core net_processing.cpp,
+// m_last_tx_time).
 func (p *Peer) MarkTxRx() {
 	p.lastTxRx.Store(int64(mclock.Now()))
 }
