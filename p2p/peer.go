@@ -154,6 +154,14 @@ type Peer struct {
 	// block-relay-only bucket (phase 4). Drops Transactions msgs and
 	// suppresses address gossip. Set once at peer attach.
 	blockRelayOnly atomic.Bool
+	// discRequested is set the first time Disconnect is called and
+	// never cleared. It marks a peer whose teardown is in progress
+	// but whose delpeer event hasn't reached the run loop yet, so
+	// the eviction algorithm can skip it as a candidate: re-picking
+	// a peer that is already dying would let a concurrent admission
+	// count the same victim twice and over-admit past the inbound
+	// cap.
+	discRequested atomic.Bool
 	// shouldDiscourage is set by MisbehavingFor when a protocol
 	// violation should cause the peer to be disconnected and added
 	// to the discourage Bloom filter. Bitcoin Core's
@@ -390,6 +398,7 @@ func (p *Peer) LocalAddr() net.Addr {
 // Disconnect terminates the peer connection with the given reason.
 // It returns immediately and does not wait until the connection is closed.
 func (p *Peer) Disconnect(reason DiscReason) {
+	p.discRequested.Store(true)
 	if p.testPipe != nil {
 		p.testPipe.Close()
 	}

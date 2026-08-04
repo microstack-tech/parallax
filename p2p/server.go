@@ -426,6 +426,13 @@ type conn struct {
 	cont  chan error // The run loop uses cont to signal errors to SetupConn.
 	caps  []Cap      // valid after the protocol handshake
 	name  string     // valid after the protocol handshake
+
+	// evicted records that this connection already triggered a
+	// successful inbound eviction at an earlier checkpoint. The
+	// admission checks run twice per connection (post-handshake and
+	// add-peer); without this guard a single admission could evict
+	// two victims. Only touched from the run loop.
+	evicted bool
 }
 
 type transport interface {
@@ -2016,24 +2023,24 @@ running:
 }
 
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, tcpGossipPeers int, c *conn) error {
-	// Saturation handling for inbound: instead of hard-rejecting,
-	// run the Bitcoin-Core-style eviction algorithm to free a slot
-	// by dropping the lowest-quality existing inbound peer. If
-	// eviction succeeds, accept the new peer optimistically — the
-	// run loop processes the loser's delpeer asynchronously, so
-	// inboundCount transiently exceeds the cap.
-	//
-	// MaxPeers (total) saturation still hard-rejects: total cap is
-	// a system-resource ceiling, not subject to eviction. Inbound-
-	// only is what the algorithm targets.
+	// Duplicate and self connections are rejected before any
+	// capacity handling: they must never trigger eviction (there is
+	// nothing to make room for) and the rejection must fire
+	// regardless of saturation state.
+	if peers[c.node.ID()] != nil {
+		return DiscAlreadyConnected
+	}
+	if c.node.ID() == srv.localnode.ID() {
+		return DiscSelf
+	}
 	// Discouraged-at-saturation rejection (Bitcoin Core
-	// src/net.cpp:1808). At inbound saturation we'd normally evict
-	// to make room. If the candidate's IP is in our discourage
-	// filter (an in-memory record of recent misbehavior),
-	// hard-reject before evicting — there's no point displacing a
-	// well-behaved peer to admit one we already know is misbehaving.
-	// Trusted peers bypass.
-	if srv.BanList != nil && !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns() {
+	// src/net.cpp:1808, nInbound + 1 >= nMaxInbound). At inbound
+	// saturation we'd normally evict to make room. If the
+	// candidate's IP is in our discourage filter (an in-memory
+	// record of recent misbehavior), hard-reject before evicting —
+	// there's no point displacing a well-behaved peer to admit one
+	// we already know is misbehaving. Trusted peers bypass.
+	if srv.BanList != nil && !c.is(trustedConn) && c.is(inboundConn) && inboundCount+1 >= srv.maxInboundConns() {
 		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsDiscouraged(remote.IP) {
 			return DiscTooManyPeers
 		}
@@ -2053,17 +2060,35 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 			return DiscTooManyPeers
 		}
 	}
-	switch {
-	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
-		return DiscTooManyPeers
-	case !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns():
-		if !srv.evictInbound(peers) {
+	// Capacity checks. Inbound saturation is handled first: instead
+	// of hard-rejecting, run the Bitcoin-Core-style eviction
+	// algorithm to free a slot by dropping the lowest-quality
+	// existing inbound peer. If eviction succeeds, accept the new
+	// peer optimistically — the run loop processes the loser's
+	// delpeer asynchronously, so inboundCount (and the total)
+	// transiently exceed their caps by the number of in-flight
+	// admissions, each of which is paired with one fresh victim.
+	//
+	// The inbound check must precede the MaxPeers check: in the
+	// steady state (outbound slots full) inbound-full implies
+	// total-full, and a total-first ordering would shadow eviction
+	// entirely. The MaxPeers hard-reject still applies to outbound
+	// conns and to inbound conns arriving while inbound has spare
+	// capacity but the total is exhausted by outbound overshoot.
+	if !c.is(trustedConn) {
+		if c.is(inboundConn) && inboundCount >= srv.maxInboundConns() {
+			// A connection that already paid for its slot with an
+			// eviction at the post-handshake checkpoint is not
+			// charged again at the add-peer checkpoint.
+			if !c.evicted {
+				if !srv.evictInbound(peers) {
+					return DiscTooManyPeers
+				}
+				c.evicted = true
+			}
+		} else if len(peers) >= srv.MaxPeers {
 			return DiscTooManyPeers
 		}
-	case peers[c.node.ID()] != nil:
-		return DiscAlreadyConnected
-	case c.node.ID() == srv.localnode.ID():
-		return DiscSelf
 	}
 	// Phase 2b dedup: v2 sessions derive node.ID from ephemeral
 	// X25519 keys, so reconnecting to the same remote yields a

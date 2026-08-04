@@ -69,7 +69,7 @@ func makeEvictionPeer(t *testing.T, opts evictionOpts) *Peer {
 	if opts.static {
 		p.rw.set(staticDialedConn, true)
 	}
-	// Override created so the evictMinAge gate is testable. We set
+	// Override created so age-sensitive rounds are testable. We set
 	// the field directly because there's no public mutator.
 	p.created = mclock.Now() - mclock.AbsTime(opts.createdAge)
 
@@ -78,6 +78,20 @@ func makeEvictionPeer(t *testing.T, opts evictionOpts) *Peer {
 	p.lastTxRx.Store(opts.lastTx)
 	p.relayTxs.Store(opts.relayTxs)
 	return p
+}
+
+// setTestLocalNode attaches a real localnode so the self-connect
+// check in postHandshakeChecks has a valid srv.localnode.ID() to
+// compare against. The check runs before eviction, so any test that
+// drives postHandshakeChecks with a saturated pool must set one.
+func setTestLocalNode(t *testing.T, srv *Server) {
+	t.Helper()
+	db, err := enode.OpenDB("")
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	t.Cleanup(db.Close)
+	srv.localnode = enode.NewLocalNode(db, newkey())
 }
 
 func peerSet(peers ...*Peer) map[enode.ID]*Peer {
@@ -98,7 +112,7 @@ func TestEvictionCandidatesExcludesTrusted(t *testing.T) {
 	good := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
 	trusted := makeEvictionPeer(t, evictionOpts{inbound: true, trusted: true, createdAge: time.Minute})
 
-	got := evictionCandidates(peerSet(good, trusted), mclock.Now())
+	got := evictionCandidates(peerSet(good, trusted))
 	if contains(got, trusted) {
 		t.Fatal("trustedConn peer must not be an eviction candidate")
 	}
@@ -113,7 +127,7 @@ func TestEvictionCandidatesExcludesStatic(t *testing.T) {
 	good := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
 	static := makeEvictionPeer(t, evictionOpts{inbound: true, static: true, createdAge: time.Minute})
 
-	got := evictionCandidates(peerSet(good, static), mclock.Now())
+	got := evictionCandidates(peerSet(good, static))
 	if contains(got, static) {
 		t.Fatal("staticDialedConn peer must not be an eviction candidate")
 	}
@@ -126,7 +140,7 @@ func TestEvictionCandidatesExcludesOutbound(t *testing.T) {
 	in := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
 	out := makeEvictionPeer(t, evictionOpts{inbound: false, createdAge: time.Minute})
 
-	got := evictionCandidates(peerSet(in, out), mclock.Now())
+	got := evictionCandidates(peerSet(in, out))
 	if contains(got, out) {
 		t.Fatal("outbound peer must not be an eviction candidate")
 	}
@@ -135,30 +149,52 @@ func TestEvictionCandidatesExcludesOutbound(t *testing.T) {
 	}
 }
 
-// TestEvictionCandidatesExcludesYoungerThanMinAge — peers connected
-// less than evictMinAge ago are protected.
-func TestEvictionCandidatesExcludesYoungerThanMinAge(t *testing.T) {
+// TestEvictionCandidatesIncludesYoungPeers — Bitcoin Core has no
+// minimum-age filter on eviction candidates (AttemptToEvictConnection
+// builds from all inbound non-noban peers), so brand-new inbound
+// connections are valid victims. This is what makes churn attacks
+// self-defeating: the attacker's own newest connection is the
+// natural pick of the youngest-in-largest-group rule.
+func TestEvictionCandidatesIncludesYoungPeers(t *testing.T) {
 	young := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 1 * time.Second})
 	old := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
 
-	got := evictionCandidates(peerSet(young, old), mclock.Now())
-	if contains(got, young) {
-		t.Fatal("young peer must be excluded by evictMinAge")
+	got := evictionCandidates(peerSet(young, old))
+	if !contains(got, young) {
+		t.Fatal("young peer must be a candidate (Core has no min-age filter)")
 	}
 	if !contains(got, old) {
 		t.Fatal("old peer should be a candidate")
 	}
 }
 
-// TestProtectByMinFastestPing — protects the n peers with the
-// smallest minPing values.
-func TestProtectByMinFastestPing(t *testing.T) {
+// TestEvictionCandidatesExcludesDisconnecting — a peer whose
+// Disconnect has already been requested (Core: fDisconnect) must
+// not be picked again, or concurrent admissions would all charge
+// the same victim and over-admit past the inbound cap.
+func TestEvictionCandidatesExcludesDisconnecting(t *testing.T) {
+	dying := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
+	alive := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
+	dying.discRequested.Store(true)
+
+	got := evictionCandidates(peerSet(dying, alive))
+	if contains(got, dying) {
+		t.Fatal("disconnecting peer must not be an eviction candidate")
+	}
+	if !contains(got, alive) {
+		t.Fatal("live peer should be a candidate")
+	}
+}
+
+// TestProtectLastKFastestPing — protects the k peers with the
+// smallest measured minPing values.
+func TestProtectLastKFastestPing(t *testing.T) {
 	a := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 5})
 	b := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 10})
 	c := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 15})
 	candidates := []*Peer{c, b, a}
 
-	got := protectByMin(candidates, 2, func(p *Peer) int64 { return p.minPing.Load() })
+	got := protectLastK(candidates, 2, lessMinPingReverse, nil)
 	if len(got) != 1 {
 		t.Fatalf("survivors = %d, want 1", len(got))
 	}
@@ -167,15 +203,32 @@ func TestProtectByMinFastestPing(t *testing.T) {
 	}
 }
 
-// TestProtectByMaxNewestBlock — protects the n peers with the
+// TestProtectLastKUnmeasuredPingIsWorst — a peer that never
+// answered a pong (minPing == 0) counts as the WORST ping, not the
+// best. Core initializes m_min_ping_time to microseconds::max()
+// for exactly this reason: otherwise an attacker who simply never
+// replies to pings holds a permanent protection slot.
+func TestProtectLastKUnmeasuredPingIsWorst(t *testing.T) {
+	silent := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 0})
+	fast := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 50})
+	slow := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, minPing: 500})
+	candidates := []*Peer{silent, fast, slow}
+
+	got := protectLastK(candidates, 2, lessMinPingReverse, nil)
+	if len(got) != 1 || got[0] != silent {
+		t.Fatalf("unmeasured-ping peer must be the sole survivor (worst), got %v", got)
+	}
+}
+
+// TestProtectLastKNewestBlock — protects the k peers with the
 // largest lastBlockRx.
-func TestProtectByMaxNewestBlock(t *testing.T) {
+func TestProtectLastKNewestBlock(t *testing.T) {
 	a := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 100})
 	b := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 200})
 	c := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 300})
 	candidates := []*Peer{a, b, c}
 
-	got := protectByMax(candidates, 2, func(p *Peer) int64 { return p.lastBlockRx.Load() })
+	got := protectLastK(candidates, 2, lessBlockTime, nil)
 	if len(got) != 1 {
 		t.Fatalf("survivors = %d, want 1", len(got))
 	}
@@ -184,48 +237,88 @@ func TestProtectByMaxNewestBlock(t *testing.T) {
 	}
 }
 
-// TestProtectByMaxConditionalSkipsNonRelayers — protectByMax with
-// "relayTxs only" condition: peers that don't relay tx remain in
-// the candidate pool regardless of their lastTxRx.
-func TestProtectByMaxConditionalSkipsNonRelayers(t *testing.T) {
-	relayer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastTx: 100, relayTxs: true})
-	nonrelayer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastTx: 999, relayTxs: false})
-	candidates := []*Peer{relayer, nonrelayer}
+// TestProtectLastKWindowPredicate — Core's EraseLastKElements
+// applies the predicate only INSIDE the last-k window: window
+// members failing it stay candidates, and the window does not
+// extend to protect additional matching peers below it.
+func TestProtectLastKWindowPredicate(t *testing.T) {
+	// Sorted by lessBlockRelayOnlyTime: relayer sorts first (least
+	// protected), then non-relayers by block time. Window k=1 covers
+	// only the newest-block non-relayer.
+	relayer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 999, relayTxs: true})
+	brOld := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 100})
+	brNew := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastBlock: 200})
+	candidates := []*Peer{relayer, brOld, brNew}
 
-	got := protectByMaxConditional(candidates, 1,
-		func(p *Peer) int64 { return p.lastTxRx.Load() },
-		func(p *Peer) bool { return p.relayTxs.Load() })
-
-	// Relayer (top tx-relayer) is protected; non-relayer survives in
-	// the pool even though its lastTx is higher (they're not
-	// eligible for THIS protection round).
-	if contains(got, relayer) {
-		t.Fatal("relayer should be protected, but is in survivors")
+	got := protectLastK(candidates, 1, lessBlockRelayOnlyTime,
+		func(p *Peer) bool { return !p.relayTxs.Load() })
+	if contains(got, brNew) {
+		t.Fatal("newest-block non-relayer should be protected")
 	}
-	if !contains(got, nonrelayer) {
-		t.Fatal("non-relayer should survive (not eligible for this round)")
+	if !contains(got, brOld) || !contains(got, relayer) {
+		t.Fatalf("relayer and older non-relayer should survive, got %v", got)
+	}
+
+	// With k=1 and the relayer alone in the window (all
+	// non-relayers removed), the window member fails the predicate
+	// and nobody is protected.
+	got = protectLastK([]*Peer{relayer}, 1, lessBlockRelayOnlyTime,
+		func(p *Peer) bool { return !p.relayTxs.Load() })
+	if !contains(got, relayer) {
+		t.Fatal("window member failing the predicate must stay a candidate")
 	}
 }
 
-// TestProtectByNetGroupKeyedDistinctGroups — peers in distinct
-// groups are preferred over peers sharing groups.
-func TestProtectByNetGroupKeyedDistinctGroups(t *testing.T) {
-	// Three groups: A x 1, B x 2, C x 1. n=2 should protect one
-	// from A and one from C (the two singletons), leaving both Bs
-	// in the candidate pool.
-	a := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(10, 0, 0, 1)})
-	b1 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(11, 0, 0, 1)})
-	b2 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(11, 0, 0, 2)})
-	c := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(12, 0, 0, 1)})
-	candidates := []*Peer{a, b1, b2, c}
-
-	got := protectByNetGroupKeyed(candidates, 2)
-	if len(got) != 2 {
-		t.Fatalf("survivors = %d, want 2", len(got))
+// TestLessTxTimeTieBreaks — equal lastTxRx falls through to
+// "tx-relayers protected over non-relayers", then to
+// "longest-connected protected" (CompareNodeTXTime chain), so ties
+// are deterministic instead of map-iteration-order.
+func TestLessTxTimeTieBreaks(t *testing.T) {
+	relayer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastTx: 100, relayTxs: true})
+	nonrelayer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, lastTx: 100, relayTxs: false})
+	if !lessTxTime(nonrelayer, relayer) || lessTxTime(relayer, nonrelayer) {
+		t.Fatal("tx-relayer must sort as more protected on equal lastTx")
 	}
-	// b1 and b2 share group → both should remain.
-	if !contains(got, b1) || !contains(got, b2) {
-		t.Fatalf("expected both Bs in survivors, got %v", got)
+	older := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 2 * time.Minute, lastTx: 100, relayTxs: true})
+	newer := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 1 * time.Minute, lastTx: 100, relayTxs: true})
+	if !lessTxTime(newer, older) || lessTxTime(older, newer) {
+		t.Fatal("longest-connected must sort as more protected on full tie")
+	}
+}
+
+// TestKeyedNetGroupSemantics — peers sharing a /16 share a keyed
+// value; distinct groups differ; peers with no derivable group get
+// per-peer singleton values (never one shared bucket).
+func TestKeyedNetGroupSemantics(t *testing.T) {
+	a1 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(11, 0, 0, 1)})
+	a2 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(11, 0, 0, 2)})
+	b := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute, ip: net.IPv4(12, 0, 0, 1)})
+	if keyedNetGroup(a1) != keyedNetGroup(a2) {
+		t.Fatal("same /16 must share a keyed netgroup value")
+	}
+	if keyedNetGroup(a1) == keyedNetGroup(b) {
+		t.Fatal("distinct /16s must not share a keyed netgroup value")
+	}
+}
+
+// TestPreferEvictNarrowsToDiscouraged — when any surviving
+// candidate is flagged for discouragement, the eviction pick is
+// restricted to the flagged set (Core prefer_evict,
+// eviction.cpp:209-215).
+func TestPreferEvictNarrowsToDiscouraged(t *testing.T) {
+	good := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
+	bad := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
+	bad.MisbehavingFor("test-misbehavior")
+
+	got := preferEvict([]*Peer{good, bad})
+	if len(got) != 1 || got[0] != bad {
+		t.Fatalf("preferEvict must narrow to the discouraged peer, got %v", got)
+	}
+
+	// Without any flagged peer the set passes through unchanged.
+	got = preferEvict([]*Peer{good})
+	if len(got) != 1 || got[0] != good {
+		t.Fatal("preferEvict must be a no-op without flagged peers")
 	}
 }
 
@@ -358,12 +451,9 @@ func TestPostHandshakeChecksTriggersEviction(t *testing.T) {
 		peers[p.ID()] = p
 	}
 
-	// Set localnode so the c.node.ID() == localnode.ID() comparison
-	// has a valid lhs. We don't need an actual local key; just a
-	// non-nil localnode.
-	if err := srv.initHelloNonce(); err != nil {
-		t.Fatal(err)
-	}
+	// Set localnode so the self-connect check (which now runs before
+	// eviction) has a valid srv.localnode.ID() to compare against.
+	setTestLocalNode(t, srv)
 
 	// Synthesize a new inbound conn that triggers saturation.
 	// maxInboundConns by default returns MaxPeers - dialedConns
@@ -383,6 +473,154 @@ func TestPostHandshakeChecksTriggersEviction(t *testing.T) {
 	err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, newConn)
 	if err != nil {
 		t.Fatalf("postHandshakeChecks returned %v; expected nil after successful eviction", err)
+	}
+}
+
+// TestPostHandshakeChecksRejectsDuplicateUnderSaturation — a
+// duplicate node ID arriving while the inbound pool is saturated
+// must be rejected as DiscAlreadyConnected, NOT admitted via
+// eviction. Regression: the saturation case used to fall through
+// the switch, skipping the duplicate check, which let a second
+// connection clobber the peers-map entry of a live peer.
+func TestPostHandshakeChecksRejectsDuplicateUnderSaturation(t *testing.T) {
+	srv := &Server{
+		log:    testlog.Logger(t, logging.LvlTrace),
+		Config: Config{MaxPeers: 50, NoDiscovery: true, NoDial: true},
+	}
+	setTestLocalNode(t, srv)
+
+	peers := map[enode.ID]*Peer{}
+	for i := range 40 {
+		p := makeEvictionPeer(t, evictionOpts{
+			inbound:    true,
+			createdAge: time.Duration(60+i) * time.Second,
+			ip:         net.IPv4(byte(10+i), 0, 0, 1),
+			minPing:    int64(i + 1),
+			lastBlock:  int64(1000 + i),
+			relayTxs:   true,
+		})
+		peers[p.ID()] = p
+	}
+	var dupID enode.ID
+	for id := range peers {
+		dupID = id
+		break
+	}
+
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: net.IPv4(99, 99, 99, 99), Port: 32110}}
+	defer fake.Close()
+	dup := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      enode.SignNull(new(enr.Record), dupID),
+		flags:     inboundConn,
+	}
+	if err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, dup); err != DiscAlreadyConnected {
+		t.Fatalf("duplicate ID under saturation = %v, want DiscAlreadyConnected", err)
+	}
+}
+
+// TestPostHandshakeChecksRejectsSelfUnderSaturation — our own node
+// ID arriving as an inbound conn under saturation must be rejected
+// as DiscSelf, not admitted via eviction (same fall-through
+// regression as the duplicate case).
+func TestPostHandshakeChecksRejectsSelfUnderSaturation(t *testing.T) {
+	srv := &Server{
+		log:    testlog.Logger(t, logging.LvlTrace),
+		Config: Config{MaxPeers: 50, NoDiscovery: true, NoDial: true},
+	}
+	setTestLocalNode(t, srv)
+
+	peers := map[enode.ID]*Peer{}
+	for i := range 40 {
+		p := makeEvictionPeer(t, evictionOpts{
+			inbound:    true,
+			createdAge: time.Duration(60+i) * time.Second,
+			ip:         net.IPv4(byte(10+i), 0, 0, 1),
+		})
+		peers[p.ID()] = p
+	}
+
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: net.IPv4(99, 99, 99, 99), Port: 32110}}
+	defer fake.Close()
+	self := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      enode.SignNull(new(enr.Record), srv.localnode.ID()),
+		flags:     inboundConn,
+	}
+	if err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, self); err != DiscSelf {
+		t.Fatalf("self ID under saturation = %v, want DiscSelf", err)
+	}
+}
+
+// TestAddPeerChecksEvictsOnlyOnce — the admission checks run at both
+// the post-handshake and add-peer checkpoints. A single connection
+// must not evict two victims: once it has paid for its slot at the
+// first checkpoint (recorded on c.evicted), the second checkpoint
+// must not evict again. Regression: without the guard, one
+// admission dropped two peers, doubling inbound churn cost.
+func TestAddPeerChecksEvictsOnlyOnce(t *testing.T) {
+	srv := &Server{
+		log:    testlog.Logger(t, logging.LvlTrace),
+		Config: Config{MaxPeers: 50, NoDiscovery: true, NoDial: true},
+	}
+	setTestLocalNode(t, srv)
+
+	peers := map[enode.ID]*Peer{}
+	for i := range 40 {
+		p := makeEvictionPeer(t, evictionOpts{
+			inbound:    true,
+			createdAge: time.Duration(60+i) * time.Second,
+			ip:         net.IPv4(byte(10+i), 0, 0, 1),
+			minPing:    int64(i + 1),
+			lastBlock:  int64(1000 + i),
+			relayTxs:   true,
+		})
+		peers[p.ID()] = p
+	}
+
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: net.IPv4(99, 99, 99, 99), Port: 32110}}
+	defer fake.Close()
+	c := &conn{
+		fd:        fake,
+		transport: &v2Transport{},
+		node:      enode.SignNull(new(enr.Record), randomID()),
+		flags:     inboundConn,
+	}
+
+	countDisconnecting := func() int {
+		n := 0
+		for _, p := range peers {
+			if p.discRequested.Load() {
+				n++
+			}
+		}
+		return n
+	}
+
+	// First checkpoint: evicts one victim and marks the conn.
+	if err := srv.postHandshakeChecks(peers, srv.maxInboundConns(), 0, c); err != nil {
+		t.Fatalf("first checkpoint = %v, want nil", err)
+	}
+	if !c.evicted {
+		t.Fatal("conn should be marked evicted after first checkpoint")
+	}
+	if got := countDisconnecting(); got != 1 {
+		t.Fatalf("after first checkpoint %d peers disconnecting, want 1", got)
+	}
+
+	// Second checkpoint (addPeerChecks): must NOT evict again. The
+	// already-disconnecting victim is also no longer a candidate, so
+	// even without the c.evicted guard the count must stay 1.
+	if err := srv.addPeerChecks(peers, srv.maxInboundConns(), 0, c); err != nil {
+		t.Fatalf("second checkpoint = %v, want nil", err)
+	}
+	if got := countDisconnecting(); got != 1 {
+		t.Fatalf("after second checkpoint %d peers disconnecting, want 1 (no double eviction)", got)
 	}
 }
 
@@ -410,9 +648,7 @@ func TestPostHandshakeChecksHardRejectsWhenEvictionFails(t *testing.T) {
 		log:    testlog.Logger(t, logging.LvlTrace),
 		Config: Config{MaxPeers: 4, NoDiscovery: true, NoDial: true},
 	}
-	if err := srv.initHelloNonce(); err != nil {
-		t.Fatal(err)
-	}
+	setTestLocalNode(t, srv)
 
 	// Two trusted inbound peers — neither is evictable.
 	peers := peerSet(
