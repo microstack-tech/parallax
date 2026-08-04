@@ -738,7 +738,13 @@ func newSelfEndpointServer(t *testing.T, ip net.IP, port int) *Server {
 		ln.Set(enr.TCP(port))
 	}
 	return &Server{
-		Config:    Config{MaxPeers: 1},
+		// A non-empty ListenAddr models a node that intends to
+		// listen: in the port==0 cases that means the listener just
+		// hasn't published its port yet (startup window), which is
+		// what the pre-listen self-endpoint tests exercise. The
+		// "configured not to listen" case sets ListenAddr back to ""
+		// explicitly.
+		Config:    Config{MaxPeers: 1, ListenAddr: "127.0.0.1:0"},
 		localnode: ln,
 		log:       testlog.Logger(t, logging.LvlTrace),
 	}
@@ -798,6 +804,23 @@ func TestIsSelfEndpoint(t *testing.T) {
 		}
 		if !early.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: 1234}) {
 			t.Fatal("IsSelfEndpoint must catch IPv6 loopback dial during pre-listen window")
+		}
+	})
+
+	t.Run("not listening loopback", func(t *testing.T) {
+		// A node configured not to listen (ListenAddr == "") never
+		// publishes a TCP port, so selfPort stays 0 for the whole
+		// process lifetime. A loopback dial then reaches a co-hosted
+		// node, not a hairpin into a listener we don't have, so it
+		// must NOT be classified as self. Without this a non-listening
+		// node could never dial a co-hosted peer over 127.0.0.1.
+		noListen := newSelfEndpointServer(t, selfIP, 0)
+		noListen.ListenAddr = ""
+		if noListen.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must not treat a loopback dial as self when the node does not listen")
+		}
+		if noListen.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must not treat an IPv6 loopback dial as self when the node does not listen")
 		}
 	})
 

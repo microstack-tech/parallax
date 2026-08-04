@@ -1487,9 +1487,20 @@ func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	}
 	n := srv.localnode.Node()
 	selfPort := n.TCP()
-	// Pre-listening window: only loopback can be self with certainty.
-	// A loopback dial is never legitimate before the listener exists.
 	if selfPort == 0 {
+		// No advertised TCP port. Two distinct cases:
+		//   - We are configured not to listen (ListenAddr == ""):
+		//     there is no listener a loopback dial could hairpin
+		//     into, so dialing 127.0.0.1 reaches a co-hosted node,
+		//     not ourselves. Not self. Without this, a non-listening
+		//     node could never dial a co-hosted peer over loopback
+		//     for the whole process lifetime.
+		//   - We intend to listen but haven't bound yet (startup
+		//     window): a loopback dial could hairpin once the
+		//     listener comes up, so treat it as self out of caution.
+		if srv.ListenAddr == "" {
+			return false
+		}
 		return addr.IP.IsLoopback()
 	}
 	if addr.Port != selfPort {
