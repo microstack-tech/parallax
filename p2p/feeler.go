@@ -116,10 +116,13 @@ func (srv *Server) runOneFeeler() {
 		return
 	}
 
-	// DialV2 handles the full v2 handshake, runs the post-handshake
-	// checks, calls addrmanGood at peer-attach time on success, and
-	// records Attempt(failure=true) on failure.
-	if err := srv.DialV2(tcp); err != nil {
+	// DialV2Feeler handles the full v2 handshake, runs the
+	// post-handshake checks, calls addrmanGood at peer-attach time on
+	// success, and records Attempt(failure=true) on a dial failure.
+	// The feeler flag excludes the resulting peer from the dial
+	// budget and suppresses the false addrman failure that its
+	// deliberate disconnect would otherwise record.
+	if err := srv.DialV2Feeler(tcp); err != nil {
 		// Feeler dial failure isn't a hard error from the operator's
 		// POV — the whole point is to probe addrs that may be
 		// unreachable. Trace-level only.
@@ -148,9 +151,14 @@ func pickFeelerAddr(book *addrman.AddrMan) (addrman.NetAddr, bool) {
 }
 
 // disconnectFeelerAfter waits for the feeler lifetime then asks the
-// matching peer to drop. Best-effort: if the peer already
+// matching feeler peer to drop. Best-effort: if the peer already
 // disconnected (handshake refusal, peer eviction) the lookup just
 // returns nothing.
+//
+// The match requires the feelerConn flag in addition to the
+// endpoint: if the same endpoint has meanwhile been connected via a
+// real dial (dyn, static, or an inbound from the same host), that
+// legitimate peer must not be torn down by the feeler's timer.
 func (srv *Server) disconnectFeelerAfter(target *net.TCPAddr, after time.Duration) {
 	select {
 	case <-srv.quit:
@@ -158,6 +166,9 @@ func (srv *Server) disconnectFeelerAfter(target *net.TCPAddr, after time.Duratio
 	case <-time.After(after):
 	}
 	for _, p := range srv.Peers() {
+		if !p.rw.is(feelerConn) {
+			continue
+		}
 		la, ok := srv.peerListenAddr(p)
 		if !ok {
 			continue
@@ -232,8 +243,11 @@ func (srv *Server) runAddrFetch() {
 		}
 		// Best-effort: ignore errors. Each successful dial yields
 		// a Peers exchange via the disc protocol's outbound
-		// greeting (RequestPeers), which warms addrbook.
-		if err := srv.DialV2(tcp); err != nil {
+		// greeting (RequestPeers), which warms addrbook. Tagged as a
+		// feeler so it neither occupies a real outbound slot nor
+		// records a false addrman failure on its short-lived
+		// disconnect.
+		if err := srv.DialV2Feeler(tcp); err != nil {
 			srv.log.Trace("addrfetch dial failed", "addr", tcp, "err", err)
 			continue
 		}

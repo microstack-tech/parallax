@@ -398,7 +398,12 @@ loop:
 			d.doneSinceLastLog++
 
 		case c := <-d.addPeerCh:
-			if c.is(dynDialedConn) || c.is(staticDialedConn) {
+			// Feeler / addrfetch probes are short-lived and must not
+			// consume an outbound slot or a network-group slot
+			// (Bitcoin Core excludes ConnectionType::FEELER from
+			// outbound counts). They still land in d.peers below so
+			// checkDial's already-connected guard covers them.
+			if (c.is(dynDialedConn) || c.is(staticDialedConn)) && !c.is(feelerConn) {
 				d.dialPeers++
 				if c.is(blockRelayConn) {
 					d.blockRelayDialed++
@@ -417,7 +422,9 @@ loop:
 			// TODO: cancel dials to connected peers
 
 		case c := <-d.remPeerCh:
-			if c.is(dynDialedConn) || c.is(staticDialedConn) {
+			// Mirror the feeler exclusion from addPeerCh so the
+			// counters stay balanced.
+			if (c.is(dynDialedConn) || c.is(staticDialedConn)) && !c.is(feelerConn) {
 				d.dialPeers--
 				if c.is(blockRelayConn) && d.blockRelayDialed > 0 {
 					d.blockRelayDialed--

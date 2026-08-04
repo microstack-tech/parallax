@@ -243,8 +243,10 @@ type Config struct {
 	// they're anti-eclipse insurance over and above full-relay.
 	// Counted against the existing outbound budget (DialRatio), so
 	// raising this lowers the full-relay slot count by the same
-	// amount. Zero disables the block-relay-only bucket entirely;
-	// every outbound dial becomes full-relay.
+	// amount. Zero applies the default of 2; a negative value
+	// disables the block-relay-only bucket entirely so every outbound
+	// dial becomes full-relay (same zero-means-default convention as
+	// MinLegacyPeers; see maxBlockRelayDial).
 	MaxBlockRelayPeers int `toml:",omitempty"`
 
 	// BanList is the BanMan instance the inbound-accept path consults
@@ -414,6 +416,14 @@ const (
 	// propagates to *Peer.blockRelayOnly at attach time so the prl
 	// and disc protocol handlers can suppress tx and address gossip.
 	blockRelayConn
+	// feelerConn marks a short-lived probe connection (feeler or
+	// addrfetch) that exists only to verify reachability or warm the
+	// addrbook, then disconnects. Bitcoin Core's ConnectionType::
+	// FEELER / ADDR_FETCH. Feelers are excluded from the dial
+	// scheduler's slot and network-group accounting and never record
+	// an addrman failure on their deliberate disconnect (they already
+	// marked the address Good at attach).
+	feelerConn
 )
 
 // conn wraps a network connection with information gathered
@@ -474,6 +484,9 @@ func (f connFlag) String() string {
 	}
 	if f&blockRelayConn != 0 {
 		s += "-blockrelay"
+	}
+	if f&feelerConn != 0 {
+		s += "-feeler"
 	}
 	if s != "" {
 		s = s[1:]
@@ -1162,7 +1175,19 @@ func (srv *Server) runV2Dialer() {
 		}
 		srv.log.Trace("pip6: runV2Dialer iter", "addr", tcp.String(), "sincePrev", sincePrev)
 		prev = now
-		if err := srv.DialV2(tcp); err != nil {
+		// Fill the block-relay-only bucket first. On a v2-native
+		// network runV2Dialer is the dominant dial source, so
+		// without this the block-relay-only slots (MaxBlockRelayPeers)
+		// would never fill and the anti-eclipse property they exist
+		// for would not hold. Once the bucket is full, dial
+		// full-relay. Bitcoin Core keeps a fixed number of
+		// block-relay-only connections the same way (src/net.cpp
+		// ThreadOpenConnections, MAX_BLOCK_RELAY_ONLY_CONNECTIONS).
+		dial := srv.DialV2
+		if want := srv.maxBlockRelayDial(); want > 0 && srv.blockRelayOutboundCount() < want {
+			dial = srv.DialV2BlockRelay
+		}
+		if err := dial(tcp); err != nil {
 			srv.log.Trace("v2 dial failed", "addr", tcp, "err", err)
 			if errors.Is(err, errV2DialCooldown) {
 				select {
@@ -1196,6 +1221,15 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 // same role.
 func (srv *Server) DialV2BlockRelay(addr *net.TCPAddr) error {
 	return srv.dialV2WithFlags(addr, blockRelayConn)
+}
+
+// DialV2Feeler opens a v2-handshake TCP connection like DialV2 but
+// tags the resulting conn as a feeler. Feeler conns are excluded
+// from the dial scheduler's slot and network-group budget and never
+// record an addrman failure on their deliberate short-lived
+// disconnect. Used by the feeler and addrfetch loops.
+func (srv *Server) DialV2Feeler(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, feelerConn)
 }
 
 // dialV2WithFlags is the shared implementation. extra is OR'd into
@@ -1237,6 +1271,21 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 		srv.addrmanAttemptByTCP(addr, false)
 		return fmt.Errorf("v2 dial %s: already connected", addr)
 	}
+	// Network-group diversity for automatic full-relay outbound dials
+	// (extra == 0). Refuse a second outbound peer in the same /16
+	// (IPv4) or /32 (IPv6) group so an attacker can't fill our
+	// outbound slots from one network. Mirrors Bitcoin Core's
+	// outbound_ipv46_peer_netgroups guard (src/net.cpp). The v1/v2
+	// dial scheduler enforces the same rule in checkDial; this covers
+	// runV2Dialer, which dials addrman entries without going through
+	// the scheduler. Feelers, block-relay-only, and anchor reconnects
+	// carry a non-zero extra and are exempt, as in Core.
+	if extra == 0 {
+		if g := ipNetworkGroupKey(addr.IP); g != "" && srv.outboundGroupOccupied(g) {
+			srv.addrmanAttemptByTCP(addr, false)
+			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
+		}
+	}
 	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
 	if err != nil {
 		srv.addrmanAttemptByTCP(addr, true)
@@ -1244,16 +1293,84 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
-	// extra carries blockRelayConn for anchor replays.
+	// extra carries blockRelayConn for anchor replays / block-relay
+	// bucket fills, or feelerConn for probes.
 	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|extra, nil); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
 		// object was constructed, so the delpeer path never runs
 		// and addrman never learns the entry is unreachable. Record
-		// it here so IsTerrible can eventually evict it.
-		srv.addrmanAttemptByTCP(addr, true)
+		// it here so IsTerrible can eventually evict it — except for
+		// feelers, where the failure is often our own admission
+		// rejection (e.g. DiscTooManyPeers at saturation) rather than
+		// a reachability problem, and counting it would penalize an
+		// address we have no evidence against.
+		if !extraHas(extra, feelerConn) {
+			srv.addrmanAttemptByTCP(addr, true)
+		}
 		return err
 	}
 	return nil
+}
+
+// extraHas reports whether the extra flag set includes f.
+func extraHas(extra, f connFlag) bool { return extra&f != 0 }
+
+// outboundGroupOccupied reports whether any current non-feeler
+// outbound peer falls in the given network-group key. Used by the
+// v2 dial path to enforce outbound /16 (IPv4) / /32 (IPv6) diversity
+// for addrman-driven dials that bypass the dial scheduler. Inbound
+// peers are ignored (we don't choose their source network) and
+// feeler probes are transient.
+func (srv *Server) outboundGroupOccupied(group string) bool {
+	occupied := false
+	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
+		occupied = outboundGroupOccupiedIn(peers, group)
+	})
+	return occupied
+}
+
+// outboundGroupOccupiedIn is the pure core of outboundGroupOccupied,
+// split out so it can be unit-tested without a running run loop.
+func outboundGroupOccupiedIn(peers map[enode.ID]*Peer, group string) bool {
+	for _, p := range peers {
+		if p.rw.is(inboundConn) || p.rw.is(feelerConn) {
+			continue
+		}
+		ra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if ipNetworkGroupKey(ra.IP) == group {
+			return true
+		}
+	}
+	return false
+}
+
+// blockRelayOutboundCount returns the number of current outbound
+// block-relay-only peers. Used by runV2Dialer to decide whether the
+// next addrman-driven dial should fill a block-relay-only slot. This
+// reads the authoritative live peer set rather than the dial
+// scheduler's loop-owned counter, so it stays correct across both
+// the scheduler and the separate v2 dial loop.
+func (srv *Server) blockRelayOutboundCount() int {
+	n := 0
+	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
+		n = blockRelayOutboundCountIn(peers)
+	})
+	return n
+}
+
+// blockRelayOutboundCountIn is the pure core of
+// blockRelayOutboundCount, split out for unit testing.
+func blockRelayOutboundCountIn(peers map[enode.ID]*Peer) int {
+	n := 0
+	for _, p := range peers {
+		if !p.rw.is(inboundConn) && p.rw.is(blockRelayConn) {
+			n++
+		}
+	}
+	return n
 }
 
 // addrmanAttemptByTCP records a dial attempt in addrman, keyed by
@@ -1306,6 +1423,11 @@ var errV2DialSelf = errors.New("v2 dial self")
 // target's IP is banned or discouraged. Callers back off rather
 // than counting it as a connection failure.
 var errV2DialBanned = errors.New("v2 dial banned")
+
+// errV2DialGroupOccupied is the sentinel returned by DialV2 when a
+// full-relay outbound peer already occupies the target's network
+// group. Callers back off; not a reachability failure.
+var errV2DialGroupOccupied = errors.New("v2 dial network group occupied")
 
 // v2DialCooldownCheckAndMark returns true and records addr's dial
 // timestamp if the cooldown has elapsed; returns false otherwise.
@@ -2004,8 +2126,12 @@ running:
 			// eventually evicts unreachable entries. Only count
 			// failures on outbound-dial sessions — inbound
 			// disconnects tell us nothing about our view of the
-			// peer's reachability.
-			if pd.err != nil && !pd.Inbound() {
+			// peer's reachability. Feeler conns are excluded: they
+			// already marked the address Good at attach, and their
+			// deliberate short-lived disconnect is not a reachability
+			// failure — counting it would penalize the very address
+			// the feeler just verified.
+			if pd.err != nil && !pd.Inbound() && !pd.rw.is(feelerConn) {
 				srv.addrmanAttempt(pd.Peer)
 			}
 			// Discourage hook: if the peer was flagged for
