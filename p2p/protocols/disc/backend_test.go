@@ -209,6 +209,51 @@ func TestHandleHelloStoresAndLooksUp(t *testing.T) {
 	}
 }
 
+// TestHandleHelloSetsRelayTxs — HandleHello must reflect the peer's
+// disclosed ServiceRelayTx bit onto the Peer object so the eviction
+// algorithm and the tx-broadcast path see it. A peer that omits the
+// bit (block-relay-only) must end up with RelayTxs()==false; one
+// that sets it, true.
+func TestHandleHelloSetsRelayTxs(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(24))
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := Hello{ProtoVersion: 1, Nonce: 0x3333}
+	b := NewAddrmanBackend(m, nil, nil, nil, func() Hello { return local })
+
+	newPeer := func(t *testing.T) *p2p.Peer {
+		a, d, err := pipes.TCPPipe()
+		if err != nil {
+			t.Fatalf("TCPPipe: %v", err)
+		}
+		t.Cleanup(func() { a.Close(); d.Close() })
+		var id enode.ID
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		return p2p.NewPeerForTest(id, "test", nil, a)
+	}
+
+	// Peer discloses tx relay.
+	relayer := newPeer(t)
+	if err := b.HandleHello(relayer, Hello{ProtoVersion: 1, Nonce: 0x44, Services: ServiceNodeNetwork | ServiceRelayTx}); err != nil {
+		t.Fatalf("HandleHello (relayer): %v", err)
+	}
+	if !relayer.RelayTxs() {
+		t.Error("peer disclosing ServiceRelayTx must have RelayTxs()==true")
+	}
+
+	// Peer omits tx relay (block-relay-only).
+	blockRelay := newPeer(t)
+	if err := b.HandleHello(blockRelay, Hello{ProtoVersion: 1, Nonce: 0x55, Services: ServiceNodeNetwork}); err != nil {
+		t.Fatalf("HandleHello (block-relay): %v", err)
+	}
+	if blockRelay.RelayTxs() {
+		t.Error("peer omitting ServiceRelayTx must have RelayTxs()==false")
+	}
+}
+
 // TestHandleHelloDetectsSelfConnect — when the peer's nonce equals
 // our own LocalHello().Nonce, HandleHello returns errSelfConnect and
 // does NOT store the entry. The handler will end the session with

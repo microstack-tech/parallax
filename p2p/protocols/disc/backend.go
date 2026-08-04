@@ -447,6 +447,15 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 			return errSelfConnect
 		}
 	}
+	// Record the peer's disclosed tx-relay intent on the Peer object
+	// so the eviction algorithm and the tx-broadcast path can see it.
+	// A peer that connected to us block-relay-only clears
+	// ServiceRelayTx in its Hello (sendHello), and we must not push
+	// transactions to it nor mis-protect it in the tx-relay eviction
+	// round. Bitcoin Core tracks this as CNode::m_relays_txs, set
+	// from the version message's fRelay bit.
+	peer.SetRelayTxs(h.Services&ServiceRelayTx != 0)
+
 	key := peerKeyFor(peer)
 	b.mu.Lock()
 	b.peerHello[key] = h
