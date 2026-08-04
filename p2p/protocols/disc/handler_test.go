@@ -119,7 +119,7 @@ func runHandlerWithPeer(t *testing.T, backend Backend, configure func(*p2p.Peer)
 	t.Helper()
 	// Disable Poisson jitter for the duration of the test — a 2s
 	// mean per response wrecks suite runtime.
-	prev := peersResponseJitterMean
+	prev := getPeersResponseJitterMean()
 	SetPeersResponseJitterMean(0)
 	t.Cleanup(func() { SetPeersResponseJitterMean(prev) })
 	appRW, netRW := p2p.MsgPipe()

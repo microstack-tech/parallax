@@ -360,22 +360,6 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 		backend.Log().Trace("parallax-disc/1: ignoring repeat GetPeers", "peer", peer.ID())
 		return nil
 	}
-	// Apply Poisson jitter so the response doesn't arrive on a
-	// predictable cadence — matches Bitcoin's PoissonNextSend
-	// scheduling on address trickle. Mean is tunable so tests can
-	// drop it to zero; production keeps the 2s mean. The max-delay
-	// cap is a practical truncation against Poisson's long tail (a
-	// natural draw can exceed 10× mean; we cap at 3× to bound worst
-	// case).
-	if mean := peersResponseJitterMean; mean > 0 {
-		delay := poissonDelay(mean)
-		if delay > 3*mean {
-			delay = 3 * mean
-		}
-		if delay > 0 {
-			time.Sleep(delay)
-		}
-	}
 	sample := backend.SamplePeers(peer, MaxPeersPerMessage)
 	if sample == nil {
 		sample = []PeerEntry{}
@@ -388,18 +372,48 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	for _, e := range sample {
 		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
 	}
+	// Apply Poisson jitter so the response doesn't arrive on a
+	// predictable cadence — matches Bitcoin's PoissonNextSend
+	// scheduling on address trickle. Bitcoin schedules the response
+	// asynchronously, and so do we: sleeping in the read loop would
+	// stall every subsequent message from this peer for up to the
+	// jitter cap. The max-delay cap is a practical truncation against
+	// Poisson's long tail (a natural draw can exceed 10x mean; we cap
+	// at 3x to bound the worst case). A send after session teardown
+	// fails with ErrShuttingDown and is dropped silently.
+	if mean := getPeersResponseJitterMean(); mean > 0 {
+		delay := poissonDelay(mean)
+		if delay > 3*mean {
+			delay = 3 * mean
+		}
+		go func() {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			<-timer.C
+			if err := p2p.Send(rw, PeersMsg, Peers{Entries: sample}); err != nil {
+				backend.Log().Trace("parallax-disc/1: delayed Peers response dropped", "peer", peer.ID(), "err", err)
+			}
+		}()
+		return nil
+	}
 	return p2p.Send(rw, PeersMsg, Peers{Entries: sample})
 }
 
-// peersResponseJitterMean is the mean Poisson delay applied to
-// GetPeers responses. Tests override via the SetPeersResponseJitter
-// helper; production value matches Bitcoin's 2-second address-trickle
-// cadence.
-var peersResponseJitterMean = 2 * time.Second
+// peersResponseJitterMean is the mean Poisson delay (in nanoseconds)
+// applied to GetPeers responses. Atomic because tests mutate it while
+// handler goroutines read it. Production value matches Bitcoin's
+// 2-second address-trickle cadence.
+var peersResponseJitterMean atomic.Int64
+
+func init() { peersResponseJitterMean.Store(int64(2 * time.Second)) }
+
+func getPeersResponseJitterMean() time.Duration {
+	return time.Duration(peersResponseJitterMean.Load())
+}
 
 // SetPeersResponseJitterMean overrides the Poisson mean used in the
 // response delay. Exposed for tests; pass 0 to disable jitter.
-func SetPeersResponseJitterMean(d time.Duration) { peersResponseJitterMean = d }
+func SetPeersResponseJitterMean(d time.Duration) { peersResponseJitterMean.Store(int64(d)) }
 
 // poissonDelay returns a Poisson-distributed delay with the given mean.
 // Follows Bitcoin's PoissonNextSend(mean) helper: draw U∈(0,1],
