@@ -19,7 +19,9 @@ package banman
 import (
 	"math/rand"
 	"net"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +171,145 @@ func TestBanPersistenceDropsExpiredOnLoad(t *testing.T) {
 	}
 	if list := bm2.ListBanned(); len(list) != 0 {
 		t.Errorf("expired entry should not load, got %v", list)
+	}
+}
+
+// TestBanV4MappedSubnet — a subnet given in IPv4-mapped IPv6 form
+// ("::ffff:1.2.3.0/120") must normalize to its true IPv4 form
+// ("1.2.3.0/24"), match both the plain-IPv4 and v4-mapped forms of
+// covered addresses, and survive a save/Load round trip. Mirrors
+// Bitcoin Core's CSubNet, which stores v4-mapped addresses as IPv4
+// (src/netaddress.cpp).
+func TestBanV4MappedSubnet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "banlist.json")
+
+	bm1, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New 1: %v", err)
+	}
+	_, subnet, err := net.ParseCIDR("::ffff:1.2.3.0/120")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	if err := bm1.BanSubnet(subnet, time.Hour, ReasonManual); err != nil {
+		t.Fatalf("BanSubnet: %v", err)
+	}
+	if !bm1.IsBanned(net.IPv4(1, 2, 3, 4)) {
+		t.Errorf("1.2.3.4 should be banned via ::ffff:1.2.3.0/120")
+	}
+	if !bm1.IsBanned(net.ParseIP("::ffff:1.2.3.4")) {
+		t.Errorf("::ffff:1.2.3.4 should be banned via ::ffff:1.2.3.0/120")
+	}
+	list := bm1.ListBanned()
+	if len(list) != 1 || list[0].Subnet != "1.2.3.0/24" {
+		t.Errorf("expected normalized entry [1.2.3.0/24], got %v", list)
+	}
+
+	// Round trip: the entry must reload as an active ban.
+	bm2, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New 2 (load): %v", err)
+	}
+	if !bm2.IsBanned(net.IPv4(1, 2, 3, 4)) {
+		t.Errorf("reloaded banlist lost the v4-mapped subnet ban")
+	}
+	if !bm2.IsBanned(net.ParseIP("::ffff:1.2.3.4")) {
+		t.Errorf("reloaded banlist does not match the v4-mapped form")
+	}
+}
+
+// TestDumpConcurrentMutators — mutators auto-Dump, and concurrent
+// admin RPCs must not race on the shared tmp file (spurious rename
+// errors, stale snapshot renamed over a newer one). Run with -race.
+func TestDumpConcurrentMutators(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "banlist.json")
+
+	bm, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	const goroutines = 8
+	const opsPerGoroutine = 25
+	errCh := make(chan error, goroutines)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < opsPerGoroutine; i++ {
+				ip := net.IPv4(10, 0, byte(g), byte(i))
+				if err := bm.Ban(ip, time.Hour, ReasonManual); err != nil {
+					errCh <- err
+					return
+				}
+				if i%2 == 1 {
+					if _, err := bm.Unban(ip); err != nil {
+						errCh <- err
+						return
+					}
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent mutator: %v", err)
+	}
+
+	// The on-disk state must parse and match the in-memory state:
+	// the last snapshot written must reflect every completed
+	// mutation, not a stale intermediate one.
+	bm2, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New 2 (load): %v", err)
+	}
+	want := bm.ListBanned()
+	got := bm2.ListBanned()
+	if len(got) != len(want) {
+		t.Fatalf("on-disk banlist has %d entries, in-memory has %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].Subnet != want[i].Subnet {
+			t.Errorf("entry %d: on-disk %q != in-memory %q", i, got[i].Subnet, want[i].Subnet)
+		}
+	}
+}
+
+// TestCorruptBanlistRecreated — an unparseable banlist.json must not
+// prevent construction: New starts with an empty ban map and the
+// next Dump rewrites the file. Bitcoin Core logs "Recreating the
+// banlist database" and proceeds (src/banman.cpp:41-45).
+func TestCorruptBanlistRecreated(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "banlist.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bm, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New must tolerate a corrupt banlist, got: %v", err)
+	}
+	if list := bm.ListBanned(); len(list) != 0 {
+		t.Errorf("corrupt banlist should load as empty, got %v", list)
+	}
+
+	// The next mutation must rewrite the file with valid content.
+	if err := bm.Ban(net.IPv4(10, 1, 2, 3), time.Hour, ReasonManual); err != nil {
+		t.Fatalf("Ban: %v", err)
+	}
+	bm2, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New 2 (reload after rewrite): %v", err)
+	}
+	if !bm2.IsBanned(net.IPv4(10, 1, 2, 3)) {
+		t.Errorf("rewritten banlist did not reload the new entry")
 	}
 }
 

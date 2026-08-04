@@ -89,7 +89,8 @@ type BanMan struct {
 	mu          sync.Mutex
 	banned      map[string]banEntry // subnet string → entry
 	discouraged *bloomFilter
-	file        string // banlist.json path; empty disables persistence
+	file        string     // banlist.json path; empty disables persistence
+	dumpMu      sync.Mutex // serializes Dump's snapshot+write+rename
 	log         logging.Logger
 }
 
@@ -281,10 +282,21 @@ func (b *BanMan) ListBanned() []BanInfo {
 // Dump writes the current banlist to disk. Atomic: write tmp, rename.
 // Called automatically from Ban / Unban / ClearBanned. No-op when
 // the file path is empty.
+//
+// dumpMu serializes the whole snapshot+write+rename sequence:
+// concurrent mutators would otherwise race on the shared tmp path
+// (spurious rename errors) or rename a stale snapshot over a newer
+// one. Holding dumpMu across the snapshot guarantees the last dump
+// to run reflects every mutation that preceded it. b.mu is only
+// held for the in-memory copy so the accept-path IsBanned never
+// blocks on file I/O. Bitcoin Core serializes the same way in
+// BanMan::DumpBanlist (src/banman.cpp).
 func (b *BanMan) Dump() error {
 	if b.file == "" {
 		return nil
 	}
+	b.dumpMu.Lock()
+	defer b.dumpMu.Unlock()
 	b.mu.Lock()
 	body := banlistFile{BannedNets: make([]banEntry, 0, len(b.banned))}
 	for _, e := range b.banned {
@@ -327,7 +339,12 @@ func (b *BanMan) Load() error {
 	}
 	var body banlistFile
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return fmt.Errorf("banman: unmarshal: %w", err)
+		// A corrupt banlist must not stop the node from starting.
+		// Bitcoin Core logs "Recreating the banlist database" and
+		// proceeds with an empty banmap (src/banman.cpp:41-45);
+		// the next Dump rewrites the file with valid content.
+		b.log.Warn("banman: banlist file corrupt, recreating", "file", b.file, "err", err)
+		return nil
 	}
 	now := time.Now().Unix()
 	b.mu.Lock()
@@ -368,8 +385,19 @@ func singleIPSubnet(addr net.IP) (*net.IPNet, error) {
 // to one entry.
 func normalizeSubnet(subnet *net.IPNet) string {
 	masked := subnet.IP.Mask(subnet.Mask)
-	ones, _ := subnet.Mask.Size()
+	ones, bits := subnet.Mask.Size()
 	if v4 := masked.To4(); v4 != nil {
+		// An IPv4-mapped IPv6 subnet ("::ffff:1.2.3.0/120")
+		// collapses to its true IPv4 form ("1.2.3.0/24"): the
+		// prefix length shifts down by the 96 bits of the
+		// ::ffff:0:0/96 mapping. Mirrors Bitcoin Core's CSubNet,
+		// which stores v4-mapped addresses as IPv4
+		// (src/netaddress.cpp). Without this the rendered key
+		// ("1.2.3.0/120") is not a valid CIDR, so it never matches
+		// in IsBanned and is dropped by Load.
+		if bits == 128 {
+			ones -= 96
+		}
 		return fmt.Sprintf("%s/%d", v4.String(), ones)
 	}
 	return fmt.Sprintf("%s/%d", masked.To16().String(), ones)
