@@ -21,97 +21,156 @@ import (
 	"math"
 )
 
-// Discourage Bloom defaults. Mirror Bitcoin Core's
-// CRollingBloomFilter sized for misbehavior tracking
-// (src/common/bloom.h DEFAULT_BLOOM_FILTER_PARAMETERS) — 50k
-// distinct addresses with a 1e-6 false-positive rate.
+// Discourage Bloom defaults. Mirror Bitcoin Core's discourage filter
+// (src/banman.h: CRollingBloomFilter m_discouraged{50000, 0.000001}) —
+// 50k distinct addresses with a 1e-6 false-positive rate.
 const (
-	discourageBloomCap uint = 50_000
-	discourageBloomFP       = 1e-6
+	discourageBloomCap uint    = 50_000
+	discourageBloomFP  float64 = 1e-6
 )
 
-// bloomFilter is a non-cryptographic Bloom set. We use Go's stdlib
-// maphash with k independent seeds to produce k bit positions per
-// item. maphash is fast and stable for the duration of one
-// process — the filter is in-memory only and never serialized, so
-// per-process seed randomness is fine.
+// rollingBloomFilter is a port of Bitcoin Core's CRollingBloomFilter
+// (src/common/bloom.cpp). Unlike a plain Bloom set, it remembers only
+// the last nElements to 1.5*nElements inserted entries: entries are
+// stamped with a 2-bit generation number, and once a generation fills
+// up ((nElements+1)/2 inserts) the oldest of the three generations is
+// wiped. That bounds the false-positive rate regardless of uptime — a
+// plain set's rate climbs monotonically, and since discouragement
+// gates outbound dials as well as inbound accepts, a saturated filter
+// (drivable by a distinct-IP flood from one IPv6 /64) would freeze
+// the node's connectivity until restart.
 //
-// Sizing math (standard Bloom):
+// Layout matches Core: the bit array is stored as pairs of uint64
+// words; logical bit position b of pair p keeps its generation in
+// (data[p] bit b, data[p+1] bit b). Generation 0 means empty.
 //
-//	m = -n * ln(p) / (ln(2) ^ 2)   // bit-array size
-//	k = (m / n) * ln(2)             // hash functions
-//
-// where n = capacity, p = target false-positive rate.
-//
-// Membership: Insert flips k bits. Contains tests them; all-set
-// → present (with fp). Reset never — ephemeral by design (Bitcoin
-// Core resets the rolling-bloom variant; we use a non-rolling
-// shape because the filter is restart-cleared anyway).
-type bloomFilter struct {
-	bits  []uint64 // m bits total, 64 per uint64
-	mBits uint64   // exact bit count (bits len * 64 may be >= m)
-	k     uint64   // hash function count
-	seeds []maphash.Seed
+// Hashing differs only in primitive: Core uses MurmurHash3 with a
+// random tweak, we use Go's stdlib maphash with nHashFuncs
+// independent per-process seeds. The filter is in-memory only and
+// never serialized, so per-process seed randomness is fine.
+type rollingBloomFilter struct {
+	data                   []uint64 // pairs of words, ((nFilterBits+63)/64)*2 total
+	nHashFuncs             int
+	nEntriesPerGeneration  int
+	nEntriesThisGeneration int
+	nGeneration            int
+	seeds                  []maphash.Seed
 }
 
-func newBloomFilter(n uint, p float64) *bloomFilter {
-	if n == 0 {
-		n = 1
+func newRollingBloomFilter(nElements uint, fpRate float64) *rollingBloomFilter {
+	if nElements == 0 {
+		nElements = 1
 	}
-	if p <= 0 || p >= 1 {
-		p = 0.001
+	if fpRate <= 0 || fpRate >= 1 {
+		fpRate = 0.001
 	}
-	mBits := uint64(math.Ceil(-float64(n) * math.Log(p) / (math.Ln2 * math.Ln2)))
-	if mBits < 64 {
-		mBits = 64
+	// Sizing math straight from Core's constructor: k hash funcs for
+	// the target rate, then a bit count that keeps the rate when the
+	// filter holds its maximum of 3 generations.
+	logFpRate := math.Log(fpRate)
+	nHashFuncs := int(math.Round(logFpRate / math.Log(0.5)))
+	if nHashFuncs > 50 {
+		nHashFuncs = 50
 	}
-	k := uint64(math.Ceil(float64(mBits) / float64(n) * math.Ln2))
-	if k < 1 {
-		k = 1
+	if nHashFuncs < 1 {
+		nHashFuncs = 1
 	}
-	if k > 32 {
-		// Cap k to keep insert/lookup cheap. 32 hashes at 1e-12 fp is
-		// already overkill for our 1e-6 target.
-		k = 32
+	nEntriesPerGeneration := (int(nElements) + 1) / 2
+	nMaxElements := nEntriesPerGeneration * 3
+	nFilterBits := uint64(math.Ceil(-1.0 * float64(nHashFuncs) * float64(nMaxElements) /
+		math.Log(1.0-math.Exp(logFpRate/float64(nHashFuncs)))))
+	words := (nFilterBits + 63) / 64
+	if words < 1 {
+		words = 1
 	}
-	bf := &bloomFilter{
-		bits:  make([]uint64, (mBits+63)/64),
-		mBits: mBits,
-		k:     k,
-		seeds: make([]maphash.Seed, k),
+	f := &rollingBloomFilter{
+		data:                  make([]uint64, words*2),
+		nHashFuncs:            nHashFuncs,
+		nEntriesPerGeneration: nEntriesPerGeneration,
+		seeds:                 make([]maphash.Seed, nHashFuncs),
 	}
-	// maphash.MakeSeed is process-stable but per-call random. The k
-	// seeds are independent, which is what we want — different hash
-	// functions for the k bit positions.
-	for i := range bf.seeds {
-		bf.seeds[i] = maphash.MakeSeed()
+	for i := range f.seeds {
+		f.seeds[i] = maphash.MakeSeed()
 	}
-	return bf
+	f.reset()
+	return f
 }
 
-// Insert adds the bytes-keyed entry to the filter.
-func (f *bloomFilter) Insert(key []byte) {
-	for i := uint64(0); i < f.k; i++ {
-		bit := f.hashBit(i, key)
-		f.bits[bit/64] |= 1 << (bit % 64)
+// Insert adds the bytes-keyed entry, rotating out the oldest
+// generation first when the current one is full.
+func (f *rollingBloomFilter) Insert(key []byte) {
+	if f.nEntriesThisGeneration == f.nEntriesPerGeneration {
+		f.nEntriesThisGeneration = 0
+		f.nGeneration++
+		if f.nGeneration > 3 {
+			f.nGeneration = 1
+		}
+		// Wipe every entry stamped with the incoming generation
+		// number — those are the oldest survivors, about to be
+		// overwritten by new inserts.
+		var genMask1, genMask2 uint64
+		if f.nGeneration&1 != 0 {
+			genMask1 = ^uint64(0)
+		}
+		if f.nGeneration>>1 != 0 {
+			genMask2 = ^uint64(0)
+		}
+		for p := 0; p < len(f.data); p += 2 {
+			p1, p2 := f.data[p], f.data[p+1]
+			mask := (p1 ^ genMask1) | (p2 ^ genMask2)
+			f.data[p] = p1 & mask
+			f.data[p+1] = p2 & mask
+		}
+	}
+	f.nEntriesThisGeneration++
+	for i := 0; i < f.nHashFuncs; i++ {
+		h := f.hash(i, key)
+		bit, pos := slotOf(h, len(f.data))
+		// Stamp the current generation into the bit pair.
+		f.data[pos] = (f.data[pos] &^ (1 << bit)) | uint64(f.nGeneration&1)<<bit
+		f.data[pos+1] = (f.data[pos+1] &^ (1 << bit)) | uint64(f.nGeneration>>1)<<bit
 	}
 }
 
-// Contains reports whether the entry has been inserted (with the
-// configured false-positive rate).
-func (f *bloomFilter) Contains(key []byte) bool {
-	for i := uint64(0); i < f.k; i++ {
-		bit := f.hashBit(i, key)
-		if f.bits[bit/64]&(1<<(bit%64)) == 0 {
+// Contains reports whether the entry is present in any live
+// generation (with the configured false-positive rate). Entries older
+// than ~1.5*nElements inserts have been rotated out and report false.
+func (f *rollingBloomFilter) Contains(key []byte) bool {
+	for i := 0; i < f.nHashFuncs; i++ {
+		h := f.hash(i, key)
+		bit, pos := slotOf(h, len(f.data))
+		if (f.data[pos]|f.data[pos+1])>>bit&1 == 0 {
 			return false
 		}
 	}
 	return true
 }
 
-func (f *bloomFilter) hashBit(idx uint64, key []byte) uint64 {
+// slotOf maps one hash value to its (bit, word-pair) slot. The bit
+// index takes the low 6 bits; the pair position must come from the
+// REMAINING bits — Core gets this independence for free by using
+// FastRange32 (high bits) for the position. Deriving both from
+// overlapping low bits would collapse the joint (pos, bit) space to
+// lcm(words, 64) reachable slots and multiply the effective
+// false-positive rate by orders of magnitude.
+func slotOf(h uint64, words int) (bit, pos uint64) {
+	bit = h & 0x3F
+	pos = ((h >> 6) % uint64(words)) &^ 1
+	return bit, pos
+}
+
+// reset empties the filter and restarts generation numbering.
+func (f *rollingBloomFilter) reset() {
+	f.nEntriesThisGeneration = 0
+	f.nGeneration = 1
+	for i := range f.data {
+		f.data[i] = 0
+	}
+}
+
+func (f *rollingBloomFilter) hash(idx int, key []byte) uint64 {
 	var h maphash.Hash
 	h.SetSeed(f.seeds[idx])
 	h.Write(key)
-	return h.Sum64() % f.mBits
+	return h.Sum64()
 }

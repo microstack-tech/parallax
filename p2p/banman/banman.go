@@ -25,10 +25,10 @@
 //     via setban / unban / clearbanned RPC. Default duration 24h
 //     (DEFAULT_MISBEHAVING_BANTIME, src/banman.h:19). Subnet-aware:
 //     "1.2.3.0/24" bans the whole /24.
-//   - Discouraged: in-memory Bloom filter, 50k capacity / 1e-6 false
-//     positive rate (Bitcoin Core defaults, src/common/bloom.h).
-//     Populated automatically from peer Misbehaving() calls. Reset on
-//     restart — no persistence.
+//   - Discouraged: in-memory rolling Bloom filter, 50k capacity /
+//     1e-6 false-positive rate (Bitcoin Core defaults, src/banman.h).
+//     Populated automatically from peer Misbehaving() calls. Oldest
+//     entries rotate out as new ones arrive; no persistence.
 //
 // Modern Bitcoin Core (v28+) dropped the "ban score" point system;
 // this package follows that model. Misbehaving() is an immediate
@@ -88,7 +88,7 @@ type banlistFile struct {
 type BanMan struct {
 	mu          sync.Mutex
 	banned      map[string]banEntry // subnet string → entry
-	discouraged *bloomFilter
+	discouraged *rollingBloomFilter
 	file        string     // banlist.json path; empty disables persistence
 	dumpMu      sync.Mutex // serializes Dump's snapshot+write+rename
 	log         logging.Logger
@@ -103,7 +103,7 @@ func New(file string, log logging.Logger) (*BanMan, error) {
 	}
 	bm := &BanMan{
 		banned:      make(map[string]banEntry),
-		discouraged: newBloomFilter(discourageBloomCap, discourageBloomFP),
+		discouraged: newRollingBloomFilter(discourageBloomCap, discourageBloomFP),
 		file:        file,
 		log:         log,
 	}
@@ -225,8 +225,9 @@ func (b *BanMan) Discourage(addr net.IP) {
 }
 
 // IsDiscouraged reports whether the address is in the discourage
-// filter. False positives are bounded by discourageBloomFP; false
-// negatives are impossible.
+// filter. False positives are bounded by discourageBloomFP; the most
+// recent discourageBloomCap addresses are always remembered, older
+// ones rotate out.
 func (b *BanMan) IsDiscouraged(addr net.IP) bool {
 	if addr == nil {
 		return false
