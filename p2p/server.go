@@ -1317,7 +1317,7 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	// The v1/v2 dial scheduler enforces the same rule in checkDial;
 	// this covers runV2Dialer and the anchor replay, which dial
 	// without going through the scheduler.
-	if !extraHas(extra, feelerConn) {
+	if v2DialSubjectToGroupLimit(extra) {
 		if g := ipNetworkGroupKey(addr.IP); g != "" && srv.outboundGroupOccupied(g) {
 			srv.addrmanAttemptByTCP(addr, false)
 			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
@@ -1362,6 +1362,18 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 
 // extraHas reports whether the extra flag set includes f.
 func extraHas(extra, f connFlag) bool { return extra&f != 0 }
+
+// v2DialSubjectToGroupLimit reports whether a v2 dial carrying the
+// given extra flags is subject to the outbound network-group
+// diversity rule. Only feeler probes are exempt — full-relay,
+// block-relay-only and anchor dials are all group-limited, as in
+// Core's ThreadOpenConnections. Kept as a named predicate so the
+// exemption set is pinned by a unit test: an earlier version
+// exempted everything with a non-zero extra, quietly letting
+// block-relay and anchor fills cluster in one /16.
+func v2DialSubjectToGroupLimit(extra connFlag) bool {
+	return !extraHas(extra, feelerConn)
+}
 
 // outboundGroupOccupied reports whether any current non-feeler
 // outbound peer falls in the given network-group key. Used by the

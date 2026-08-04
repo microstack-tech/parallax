@@ -1011,3 +1011,38 @@ func TestDialSchedStaticRecoversAfterBanExpiry(t *testing.T) {
 		},
 	})
 }
+
+// TestDialSchedStaticRecoversAfterInboundFailure — a static task
+// rejected with errInboundProgress must be redialed when the inbound
+// handshake FAILS. A failed inbound never becomes a peer, so no
+// peer-removed event fires for the ID; recovery rides on the
+// inbound-progress clear hook re-checking the static pool.
+func TestDialSchedStaticRecoversAfterInboundFailure(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	staticNode := newNode(uintID(0x51), "9.9.9.9:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: an inbound conn claiming the static node's ID is
+		// mid-handshake, so the freshly-added static task is rejected
+		// out of the pool.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(staticNode.ID())
+				d.addStatic(staticNode)
+			},
+		},
+		// Round 1: the inbound handshake fails (unregisters without
+		// ever having produced a peer). The static task must come
+		// back and get dialed.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(staticNode.ID())
+			},
+			wantNewDials: []*enode.Node{staticNode},
+		},
+	})
+}

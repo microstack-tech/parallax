@@ -99,3 +99,20 @@ func TestPostHandshakeFeelerExemptFromMaxPeers(t *testing.T) {
 		t.Fatalf("feeler at MaxPeers = %v, want nil (exempt)", err)
 	}
 }
+
+// TestV2DialGroupLimitExemptions — pins the exemption set of the
+// outbound network-group rule on the v2 dial path. Only feelers are
+// exempt; block-relay-only and anchor dials (blockRelayConn) must be
+// group-limited. The original port exempted every dial with a
+// non-zero extra flag, so this exact assertion is the F8 regression.
+func TestV2DialGroupLimitExemptions(t *testing.T) {
+	if !v2DialSubjectToGroupLimit(0) {
+		t.Error("plain full-relay dial must be subject to the group limit")
+	}
+	if !v2DialSubjectToGroupLimit(blockRelayConn) {
+		t.Error("block-relay/anchor dial must be subject to the group limit")
+	}
+	if v2DialSubjectToGroupLimit(feelerConn) {
+		t.Error("feeler probe must be exempt from the group limit")
+	}
+}
