@@ -1,0 +1,101 @@
+// Copyright 2025-2026 The Parallax Protocol Authors
+// This file is part of the parallax library.
+//
+// The parallax library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The parallax library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
+
+package p2p
+
+import (
+	"errors"
+	"net"
+	"testing"
+
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+)
+
+// TestDialV2RejectsNetRestrict — the shared v2 dial path enforces the
+// operator's --netrestrict allowlist before opening any socket, for
+// every caller class (plain, block-relay, feeler). Without this gate
+// a node locked to a private range still dialed arbitrary public IPs
+// drawn from addrman and DNS seeds.
+func TestDialV2RejectsNetRestrict(t *testing.T) {
+	t.Parallel()
+	restrict := new(netutil.Netlist)
+	restrict.Add("10.0.0.0/8")
+
+	srv := &Server{
+		Config: Config{NetRestrict: restrict, Logger: logging.Root()},
+	}
+	srv.log = logging.Root()
+
+	outside := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 50), Port: 32110}
+	if err := srv.DialV2(outside); !errors.Is(err, errV2DialRestricted) {
+		t.Fatalf("DialV2 outside netrestrict = %v, want errV2DialRestricted", err)
+	}
+	if err := srv.DialV2BlockRelay(outside); !errors.Is(err, errV2DialRestricted) {
+		t.Fatalf("DialV2BlockRelay outside netrestrict = %v, want errV2DialRestricted", err)
+	}
+	if err := srv.DialV2Feeler(outside); !errors.Is(err, errV2DialRestricted) {
+		t.Fatalf("DialV2Feeler outside netrestrict = %v, want errV2DialRestricted", err)
+	}
+}
+
+// TestDialedOutboundCountIn — the v2 dialer's budget counts live
+// dynamically-dialed peers (block-relay included) and excludes
+// feeler probes, inbound peers, and static dials, mirroring the dial
+// scheduler's maxDialPeers accounting.
+func TestDialedOutboundCountIn(t *testing.T) {
+	dyn := newOutboundPeerAt(t, net.IPv4(1, 0, 0, 1), 32110)
+	br := newOutboundPeerAt(t, net.IPv4(2, 0, 0, 1), 32110)
+	br.rw.set(blockRelayConn, true)
+	feeler := newOutboundPeerAt(t, net.IPv4(3, 0, 0, 1), 32110)
+	feeler.rw.set(feelerConn, true)
+	inbound := newOutboundPeerAt(t, net.IPv4(4, 0, 0, 1), 32110)
+	inbound.rw.set(dynDialedConn, false)
+	inbound.rw.set(inboundConn, true)
+	static := newOutboundPeerAt(t, net.IPv4(5, 0, 0, 1), 32110)
+	static.rw.set(dynDialedConn, false)
+	static.rw.set(staticDialedConn, true)
+
+	if got := dialedOutboundCountIn(peerSet(dyn, br, feeler, inbound, static)); got != 2 {
+		t.Fatalf("dialedOutboundCountIn = %d, want 2 (dyn + block-relay)", got)
+	}
+}
+
+// TestPostHandshakeFeelerExemptFromMaxPeers — feeler probes connect
+// regardless of the MaxPeers ceiling, as Core's feelers do; a regular
+// outbound dial at saturation is still hard-rejected. Rejecting
+// feelers at saturation would silently stop tried-table maintenance
+// exactly when the node is busiest.
+func TestPostHandshakeFeelerExemptFromMaxPeers(t *testing.T) {
+	srv := newSelfEndpointServer(t, net.ParseIP("1.2.3.4"), 30303) // MaxPeers: 1
+
+	peers := map[enode.ID]*Peer{}
+	occupant := NewPeer(randomID(), "occupant", nil)
+	peers[occupant.ID()] = occupant
+
+	node := enode.SignNull(new(enr.Record), randomID())
+
+	full := &conn{flags: dynDialedConn | v2DialedConn, node: node}
+	if err := srv.postHandshakeChecks(peers, 0, 0, full); !errors.Is(err, DiscTooManyPeers) {
+		t.Fatalf("full-relay dial at MaxPeers = %v, want DiscTooManyPeers", err)
+	}
+	probe := &conn{flags: dynDialedConn | v2DialedConn | feelerConn, node: node}
+	if err := srv.postHandshakeChecks(peers, 0, 0, probe); err != nil {
+		t.Fatalf("feeler at MaxPeers = %v, want nil (exempt)", err)
+	}
+}
