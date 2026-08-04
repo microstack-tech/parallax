@@ -1046,6 +1046,12 @@ func (srv *Server) setupDialScheduler() {
 		v2Dial:         srv.DialV2,
 		maxBlockRelay:  srv.maxBlockRelayDial(),
 	}
+	if srv.BanList != nil {
+		bl := srv.BanList
+		config.isBanned = func(ip net.IP) bool {
+			return bl.IsBanned(ip) || bl.IsDiscouraged(ip)
+		}
+	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
 	}
@@ -1200,6 +1206,19 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if addr == nil {
 		return errors.New("v2 dial: nil address")
 	}
+	// Never make an automatic outbound connection to a banned or
+	// discouraged address. Bitcoin Core gates outbound candidate
+	// selection the same way (CConnman::OpenNetworkConnection,
+	// src/net.cpp: IsBanned || IsDiscouraged). Without this the
+	// inbound-only accept-time gate is trivially bypassed: a banned
+	// peer stays in the addrbook and the dial scheduler reconnects
+	// to it as an outbound peer within one cooldown.
+	if srv.BanList != nil && addr.IP != nil {
+		if srv.BanList.IsBanned(addr.IP) || srv.BanList.IsDiscouraged(addr.IP) {
+			srv.addrmanAttemptByTCP(addr, false)
+			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)
+		}
+	}
 	if !srv.v2DialCooldownCheckAndMark(addr) {
 		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
 	}
@@ -1282,6 +1301,11 @@ var errV2DialCooldown = errors.New("v2 dial cooldown")
 // dials its own external IP and accepts the looped-back TCP
 // connection as a peer.
 var errV2DialSelf = errors.New("v2 dial self")
+
+// errV2DialBanned is the sentinel returned by DialV2 when the dial
+// target's IP is banned or discouraged. Callers back off rather
+// than counting it as a connection failure.
+var errV2DialBanned = errors.New("v2 dial banned")
 
 // v2DialCooldownCheckAndMark returns true and records addr's dial
 // timestamp if the cooldown has elapsed; returns false otherwise.

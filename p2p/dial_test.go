@@ -508,6 +508,35 @@ func TestDialSchedSkipsInboundInProgress(t *testing.T) {
 	})
 }
 
+// TestDialSchedSkipsBannedAddresses — the scheduler must not dial a
+// node whose IP is banned or discouraged, mirroring Bitcoin Core's
+// outbound ban gate. Without it, an operator ban is trivially
+// bypassed: the banned peer stays in the addrbook and gets redialed
+// as an outbound connection.
+func TestDialSchedSkipsBannedAddresses(t *testing.T) {
+	t.Parallel()
+
+	banned := map[string]bool{"6.6.6.6": true}
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isBanned: func(ip net.IP) bool {
+			return banned[ip.String()]
+		},
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			discovered: []*enode.Node{
+				newNode(uintID(0x30), "6.6.6.6:32110"), // banned → skip
+				newNode(uintID(0x31), "1.2.3.4:32110"), // ok
+			},
+			wantNewDials: []*enode.Node{
+				newNode(uintID(0x31), "1.2.3.4:32110"),
+			},
+		},
+	})
+}
+
 // TestDialSchedInboundProgressRefcount — two inbound conns claiming
 // the same NodeID register independently; the dial scheduler must
 // keep blocking until BOTH unregister. Defends against a peer that

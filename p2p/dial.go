@@ -81,6 +81,7 @@ var (
 	errNetRestrict           = errors.New("not contained in netrestrict list")
 	errNoPort                = errors.New("node does not provide TCP port")
 	errOutboundGroupOccupied = errors.New("outbound network group already occupied")
+	errBanned                = errors.New("address banned or discouraged")
 )
 
 // dialer creates outbound connections and submits them into Server.
@@ -203,6 +204,12 @@ type dialConfig struct {
 	// full-relay regardless of slot pressure. Static dials never
 	// consume from this bucket.
 	maxBlockRelay int
+
+	// isBanned reports whether an IP is banned or discouraged. When
+	// set, checkDial refuses to dial such nodes, mirroring Bitcoin
+	// Core's outbound ban gate (CConnman::OpenNetworkConnection).
+	// Nil disables the check (unit tests, no ban list configured).
+	isBanned func(net.IP) bool
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -575,6 +582,13 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNetRestrict
+	}
+	// Never dial a banned or discouraged address (Bitcoin Core
+	// CConnman::OpenNetworkConnection). Applies to every scheduler
+	// dial including static ones — an operator ban must not be
+	// worked around by an addnode entry.
+	if d.isBanned != nil && n.IP() != nil && d.isBanned(n.IP()) {
+		return errBanned
 	}
 	if d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed

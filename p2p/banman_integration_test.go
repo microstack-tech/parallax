@@ -17,6 +17,7 @@
 package p2p
 
 import (
+	"errors"
 	"net"
 	"testing"
 
@@ -54,6 +55,37 @@ func TestCheckInboundConnRejectsBannedIP(t *testing.T) {
 	// public one).
 	if err := srv.checkInboundConn(net.IPv4(8, 8, 8, 8)); err != nil {
 		t.Fatalf("checkInboundConn rejected unbanned IP: %v", err)
+	}
+}
+
+// TestDialV2RejectsBannedIP — the shared v2 outbound dial path
+// refuses to connect to a banned or discouraged address before
+// opening any socket, so every caller (DialV2, feeler, addrfetch,
+// runV2Dialer, anchor replay) is covered. Mirrors Bitcoin Core's
+// CConnman::OpenNetworkConnection ban gate.
+func TestDialV2RejectsBannedIP(t *testing.T) {
+	t.Parallel()
+	bm, err := banman.New("", logging.Root())
+	if err != nil {
+		t.Fatalf("banman.New: %v", err)
+	}
+	bannedIP := net.IPv4(192, 0, 2, 77)
+	if err := bm.Ban(bannedIP, 0, banman.ReasonManual); err != nil {
+		t.Fatalf("Ban: %v", err)
+	}
+	discouragedIP := net.IPv4(192, 0, 2, 88)
+	bm.Discourage(discouragedIP)
+
+	srv := &Server{
+		Config: Config{BanList: bm, Logger: logging.Root()},
+	}
+	srv.log = logging.Root()
+
+	if err := srv.DialV2(&net.TCPAddr{IP: bannedIP, Port: 32110}); !errors.Is(err, errV2DialBanned) {
+		t.Fatalf("DialV2 to banned IP = %v, want errV2DialBanned", err)
+	}
+	if err := srv.DialV2(&net.TCPAddr{IP: discouragedIP, Port: 32110}); !errors.Is(err, errV2DialBanned) {
+		t.Fatalf("DialV2 to discouraged IP = %v, want errV2DialBanned", err)
 	}
 }
 
