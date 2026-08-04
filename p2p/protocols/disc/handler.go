@@ -211,6 +211,19 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		close(relayDone)
 	}
 
+	// A peer that completes capability negotiation but never sends
+	// its Hello would occupy a slot indefinitely with an undisclosed
+	// relay policy (RelayTxs defaults true pre-Hello). Disconnect if
+	// the Hello hasn't arrived within the deadline — Bitcoin's
+	// VERSION_HANDSHAKE_TIMEOUT (60s).
+	helloTimer := time.AfterFunc(getHelloDeadline(), func() {
+		if !st.gotHello.Load() {
+			log.Debug("parallax-disc/1: no Hello within deadline, disconnecting")
+			peer.Disconnect(p2p.DiscUselessPeer)
+		}
+	})
+	defer helloTimer.Stop()
+
 	defer func() {
 		// Release per-peer state from the backend's maps on session
 		// close. AddrmanBackend exposes PeerDisconnected; other
@@ -398,6 +411,22 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	}
 	return p2p.Send(rw, PeersMsg, Peers{Entries: sample})
 }
+
+// helloDeadline is the time (in nanoseconds) a session may run
+// without the peer's Hello before we disconnect it. Atomic so tests
+// can shorten it. Production value mirrors Bitcoin's
+// VERSION_HANDSHAKE_TIMEOUT.
+var helloDeadline atomic.Int64
+
+func init() { helloDeadline.Store(int64(60 * time.Second)) }
+
+func getHelloDeadline() time.Duration {
+	return time.Duration(helloDeadline.Load())
+}
+
+// SetHelloDeadline overrides the no-Hello disconnect deadline.
+// Exposed for tests.
+func SetHelloDeadline(d time.Duration) { helloDeadline.Store(int64(d)) }
 
 // peersResponseJitterMean is the mean Poisson delay (in nanoseconds)
 // applied to GetPeers responses. Atomic because tests mutate it while

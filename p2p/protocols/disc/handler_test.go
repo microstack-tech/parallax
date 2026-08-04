@@ -831,3 +831,58 @@ func waitForSample(t *testing.T, b *testBackend, want int, timeout time.Duration
 	}
 	t.Fatalf("expected %d HandlePeers calls, got timeout", want)
 }
+
+// TestHandlerDisconnectsOnMissingHello — a peer that completes
+// negotiation but never sends its Hello is disconnected after the
+// deadline (Bitcoin's VERSION_HANDSHAKE_TIMEOUT) instead of holding
+// a slot forever with an undisclosed relay policy.
+func TestHandlerDisconnectsOnMissingHello(t *testing.T) {
+	prevDeadline := getHelloDeadline()
+	SetHelloDeadline(50 * time.Millisecond)
+	t.Cleanup(func() { SetHelloDeadline(prevDeadline) })
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{obsOK: true}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	// NewPeerPipe wires Disconnect to close the handler-side pipe, so
+	// the deadline disconnect actually unwinds the blocked read loop
+	// the way a live Server teardown does.
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() { appRW.Close() })
+
+	// Consume the greeting but never send Hello back.
+	drainGreeting(t, appRW)
+
+	select {
+	case <-done:
+		// Session ended: deadline disconnect fired.
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler still running long after the Hello deadline")
+	}
+}
+
+// TestHandlerHelloBeatsDeadline — a Hello arriving inside the
+// deadline keeps the session alive past it.
+func TestHandlerHelloBeatsDeadline(t *testing.T) {
+	prevDeadline := getHelloDeadline()
+	SetHelloDeadline(150 * time.Millisecond)
+	t.Cleanup(func() { SetHelloDeadline(prevDeadline) })
+
+	b := &testBackend{obsOK: true}
+	app, done := runHandler(t, b)
+	drainGreeting(t, app)
+	sendTestHello(t, app)
+
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited after timely Hello: %v", err)
+	case <-time.After(400 * time.Millisecond):
+		// Survived well past the deadline.
+	}
+}
