@@ -913,3 +913,78 @@ func TestSolicitedPeersResponseBypassesRateLimit(t *testing.T) {
 		}
 	})
 }
+
+// TestSamplePeersCapAndCache — a GetPeers response never discloses
+// more than maxPctPeersToSend percent of the addrbook, and repeated
+// requests from the same network draw the same cached sample for the
+// cache lifetime (Bitcoin: MAX_PCT_ADDR_TO_SEND and
+// m_addr_response_caches), so reconnect loops can't enumerate the
+// book.
+func TestSamplePeersCapAndCache(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(31))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	// Seed the book with 100 fresh entries across distinct groups.
+	seed := func(first, second byte) {
+		naddr, _ := addrman.NewNetAddr(addrman.NetIPv4, []byte{first, second, 1, 1}, 32110)
+		src, _ := addrman.NewNetAddr(addrman.NetIPv4, []byte{first, second, 1, 1}, 0)
+		m.AddOne(naddr, 0x00, nil, time.Now(), src, addrman.SourceTCPGossip, 0)
+	}
+	for i := 0; i < 100; i++ {
+		first := byte(5 + i%94)
+		if first >= 10 {
+			first++
+		}
+		seed(first, byte(i/94))
+	}
+	size := m.Size(nil, nil)
+
+	got := b.SamplePeers(peer, MaxPeersPerMessage)
+	if want := maxPctPeersToSend * size / 100; len(got) > want {
+		t.Fatalf("sample discloses %d of %d entries, want <= %d (23%%)", len(got), size, want)
+	}
+	if len(got) == 0 {
+		t.Fatal("sample is empty")
+	}
+
+	// Growing the book must not change the cached response.
+	for i := 0; i < 50; i++ {
+		seed(byte(120+i), 7)
+	}
+	again := b.SamplePeers(peer, MaxPeersPerMessage)
+	if len(again) != len(got) {
+		t.Fatalf("cached response changed size: %d -> %d", len(got), len(again))
+	}
+	for i := range got {
+		if !bytesEqual(got[i].Addr, again[i].Addr) || got[i].TCPPort != again[i].TCPPort {
+			t.Fatalf("cached response differs at %d: %+v vs %+v", i, got[i], again[i])
+		}
+	}
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

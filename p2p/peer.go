@@ -427,6 +427,12 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
+// MarkInboundForTest sets the inbound conn flag on a test-constructed
+// peer. Production conns get the flag at accept time; test harnesses
+// (NewPeer / NewPeerForTest) start with no flags and need this to
+// exercise inbound-only paths such as the GetPeers response gate.
+func (p *Peer) MarkInboundForTest() { p.rw.set(inboundConn, true) }
+
 // UsingV2Handshake reports whether this session is authenticated via
 // the PIP-0006 Phase 2b BIP324-style v2 handshake (true) or the legacy
 // RLPx ECIES handshake (false). Callers use this to tell whether the

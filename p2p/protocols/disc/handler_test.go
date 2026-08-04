@@ -676,8 +676,8 @@ func TestHandlerAnswersGetPeers(t *testing.T) {
 			{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone, LastSeen: 1700000000},
 		},
 	}
-	app, _ := runHandler(t, b)
-	drainAndOpen(t, app)
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) { p.MarkInboundForTest() })
+	drainAndOpenInbound(t, app)
 
 	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
 		t.Fatal(err)
@@ -698,6 +698,41 @@ func TestHandlerAnswersGetPeers(t *testing.T) {
 	}
 }
 
+// TestHandlerIgnoresGetPeersOnOutboundConn — we only answer GetPeers
+// from peers that connected to us. A node we dialed probing for our
+// addrbook is ignored (Bitcoin: getaddr is ignored on outbound
+// connections), without disconnecting the session.
+func TestHandlerIgnoresGetPeersOnOutboundConn(t *testing.T) {
+	b := &testBackend{
+		obsOK:  true,
+		sample: []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone}},
+	}
+	// Default harness peers carry no inbound flag: this session is
+	// outbound from our side.
+	app, done := runHandler(t, b)
+	drainAndOpen(t, app)
+
+	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan struct{}, 1)
+	go func() {
+		if _, err := app.ReadMsg(); err == nil {
+			read <- struct{}{}
+		}
+	}()
+	select {
+	case <-read:
+		t.Fatal("handler answered GetPeers on an outbound connection")
+	case <-time.After(150 * time.Millisecond):
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited unexpectedly: %v", err)
+	default:
+	}
+}
+
 // TestHandlerIgnoresRepeatGetPeers — Bitcoin parity: one response per
 // session. Second GetPeers yields no response.
 func TestHandlerIgnoresRepeatGetPeers(t *testing.T) {
@@ -705,8 +740,8 @@ func TestHandlerIgnoresRepeatGetPeers(t *testing.T) {
 		obsOK:  true,
 		sample: []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone}},
 	}
-	app, _ := runHandler(t, b)
-	drainAndOpen(t, app)
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) { p.MarkInboundForTest() })
+	drainAndOpenInbound(t, app)
 
 	_ = p2p.Send(app, GetPeersMsg, GetPeers{})
 	drainOne(t, app) // first response
@@ -769,6 +804,16 @@ func sendTestHello(t *testing.T, w p2p.MsgWriter) {
 func drainAndOpen(t *testing.T, app p2p.MsgReadWriter) {
 	t.Helper()
 	drainGreeting(t, app)
+	sendTestHello(t, app)
+}
+
+// drainAndOpenInbound is drainAndOpen for handlers whose peer is
+// marked inbound: the greeting is Hello + YourAddr only (inbound
+// peers get no self-advertise or GetPeers).
+func drainAndOpenInbound(t *testing.T, app p2p.MsgReadWriter) {
+	t.Helper()
+	drainOne(t, app) // Hello
+	drainOne(t, app) // YourAddr
 	sendTestHello(t, app)
 }
 

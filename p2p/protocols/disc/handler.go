@@ -342,6 +342,16 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	if peer.BlockRelayOnly() {
 		return nil
 	}
+	// Only answer peers that connected to us. We chose our outbound
+	// peers; a node we dialed asking for our addrbook is the shape of
+	// an addrman-poisoning probe, and Bitcoin ignores getaddr on
+	// outbound connections for the same cache-leak reason
+	// (net_processing.cpp "Ignore getaddr message on outbound
+	// connections").
+	if !peer.Inbound() {
+		backend.Log().Trace("parallax-disc/1: ignoring GetPeers on outbound connection", "peer", peer.ID())
+		return nil
+	}
 	count := st.getPeersReceived.Add(1)
 	if count > 1 {
 		// Bitcoin parity: repeat GetPeers in the same session is a

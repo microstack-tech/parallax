@@ -21,6 +21,7 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"errors"
+	mrand "math/rand/v2"
 	"net"
 	"sync"
 	"time"
@@ -99,6 +100,15 @@ type AddrmanBackend struct {
 	// is cleared by any addr message under 1000 entries).
 	getPeersPending map[PeerKey]bool
 
+	// peersReply caches the GetPeers response per requestor network
+	// for ~a day, so reconnecting requestors keep drawing the same
+	// sample instead of a fresh one per session. Without it an
+	// attacker enumerates the whole addrbook in a handful of
+	// reconnects and can fingerprint the node across network
+	// identities (Bitcoin: CConnman::m_addr_response_caches, ~21-27h
+	// per cache entry).
+	peersReply map[uint8]peersReplyCache
+
 	// relayKey is the per-process secret used as the keyed-hash key
 	// for the address-relay PRF. 32 random bytes from crypto/rand at
 	// backend construction; never persisted, never rotated. Rotating
@@ -134,6 +144,7 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		peerHello:       make(map[PeerKey]Hello),
 		peerOutboxes:    make(map[PeerKey]*peerRelayState),
 		getPeersPending: make(map[PeerKey]bool),
+		peersReply:      make(map[uint8]peersReplyCache),
 	}
 	if _, err := rand.Read(b.relayKey[:]); err != nil {
 		// crypto/rand failures are catastrophic (see crypto.io's
@@ -331,17 +342,48 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 	}
 }
 
-// SamplePeers returns up to max entries for a GetPeers response. Draws
-// from addrman.GetAddr with filtered=true so IsTerrible entries are
-// dropped. Maps each entry back to the PeerEntry wire format with the
-// stored KeyType/NodeID.
-func (b *AddrmanBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
+// maxPctPeersToSend caps a GetPeers response at this percentage of
+// the addrbook, whichever of it and MaxPeersPerMessage is smaller.
+// Mirrors Bitcoin's MAX_PCT_ADDR_TO_SEND=23: one response never
+// discloses more than about a quarter of the book.
+const maxPctPeersToSend = 23
+
+// peersReplyCache is one cached GetPeers response (see peersReply).
+type peersReplyCache struct {
+	entries []PeerEntry
+	expires time.Time
+}
+
+// SamplePeers returns up to max entries for a GetPeers response.
+// Draws from addrman.GetAddr with filtered=true so IsTerrible entries
+// are dropped, capped at maxPctPeersToSend percent of the book, and
+// caches the response per requestor network for ~a day so repeated
+// requests can't enumerate the addrbook. Maps each entry back to the
+// PeerEntry wire format with the stored KeyType/NodeID.
+func (b *AddrmanBackend) SamplePeers(peer *p2p.Peer, max int) []PeerEntry {
 	if b.m == nil || max <= 0 {
 		return nil
 	}
+	// Cache key: the requestor's network. Coarser than Bitcoin's
+	// (network, local socket) key, but Parallax nodes run a single
+	// listener, so the network alone carries the same intent — all
+	// same-network requestors share one long-lived sample. Callers
+	// must treat the returned slice as read-only.
+	netID, _, ok := peerNetworkGroup(peer)
+	if !ok {
+		netID = 0
+	}
+	now := time.Now()
+	b.mu.Lock()
+	if c, hit := b.peersReply[netID]; hit && now.Before(c.expires) {
+		b.mu.Unlock()
+		return c.entries
+	}
+	b.mu.Unlock()
+
 	// Ask addrman for up to max*2 entries so we have slack after
 	// filtering out entries that can't be serialized on the wire.
-	sample := b.m.GetAddr(max*2, 0, nil, true)
+	sample := b.m.GetAddr(max*2, maxPctPeersToSend, nil, true)
 	out := make([]PeerEntry, 0, len(sample))
 	for _, addr := range sample {
 		if len(out) >= max {
@@ -362,6 +404,16 @@ func (b *AddrmanBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 			LastSeen:  uint64(info.LastSeen.Unix()),
 		})
 	}
+	// Bitcoin's cache lifetime: 21h plus up to 6h of jitter, chosen
+	// so scraped data is mostly stale by the time a full scrape could
+	// complete, while honest requestors still get a usably fresh
+	// sample (churn is bounded by the 30-day IsTerrible horizon).
+	b.mu.Lock()
+	b.peersReply[netID] = peersReplyCache{
+		entries: out,
+		expires: now.Add(21*time.Hour + time.Duration(mrand.Int64N(int64(6*time.Hour)))),
+	}
+	b.mu.Unlock()
 	return out
 }
 
