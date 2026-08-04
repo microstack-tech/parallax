@@ -153,8 +153,11 @@ group; the most populated group is selected (ties broken by youngest
 representative connection), and the youngest peer in that group is
 disconnected with `DiscTooManyPeers`.
 
-A minimum 30 s connection age applies before a peer is eligible for
-eviction at all. Trusted and static peers are always exempt.
+Trusted and static peers are always exempt, as are peers whose
+disconnect is already in flight. There is no minimum connection age
+before a peer becomes eligible — Bitcoin Core's eviction has no age
+floor either, and brand-new connections are legitimate candidates
+(the connection-age protection round already favors older peers).
 
 If every candidate is protected — eviction can find no victim — the
 new connection is hard-rejected with `DiscTooManyPeers`.
