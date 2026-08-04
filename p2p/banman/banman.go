@@ -206,6 +206,22 @@ func (b *BanMan) UnbanSubnet(subnet *net.IPNet) (bool, error) {
 	return true, b.Dump()
 }
 
+// IsBannedSubnet reports whether exactly this subnet has an active
+// ban entry. Unlike IsBanned, containment in a wider ban does not
+// count — this is the setban add-precondition check, mirroring
+// Bitcoin Core's BanMan::IsBanned(CSubNet) exact banmap lookup.
+func (b *BanMan) IsBannedSubnet(subnet *net.IPNet) bool {
+	if subnet == nil {
+		return false
+	}
+	key := normalizeSubnet(subnet)
+	now := time.Now().Unix()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.banned[key]
+	return ok && now < e.entry.BannedTill
+}
+
 // IsBanned reports whether addr is covered by any active (non-
 // expired) banned subnet. Expired entries are pruned lazily on
 // query. Used by the accept-loop ban check.

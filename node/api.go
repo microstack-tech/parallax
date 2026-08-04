@@ -289,6 +289,14 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 	}
 	switch command {
 	case "add":
+		// Bitcoin parity (rpc/net.cpp RPC_CLIENT_NODE_ALREADY_ADDED):
+		// re-adding an active ban is an error and the operator must
+		// remove it first. BanSubnet's extend-only rule would keep
+		// the longer of the two expiries while reporting success, so
+		// a "shortened" ban would silently not apply.
+		if bm.IsBannedSubnet(netw) {
+			return false, errors.New("IP/subnet already banned")
+		}
 		duration := time.Duration(0) // banman.New default
 		if bantime != nil && *bantime != 0 {
 			if absolute != nil && *absolute {

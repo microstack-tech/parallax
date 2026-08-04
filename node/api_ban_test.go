@@ -143,3 +143,36 @@ func TestClearbanned(t *testing.T) {
 		t.Fatalf("after clearbanned, listbanned = %+v, want empty", list)
 	}
 }
+
+// TestSetbanAddAlreadyBanned — re-adding an actively banned subnet is
+// an error (Bitcoin parity: RPC_CLIENT_NODE_ALREADY_ADDED); the
+// operator must remove the ban first. Without the error, a
+// "shortening" re-ban would report success while the extend-only rule
+// silently kept the longer expiry. A wider covering ban does not
+// block an exact-subnet add (Core's check is an exact banmap lookup),
+// and remove-then-add works.
+func TestSetbanAddAlreadyBanned(t *testing.T) {
+	api := startBanTestNode(t)
+
+	if ok, err := api.Setban("192.0.2.9", "add", nil, nil); err != nil || !ok {
+		t.Fatalf("setban add: ok=%v err=%v", ok, err)
+	}
+	short := int64(3600)
+	if _, err := api.Setban("192.0.2.9", "add", &short, nil); err == nil {
+		t.Fatal("re-adding an active ban did not error")
+	} else if !strings.Contains(err.Error(), "already banned") {
+		t.Fatalf("unexpected error for re-add: %v", err)
+	}
+	// A covering wider ban is a different banmap entry: exact-subnet
+	// add still succeeds.
+	if ok, err := api.Setban("192.0.2.0/24", "add", nil, nil); err != nil || !ok {
+		t.Fatalf("adding covering subnet: ok=%v err=%v", ok, err)
+	}
+	// Remove-then-add is the sanctioned way to change a ban's expiry.
+	if ok, err := api.Setban("192.0.2.9", "remove", nil, nil); err != nil || !ok {
+		t.Fatalf("setban remove: ok=%v err=%v", ok, err)
+	}
+	if ok, err := api.Setban("192.0.2.9", "add", &short, nil); err != nil || !ok {
+		t.Fatalf("re-add after remove: ok=%v err=%v", ok, err)
+	}
+}
