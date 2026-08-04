@@ -1155,12 +1155,38 @@ func (srv *Server) runV2Dialer() {
 	// back off briefly to stop the iterator from looping hot.
 	const cooldownRejectPause = 1 * time.Second
 
+	// Poll interval while the outbound-slot budget is spent. Slots
+	// free up on peer disconnect, which this loop can't observe
+	// directly, so it re-checks on a coarse timer.
+	const budgetFullPause = 5 * time.Second
+
+	if srv.maxDialedConns() == 0 {
+		// Dialing disabled (NoDial / MaxPeers=0).
+		return
+	}
 	var prev time.Time
 	for srv.v2Iter.Next() {
 		select {
 		case <-srv.quit:
 			return
 		default:
+		}
+		// Outbound-slot budget. The dial scheduler enforces
+		// maxDialPeers on its own dials; this loop bypasses the
+		// scheduler, so without a ceiling here a v2-native network
+		// fills every MaxPeers slot with outbound peers — DialRatio
+		// stops meaning anything and inbound capacity starves (late
+		// inbound connections then bounce off the hard MaxPeers
+		// check instead of triggering eviction). The budget is
+		// shared with the scheduler by counting the live dialed
+		// peer set rather than loop-local state.
+		if srv.dialedOutboundCount() >= srv.maxDialedConns() {
+			select {
+			case <-srv.quit:
+				return
+			case <-time.After(budgetFullPause):
+			}
+			continue
 		}
 		cand := srv.v2Iter.Candidate()
 		addrPort, ok := cand.Addr.AddrPort()
@@ -1356,6 +1382,31 @@ func outboundGroupOccupiedIn(peers map[enode.ID]*Peer, group string) bool {
 		}
 	}
 	return false
+}
+
+// dialedOutboundCount returns the number of live dynamically-dialed
+// outbound peers, block-relay-only included, feeler probes excluded.
+// This is the count the v2 dial loop holds against maxDialedConns —
+// static and trusted connections don't consume the dynamic budget,
+// matching the dial scheduler's maxDialPeers accounting.
+func (srv *Server) dialedOutboundCount() int {
+	n := 0
+	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
+		n = dialedOutboundCountIn(peers)
+	})
+	return n
+}
+
+// dialedOutboundCountIn is the pure core of dialedOutboundCount,
+// split out for unit testing.
+func dialedOutboundCountIn(peers map[enode.ID]*Peer) int {
+	n := 0
+	for _, p := range peers {
+		if p.rw.is(dynDialedConn) && !p.rw.is(feelerConn) {
+			n++
+		}
+	}
+	return n
 }
 
 // blockRelayOutboundCount returns the number of current outbound
