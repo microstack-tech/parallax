@@ -623,10 +623,12 @@ func (tab *Table) addVerifiedNode(n *node) {
 //     Checked first so that a transient RequestENR failure (one dropped
 //     UDP packet) cannot blacklist a known-good node for rejectCacheTTL.
 //
-//  2. If n.ID() is in the negative cache (recent RequestENR error or filter
-//     rejection), drop immediately. Each non-Parallax / dead ID then costs
-//     us at most one round-trip per rejectCacheTTL, regardless of how many
-//     neighbors keep returning it in their FINDNODE responses.
+//  2. If (n.ID(), n.IP()) is in the negative cache (recent RequestENR error
+//     or filter rejection), drop immediately. Each non-Parallax / dead
+//     endpoint then costs us at most one round-trip per rejectCacheTTL,
+//     regardless of how many neighbors keep returning it in their FINDNODE
+//     responses. Keyed per (ID, IP) so a spoofed advertisement can't
+//     blacklist the real node.
 func (tab *Table) verifyAndAdd(n *node) {
 	if tab.nodeFilter == nil {
 		tab.addVerifiedNode(n)
@@ -637,7 +639,7 @@ func (tab *Table) verifyAndAdd(n *node) {
 		tab.addVerifiedNode(wrapNode(cached))
 		return
 	}
-	if tab.rejects.Contains(id) {
+	if tab.rejects.Contains(id, n.IP()) {
 		return
 	}
 	select {
@@ -651,12 +653,12 @@ func (tab *Table) verifyAndAdd(n *node) {
 		defer func() { <-tab.verifySlots }()
 		rn, err := tab.net.RequestENR(unwrapNode(n))
 		if err != nil {
-			tab.rejects.Add(id)
+			tab.rejects.Add(id, n.IP())
 			tab.log.Debug("verifyAndAdd: RequestENR failed", "id", id, "ip", n.IP(), "err", err)
 			return
 		}
 		if !tab.nodeFilter(rn) {
-			tab.rejects.Add(id)
+			tab.rejects.Add(id, n.IP())
 			tab.log.Debug("verifyAndAdd: node filtered out", "id", id, "ip", n.IP())
 			return
 		}

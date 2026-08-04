@@ -27,7 +27,7 @@ import (
 
 func newTestRejectCache(ttl time.Duration, max int) *rejectCache {
 	return &rejectCache{
-		entries: make(map[enode.ID]time.Time),
+		entries: make(map[rejectKey]time.Time),
 		ttl:     ttl,
 		max:     max,
 	}
@@ -39,17 +39,23 @@ func mkID(b byte) enode.ID {
 	return id
 }
 
+// mkIP is the endpoint used alongside mkID in cache tests where the
+// (ID, IP) pairing itself is not under test.
+func mkIP(b byte) net.IP {
+	return net.IP{192, 0, 2, b}
+}
+
 func TestRejectCacheAddContains(t *testing.T) {
 	c := newTestRejectCache(time.Minute, 16)
 	id := mkID(1)
-	if c.Contains(id) {
+	if c.Contains(id, mkIP(1)) {
 		t.Fatalf("empty cache should not contain id")
 	}
-	c.Add(id)
-	if !c.Contains(id) {
+	c.Add(id, mkIP(1))
+	if !c.Contains(id, mkIP(1)) {
 		t.Fatalf("cache should contain id after Add")
 	}
-	if c.Contains(mkID(2)) {
+	if c.Contains(mkID(2), mkIP(1)) {
 		t.Fatalf("cache should not contain unrelated id")
 	}
 }
@@ -58,12 +64,12 @@ func TestRejectCacheTTLExpiry(t *testing.T) {
 	// 5ms TTL — short enough for a fast test, long enough to dodge scheduler jitter.
 	c := newTestRejectCache(5*time.Millisecond, 16)
 	id := mkID(7)
-	c.Add(id)
-	if !c.Contains(id) {
+	c.Add(id, mkIP(1))
+	if !c.Contains(id, mkIP(1)) {
 		t.Fatalf("entry should be live immediately after Add")
 	}
 	time.Sleep(20 * time.Millisecond)
-	if c.Contains(id) {
+	if c.Contains(id, mkIP(1)) {
 		t.Fatalf("entry should have expired after TTL")
 	}
 	// Lazy delete should have removed it from the map.
@@ -75,13 +81,13 @@ func TestRejectCacheTTLExpiry(t *testing.T) {
 func TestRejectCacheReAddRefreshesTTL(t *testing.T) {
 	c := newTestRejectCache(40*time.Millisecond, 16)
 	id := mkID(3)
-	c.Add(id)
+	c.Add(id, mkIP(1))
 	time.Sleep(25 * time.Millisecond)
-	c.Add(id) // refresh
+	c.Add(id, mkIP(1)) // refresh
 	time.Sleep(25 * time.Millisecond)
 	// Original TTL would have expired (50ms total since first Add), but the
 	// refresh at 25ms means the entry is only 25ms old now.
-	if !c.Contains(id) {
+	if !c.Contains(id, mkIP(1)) {
 		t.Fatalf("re-Add should refresh TTL; entry expired prematurely")
 	}
 }
@@ -91,13 +97,13 @@ func TestRejectCacheCapEviction(t *testing.T) {
 	c := newTestRejectCache(time.Hour, max)
 	// Insert max+5 distinct IDs. The cap should keep us at <= max.
 	for i := 0; i < max+5; i++ {
-		c.Add(mkID(byte(i + 1)))
+		c.Add(mkID(byte(i+1)), mkIP(1))
 	}
 	if c.Len() > max {
 		t.Fatalf("cache exceeded cap: len=%d, max=%d", c.Len(), max)
 	}
 	// The most recent insert must still be present.
-	if !c.Contains(mkID(byte(max + 5))) {
+	if !c.Contains(mkID(byte(max+5)), mkIP(1)) {
 		t.Fatalf("most recent insert should be retained")
 	}
 }
@@ -127,7 +133,7 @@ func TestVerifyAndAddPrefersNodedbOverRejectCache(t *testing.T) {
 		t.Fatalf("UpdateNode: %v", err)
 	}
 	// A transient RequestENR failure put it in the negative cache.
-	tab.rejects.Add(n.ID())
+	tab.rejects.Add(n.ID(), n.IP())
 
 	// The transport has no record for n, so any RequestENR round-trip would
 	// fail; the add can only succeed through the nodedb fast path.
@@ -150,7 +156,7 @@ func TestLookupPrefersNodedbOverRejectCache(t *testing.T) {
 	if err := db.UpdateNode(unwrapNode(target)); err != nil {
 		t.Fatalf("UpdateNode: %v", err)
 	}
-	tab.rejects.Add(target.ID())
+	tab.rejects.Add(target.ID(), target.IP())
 
 	it := &lookup{
 		tab:       tab,
@@ -173,17 +179,37 @@ func TestRejectCacheCapPrefersExpiredEviction(t *testing.T) {
 	c := newTestRejectCache(10*time.Millisecond, max)
 	// Fill cap with short-TTL entries.
 	for i := 0; i < max; i++ {
-		c.Add(mkID(byte(i + 1)))
+		c.Add(mkID(byte(i+1)), mkIP(1))
 	}
 	// Wait for them all to expire.
 	time.Sleep(25 * time.Millisecond)
 	// Adding past cap should sweep expired entries first; no live-entry
 	// eviction needed. After this, the cache should contain only the new id.
-	c.Add(mkID(99))
-	if !c.Contains(mkID(99)) {
+	c.Add(mkID(99), mkIP(1))
+	if !c.Contains(mkID(99), mkIP(1)) {
 		t.Fatalf("newly added id missing")
 	}
 	if c.Len() != 1 {
 		t.Fatalf("expected cache to drop expired entries on cap-overflow, got len=%d", c.Len())
+	}
+}
+
+// Regression: the cache is keyed by (ID, IP), so a failed verification of
+// goodID advertised at an attacker's endpoint must not suppress the honest
+// goodID at its real endpoint. Before the endpoint was part of the key, any
+// queried neighbor could blacklist an arbitrary node ID for rejectCacheTTL
+// by returning it with an unreachable address.
+func TestRejectCacheKeyedByEndpoint(t *testing.T) {
+	c := newTestRejectCache(time.Minute, 16)
+	id := mkID(42)
+	attackerIP := net.IP{198, 51, 100, 66}
+	goodIP := net.IP{203, 0, 113, 7}
+
+	c.Add(id, attackerIP)
+	if !c.Contains(id, attackerIP) {
+		t.Fatalf("rejected endpoint should be cached")
+	}
+	if c.Contains(id, goodIP) {
+		t.Fatalf("rejection at attacker endpoint must not blacklist the same ID at its honest endpoint")
 	}
 }

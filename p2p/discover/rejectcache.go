@@ -17,6 +17,7 @@
 package discover
 
 import (
+	"net"
 	"sync"
 	"time"
 
@@ -38,50 +39,72 @@ const (
 	rejectCacheMax = 4096
 )
 
-// rejectCache is a TTL+capacity-bounded set of node IDs that recently failed
-// verification (RequestENR error or nodeFilter rejection). Hits short-circuit
-// the verifyAndAdd / lookup-time RequestENR round-trip, suppressing the storm
-// of repeat ENR fetches caused by non-Parallax peers being returned on every
-// neighbor's FINDNODE response.
+// rejectKey identifies one rejected verification target. Keyed by
+// (node ID, claimed IP), not node ID alone: FINDNODE neighbors are
+// untrusted, so a malicious neighbor returning goodID@attackerIP must
+// not be able to poison the cache for goodID@goodIP — the failed
+// RequestENR only proves the (ID, endpoint) pair it was sent to is
+// bad. The anti-storm property is preserved because the storm case is
+// the same dead/non-Parallax node at its one real endpoint being
+// echoed by every neighbor.
+type rejectKey struct {
+	id enode.ID
+	ip [16]byte // 16-byte form; zero for nodes without an IP
+}
+
+func makeRejectKey(id enode.ID, ip net.IP) rejectKey {
+	k := rejectKey{id: id}
+	if ip16 := ip.To16(); ip16 != nil {
+		copy(k.ip[:], ip16)
+	}
+	return k
+}
+
+// rejectCache is a TTL+capacity-bounded set of (node ID, IP) pairs that
+// recently failed verification (RequestENR error or nodeFilter rejection).
+// Hits short-circuit the verifyAndAdd / lookup-time RequestENR round-trip,
+// suppressing the storm of repeat ENR fetches caused by non-Parallax peers
+// being returned on every neighbor's FINDNODE response.
 //
 // Best-effort: when over capacity, the entry with the soonest expiry is
 // evicted. The eviction scan is O(n) but only runs at the cap boundary.
 type rejectCache struct {
 	mu      sync.Mutex
-	entries map[enode.ID]time.Time // value = absolute expiry
+	entries map[rejectKey]time.Time // value = absolute expiry
 	ttl     time.Duration
 	max     int
 }
 
 func newRejectCache() *rejectCache {
 	return &rejectCache{
-		entries: make(map[enode.ID]time.Time),
+		entries: make(map[rejectKey]time.Time),
 		ttl:     rejectCacheTTL,
 		max:     rejectCacheMax,
 	}
 }
 
-// Add records id as recently rejected. Re-adding refreshes the TTL.
-func (c *rejectCache) Add(id enode.ID) {
+// Add records (id, ip) as recently rejected. Re-adding refreshes the TTL.
+func (c *rejectCache) Add(id enode.ID, ip net.IP) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[id] = time.Now().Add(c.ttl)
+	c.entries[makeRejectKey(id, ip)] = time.Now().Add(c.ttl)
 	if len(c.entries) > c.max {
 		c.evictLocked()
 	}
 }
 
-// Contains reports whether id is in the cache and not yet expired. Expired
-// entries are removed lazily as they are encountered.
-func (c *rejectCache) Contains(id enode.ID) bool {
+// Contains reports whether (id, ip) is in the cache and not yet expired.
+// Expired entries are removed lazily as they are encountered.
+func (c *rejectCache) Contains(id enode.ID, ip net.IP) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	exp, ok := c.entries[id]
+	key := makeRejectKey(id, ip)
+	exp, ok := c.entries[key]
 	if !ok {
 		return false
 	}
 	if time.Now().After(exp) {
-		delete(c.entries, id)
+		delete(c.entries, key)
 		return false
 	}
 	return true
@@ -99,25 +122,25 @@ func (c *rejectCache) Len() int {
 // entry with the soonest expiry. Called only when len exceeds max.
 func (c *rejectCache) evictLocked() {
 	now := time.Now()
-	for id, exp := range c.entries {
+	for key, exp := range c.entries {
 		if now.After(exp) {
-			delete(c.entries, id)
+			delete(c.entries, key)
 		}
 	}
 	if len(c.entries) <= c.max {
 		return
 	}
-	var oldestID enode.ID
+	var oldestKey rejectKey
 	var oldestExp time.Time
 	first := true
-	for id, exp := range c.entries {
+	for key, exp := range c.entries {
 		if first || exp.Before(oldestExp) {
-			oldestID = id
+			oldestKey = key
 			oldestExp = exp
 			first = false
 		}
 	}
 	if !first {
-		delete(c.entries, oldestID)
+		delete(c.entries, oldestKey)
 	}
 }

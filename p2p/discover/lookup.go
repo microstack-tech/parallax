@@ -180,23 +180,25 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 			// blacklist a known-good node for rejectCacheTTL.
 			if cached := it.tab.db.Node(id); cached != nil {
 				add = wrapNode(cached)
-			} else if it.tab.rejects.Contains(id) {
+			} else if it.tab.rejects.Contains(id, n.IP()) {
 				// Negative cache: a recent RequestENR error or filter
-				// rejection for this ID short-circuits without another
+				// rejection for this (ID, IP) short-circuits without another
 				// round-trip. Without this, the same non-Parallax peer being
 				// returned by every neighbor's FINDNODE response would burn
 				// one RequestENR per occurrence (the a55b10... storm in the
-				// original report).
+				// original report). Keyed by (ID, IP) so a malicious
+				// neighbor advertising goodID@attackerIP can't suppress the
+				// honest goodID@goodIP for rejectCacheTTL.
 				continue
 			} else {
 				nn, err := it.tab.net.RequestENR(unwrapNode(n))
 				if err != nil {
-					it.tab.rejects.Add(id)
+					it.tab.rejects.Add(id, n.IP())
 					it.tab.log.Debug("Lookup ENR request failed", "id", id, "addr", n.addr(), "err", err)
 					continue
 				}
 				if !it.tab.nodeFilter(nn) {
-					it.tab.rejects.Add(id)
+					it.tab.rejects.Add(id, n.IP())
 					it.tab.log.Debug("Lookup filtered node", "id", id, "addr", n.addr())
 					continue
 				}
