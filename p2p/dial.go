@@ -46,6 +46,13 @@ const (
 	// Endpoint resolution is throttled with bounded backoff.
 	initialResolveDelay = 60 * time.Second
 	maxResolveDelay     = time.Hour
+
+	// staticPoolResweepInterval bounds how long a static dial task can
+	// stay stranded outside the pool when its checkDial rejection
+	// clears without an event keyed to the task's ID — most notably a
+	// ban or discouragement that expires silently. Every interval, all
+	// out-of-pool static tasks are re-checked.
+	staticPoolResweepInterval = time.Minute
 )
 
 // NodeDialer is used to connect to nodes in the network, typically by using
@@ -349,8 +356,10 @@ func (d *dialScheduler) probeCheckDial(n *enode.Node) error {
 // loop is the main loop of the dialer.
 func (d *dialScheduler) loop(it enode.Iterator) {
 	var (
-		nodesCh    chan *enode.Node
-		historyExp = make(chan struct{}, 1)
+		nodesCh      chan *enode.Node
+		historyExp   = make(chan struct{}, 1)
+		resweepCh    = make(chan struct{}, 1)
+		resweepTimer mclock.Timer
 	)
 
 loop:
@@ -364,11 +373,19 @@ loop:
 			nodesCh = nil
 		}
 		d.rearmHistoryTimer(historyExp)
+		if resweepTimer == nil && d.needsStaticResweep() {
+			resweepTimer = d.clock.AfterFunc(staticPoolResweepInterval, func() {
+				select {
+				case resweepCh <- struct{}{}:
+				default:
+				}
+			})
+		}
 		d.logStats()
 
 		select {
 		case node := <-nodesCh:
-			if err := d.checkDial(node); err != nil {
+			if err := d.checkDial(node, dynDialedConn); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
 			} else if d.v2Predicate != nil && d.v2Dial != nil && d.v2Predicate(node) {
 				// Peer advertises v2-transport in its ENR — bypass
@@ -449,9 +466,15 @@ loop:
 			} else {
 				delete(d.inboundProgress, id)
 			}
+			// A static task for this ID may have been rejected with
+			// errInboundProgress while the handshake was pending. If
+			// the inbound conn failed (it never became a peer, so no
+			// remPeerCh event will ever fire for it), this is the
+			// only signal that the ID is dialable again.
+			d.updateStaticPool(id)
 
 		case req := <-d.probeCh:
-			req.out <- d.checkDial(req.n)
+			req.out <- d.checkDial(req.n, dynDialedConn)
 
 		case node := <-d.addStaticCh:
 			id := node.ID()
@@ -462,7 +485,7 @@ loop:
 			}
 			task := newDialTask(node, staticDialedConn)
 			d.static[id] = task
-			if d.checkDial(node) == nil {
+			if d.checkDial(node, staticDialedConn) == nil {
 				d.addToStaticPool(task)
 			}
 
@@ -480,12 +503,21 @@ loop:
 		case <-historyExp:
 			d.expireHistory()
 
+		case <-resweepCh:
+			resweepTimer = nil
+			for id := range d.static {
+				d.updateStaticPool(id)
+			}
+
 		case <-d.ctx.Done():
 			it.Close()
 			break loop
 		}
 	}
 
+	if resweepTimer != nil {
+		resweepTimer.Stop()
+	}
 	d.stopHistoryTimer(historyExp)
 	for range d.dialing {
 		<-d.doneCh
@@ -563,8 +595,9 @@ func (d *dialScheduler) freeDialSlots() int {
 	return free
 }
 
-// checkDial returns an error if node n should not be dialed.
-func (d *dialScheduler) checkDial(n *enode.Node) error {
+// checkDial returns an error if node n should not be dialed with the
+// given conn flags.
+func (d *dialScheduler) checkDial(n *enode.Node, flags connFlag) error {
 	if n.ID() == d.self {
 		return errSelf
 	}
@@ -603,13 +636,18 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	// Anti-eclipse: refuse to add a second outbound peer in the
 	// same /16 (IPv4) or /32 (IPv6) network group. Mirrors Bitcoin
 	// Core's outbound_ipv46_peer_netgroups guard in
-	// src/net.cpp:2685. Static dials and feeler/anchor types
-	// bypass this rule by virtue of taking different code paths;
-	// the dynamic-dial scheduler's enode.Iterator is the only
-	// caller where group concentration is a concern.
-	if g := nodeNetworkGroupKey(n); g != "" {
-		if d.outboundGroups[g] > 0 {
-			return errOutboundGroupOccupied
+	// src/net.cpp:2685. Static dials are exempt, as Core's manual
+	// connections are: the operator chose those endpoints, group
+	// concentration among them carries no eclipse signal, and
+	// applying the rule would permanently strand static nodes in
+	// clustered deployments (every docker-bridge peer shares
+	// 172.17.0.0/16). Only iterator-sourced dynamic dials are
+	// group-limited.
+	if flags&staticDialedConn == 0 {
+		if g := nodeNetworkGroupKey(n); g != "" {
+			if d.outboundGroups[g] > 0 {
+				return errOutboundGroupOccupied
+			}
 		}
 	}
 	return nil
@@ -717,10 +755,31 @@ func (d *dialScheduler) startStaticDials(n int) (started int) {
 	return started
 }
 
+// needsStaticResweep reports whether any static task is stranded: out
+// of the pool while neither dialing nor connected. Such a task is
+// waiting on a checkDial rejection to clear, and some rejections
+// (ban expiry) produce no event — the periodic resweep is their only
+// way back in.
+func (d *dialScheduler) needsStaticResweep() bool {
+	for id, task := range d.static {
+		if task.staticPoolIndex >= 0 {
+			continue
+		}
+		if _, ok := d.dialing[id]; ok {
+			continue
+		}
+		if _, ok := d.peers[id]; ok {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // updateStaticPool attempts to move the given static dial back into staticPool.
 func (d *dialScheduler) updateStaticPool(id enode.ID) {
 	task, ok := d.static[id]
-	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest) == nil {
+	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest, task.flags) == nil {
 		d.addToStaticPool(task)
 	}
 }

@@ -935,3 +935,79 @@ func (t *dialTestResolver) Resolve(n *enode.Node) *enode.Node {
 	t.calls = append(t.calls, n.ID())
 	return t.answers[n.ID()]
 }
+
+// TestDialSchedStaticIgnoresGroupOccupancy — static (addnode-style)
+// dials are operator-chosen and exempt from the outbound network-group
+// diversity rule, as Core's manual connections are. Before the
+// exemption, a dynamic peer occupying the static node's /16 (the
+// docker-bridge 172.17.0.0/16 case) pushed the static task out of the
+// pool with no event to ever bring it back.
+func TestDialSchedStaticIgnoresGroupOccupancy(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			peersAdded: []*conn{
+				{flags: dynDialedConn, node: newNode(uintID(0x01), "172.17.0.2:32110")},
+			},
+			update: func(d *dialScheduler) {
+				d.addStatic(newNode(uintID(0x02), "172.17.0.3:32110"))
+			},
+			wantNewDials: []*enode.Node{
+				newNode(uintID(0x02), "172.17.0.3:32110"),
+			},
+		},
+	})
+}
+
+// TestDialSchedStaticRecoversAfterBanExpiry — a static node rejected
+// by the ban gate must be redialed once the ban lifts. Ban expiry
+// produces no scheduler event, so recovery rides on the periodic
+// static-pool resweep (staticPoolResweepInterval); each test round
+// advances the simulated clock 16s, so the 60s resweep fires during
+// round 3's clock run and the dial surfaces in round 4.
+func TestDialSchedStaticRecoversAfterBanExpiry(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu     sync.Mutex
+		banned = true
+	)
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isBanned: func(ip net.IP) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return banned && ip.String() == "7.7.7.7"
+		},
+	}
+	staticNode := newNode(uintID(0x50), "7.7.7.7:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: the static node is banned — no dial.
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+		},
+		// Round 1: the ban lifts silently. Still no dial until the
+		// resweep timer fires.
+		{
+			update: func(*dialScheduler) {
+				mu.Lock()
+				banned = false
+				mu.Unlock()
+			},
+		},
+		{},
+		{},
+		// Round 4: the resweep re-pooled the task; it gets dialed.
+		{
+			wantNewDials: []*enode.Node{staticNode},
+		},
+	})
+}
