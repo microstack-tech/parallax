@@ -17,6 +17,7 @@
 package banman
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -395,5 +396,77 @@ func TestDiscourageBloomFalsePositiveRate(t *testing.T) {
 	rate := float64(hits) / float64(probes)
 	if rate > 0.001 {
 		t.Errorf("Bloom fp rate too high: %d/%d = %.4f (want <= 1e-3)", hits, probes, rate)
+	}
+}
+
+// TestReBanOnlyExtends — re-banning an active subnet with a shorter
+// duration must leave the existing ban untouched; a longer duration
+// replaces it. Core's BanMan::Ban semantics: bans only ever extend.
+func TestReBanOnlyExtends(t *testing.T) {
+	t.Parallel()
+	bm, err := New("", logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := net.IP{203, 0, 113, 9}
+	if err := bm.Ban(ip, 10*time.Hour, ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	till := func() int64 {
+		for _, e := range bm.ListBanned() {
+			return e.BannedTill
+		}
+		t.Fatal("no ban entry")
+		return 0
+	}
+	long := till()
+
+	// A shorter automatic re-ban must not cut the operator ban short.
+	if err := bm.Ban(ip, time.Minute, ReasonNodeMisbehavior); err != nil {
+		t.Fatal(err)
+	}
+	if got := till(); got != long {
+		t.Fatalf("shorter re-ban changed expiry: %d -> %d", long, got)
+	}
+	// A longer re-ban extends.
+	if err := bm.Ban(ip, 48*time.Hour, ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if got := till(); got <= long {
+		t.Fatalf("longer re-ban did not extend expiry: %d -> %d", long, got)
+	}
+}
+
+// TestLoadCanonicalizesHandEditedEntries — a hand-edited banlist entry
+// with host bits set ("1.2.3.4/24") must load under its canonical key
+// ("1.2.3.0/24") so setban remove can find and delete it.
+func TestLoadCanonicalizesHandEditedEntries(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "banlist.json")
+	till := time.Now().Add(time.Hour).Unix()
+	raw := fmt.Sprintf(`{"banned_nets":[{"address":"1.2.3.4/24","ban_created":%d,"banned_until":%d,"reason":"manual"}]}`,
+		time.Now().Unix(), till)
+	if err := os.WriteFile(file, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bm, err := New(file, logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bm.IsBanned(net.IP{1, 2, 3, 200}) {
+		t.Fatal("hand-edited subnet not effective after load")
+	}
+	list := bm.ListBanned()
+	if len(list) != 1 || list[0].Subnet != "1.2.3.0/24" {
+		t.Fatalf("entry not canonicalized: %+v", list)
+	}
+	_, subnet, _ := net.ParseCIDR("1.2.3.4/24")
+	ok, err := bm.UnbanSubnet(subnet)
+	if err != nil || !ok {
+		t.Fatalf("canonical remove failed: ok=%v err=%v", ok, err)
+	}
+	if bm.IsBanned(net.IP{1, 2, 3, 200}) {
+		t.Fatal("subnet still banned after remove")
 	}
 }

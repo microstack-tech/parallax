@@ -374,9 +374,29 @@ func parseBanSubnet(s string) (*net.IPNet, error) {
 	}
 	// CIDR form?
 	if strings.Contains(s, "/") {
-		_, subnet, err := net.ParseCIDR(s)
+		ip, subnet, err := net.ParseCIDR(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid CIDR %q: %w", s, err)
+		}
+		// An IPv4-mapped IPv6 CIDR ("::ffff:1.2.3.0/24") means the
+		// embedded IPv4 subnet — Core's CSubNet applies the prefix to
+		// the v4 address it normalizes to. Convert here, before the
+		// ::ffff: mapping prefix is masked away, or the ban would
+		// silently cover a huge IPv6 range ("::/24") instead. The
+		// IPv6-style form ("::ffff:1.2.3.0/120") shifts down by the
+		// 96 mapping bits; prefixes between /33 and /95 are
+		// meaningless for a v4 target and rejected.
+		if v4 := ip.To4(); v4 != nil {
+			if ones, bits := subnet.Mask.Size(); bits == 128 {
+				switch {
+				case ones >= 96:
+					ones -= 96
+				case ones > 32:
+					return nil, fmt.Errorf("invalid prefix length /%d for IPv4-mapped subnet %q", ones, s)
+				}
+				mask := net.CIDRMask(ones, 32)
+				return &net.IPNet{IP: v4.Mask(mask), Mask: mask}, nil
+			}
 		}
 		return subnet, nil
 	}

@@ -87,11 +87,18 @@ type banlistFile struct {
 // synchronization.
 type BanMan struct {
 	mu          sync.Mutex
-	banned      map[string]banEntry // subnet string → entry
+	banned      map[string]bannedNet // canonical subnet string → entry
 	discouraged *rollingBloomFilter
 	file        string     // banlist.json path; empty disables persistence
 	dumpMu      sync.Mutex // serializes Dump's snapshot+write+rename
 	log         logging.Logger
+}
+
+// bannedNet pairs a banlist row with its parsed subnet so the
+// accept/dial hot path (IsBanned) never re-parses CIDR strings.
+type bannedNet struct {
+	entry banEntry
+	ipnet *net.IPNet
 }
 
 // New constructs an empty BanMan. If file is non-empty, the path is
@@ -102,7 +109,7 @@ func New(file string, log logging.Logger) (*BanMan, error) {
 		log = logging.Root()
 	}
 	bm := &BanMan{
-		banned:      make(map[string]banEntry),
+		banned:      make(map[string]bannedNet),
 		discouraged: newRollingBloomFilter(discourageBloomCap, discourageBloomFP),
 		file:        file,
 		log:         log,
@@ -129,7 +136,11 @@ func (b *BanMan) Ban(addr net.IP, duration time.Duration, reason string) error {
 }
 
 // BanSubnet adds or extends a subnet ban. If duration <= 0 the
-// default is used.
+// default is used. Re-banning an already-banned subnet only ever
+// extends the ban: a request whose expiry would land before the
+// existing one leaves the entry untouched (Bitcoin Core
+// BanMan::Ban only replaces when the new ban lasts longer), so an
+// automatic short ban can't cut a long operator ban short.
 func (b *BanMan) BanSubnet(subnet *net.IPNet, duration time.Duration, reason string) error {
 	if subnet == nil {
 		return errors.New("banman: nil subnet")
@@ -148,6 +159,10 @@ func (b *BanMan) BanSubnet(subnet *net.IPNet, duration time.Duration, reason str
 		secs = 1
 	}
 	key := normalizeSubnet(subnet)
+	parsed, err := parseSubnetKey(key)
+	if err != nil {
+		return fmt.Errorf("banman: unbannable subnet %q: %w", key, err)
+	}
 	entry := banEntry{
 		Subnet:     key,
 		BanCreated: now.Unix(),
@@ -155,7 +170,11 @@ func (b *BanMan) BanSubnet(subnet *net.IPNet, duration time.Duration, reason str
 		Reason:     reason,
 	}
 	b.mu.Lock()
-	b.banned[key] = entry
+	if old, ok := b.banned[key]; ok && old.entry.BannedTill >= entry.BannedTill && old.entry.BannedTill > now.Unix() {
+		b.mu.Unlock()
+		return nil
+	}
+	b.banned[key] = bannedNet{entry: entry, ipnet: parsed}
 	b.mu.Unlock()
 	return b.Dump()
 }
@@ -197,16 +216,12 @@ func (b *BanMan) IsBanned(addr net.IP) bool {
 	now := time.Now().Unix()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for key, entry := range b.banned {
-		if entry.BannedTill <= now {
+	for key, bn := range b.banned {
+		if bn.entry.BannedTill <= now {
 			delete(b.banned, key)
 			continue
 		}
-		_, subnet, err := net.ParseCIDR(key)
-		if err != nil {
-			continue
-		}
-		if subnet.Contains(addr) {
+		if bn.ipnet.Contains(addr) {
 			return true
 		}
 	}
@@ -242,7 +257,7 @@ func (b *BanMan) IsDiscouraged(addr net.IP) bool {
 // surface is restart-only.
 func (b *BanMan) ClearBanned() error {
 	b.mu.Lock()
-	b.banned = make(map[string]banEntry)
+	b.banned = make(map[string]bannedNet)
 	b.mu.Unlock()
 	return b.Dump()
 }
@@ -264,16 +279,16 @@ func (b *BanMan) ListBanned() []BanInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]BanInfo, 0, len(b.banned))
-	for key, entry := range b.banned {
-		if entry.BannedTill <= now {
+	for key, bn := range b.banned {
+		if bn.entry.BannedTill <= now {
 			delete(b.banned, key)
 			continue
 		}
 		out = append(out, BanInfo{
 			Subnet:     key,
-			BanCreated: entry.BanCreated,
-			BannedTill: entry.BannedTill,
-			Reason:     entry.Reason,
+			BanCreated: bn.entry.BanCreated,
+			BannedTill: bn.entry.BannedTill,
+			Reason:     bn.entry.Reason,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Subnet < out[j].Subnet })
@@ -300,8 +315,8 @@ func (b *BanMan) Dump() error {
 	defer b.dumpMu.Unlock()
 	b.mu.Lock()
 	body := banlistFile{BannedNets: make([]banEntry, 0, len(b.banned))}
-	for _, e := range b.banned {
-		body.BannedNets = append(body.BannedNets, e)
+	for _, bn := range b.banned {
+		body.BannedNets = append(body.BannedNets, bn.entry)
 	}
 	b.mu.Unlock()
 	sort.Slice(body.BannedNets, func(i, j int) bool {
@@ -356,13 +371,38 @@ func (b *BanMan) Load() error {
 		}
 		// Reject malformed CIDR; the file is operator-edited so
 		// this is a defense against a typo, not adversarial input.
-		if _, _, err := net.ParseCIDR(e.Subnet); err != nil {
+		_, parsed, err := net.ParseCIDR(e.Subnet)
+		if err != nil {
 			b.log.Warn("banman: dropping invalid banlist entry", "subnet", e.Subnet, "err", err)
 			continue
 		}
-		b.banned[e.Subnet] = e
+		// Re-key under the canonical CIDR form. A hand-edited entry
+		// like "1.2.3.4/24" (host bits set) would otherwise be stored
+		// verbatim and never match the canonical key setban remove
+		// computes, making it unremovable except by clearbanned.
+		key := normalizeSubnet(parsed)
+		e.Subnet = key
+		canon, err := parseSubnetKey(key)
+		if err != nil {
+			b.log.Warn("banman: dropping non-canonicalizable banlist entry", "subnet", e.Subnet, "err", err)
+			continue
+		}
+		if old, ok := b.banned[key]; ok && old.entry.BannedTill >= e.BannedTill {
+			continue
+		}
+		b.banned[key] = bannedNet{entry: e, ipnet: canon}
 	}
 	return nil
+}
+
+// parseSubnetKey parses a canonical subnet key back into its net.IPNet
+// for the IsBanned containment cache.
+func parseSubnetKey(key string) (*net.IPNet, error) {
+	_, parsed, err := net.ParseCIDR(key)
+	if err != nil {
+		return nil, err
+	}
+	return parsed, nil
 }
 
 // singleIPSubnet wraps a single IP as a /32 (IPv4) or /128 (IPv6)
