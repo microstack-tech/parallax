@@ -1240,6 +1240,14 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if addr == nil {
 		return errors.New("v2 dial: nil address")
 	}
+	// NetRestrict: the operator's allowlist confines every dial,
+	// exactly as checkDial enforces it on the scheduler path and
+	// checkInboundConn on accept. Without this, a node locked to a
+	// private range still dials arbitrary public IPs from addrman
+	// and DNS seeds.
+	if srv.NetRestrict != nil && addr.IP != nil && !srv.NetRestrict.Contains(addr.IP) {
+		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialRestricted)
+	}
 	// Never make an automatic outbound connection to a banned or
 	// discouraged address. Bitcoin Core gates outbound candidate
 	// selection the same way (CConnman::OpenNetworkConnection,
@@ -1423,6 +1431,12 @@ var errV2DialSelf = errors.New("v2 dial self")
 // target's IP is banned or discouraged. Callers back off rather
 // than counting it as a connection failure.
 var errV2DialBanned = errors.New("v2 dial banned")
+
+// errV2DialRestricted is the sentinel returned by DialV2 when the
+// dial target falls outside the operator's --netrestrict allowlist.
+// Callers back off; the address is off-limits by policy, not
+// unreachable.
+var errV2DialRestricted = errors.New("v2 dial outside netrestrict")
 
 // errV2DialGroupOccupied is the sentinel returned by DialV2 when a
 // full-relay outbound peer already occupies the target's network
