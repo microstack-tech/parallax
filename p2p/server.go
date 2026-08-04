@@ -2146,9 +2146,17 @@ running:
 					p.tcpGossipSourced = true
 				}
 				// addrman.Good: mark this peer's address as verified.
-				// Callers to addrman learn from our successes this
-				// way — matches CAddrMan::Good in src/addrman.cpp.
-				srv.addrmanGood(p)
+				// Outbound sessions only — we dialed the address, so
+				// we proved it reachable (CConnman calls
+				// CAddrMan::Good only for outbound connections). An
+				// inbound peer's advertised address is just its
+				// unverified Hello ListenPort; letting it promote
+				// itself into the tried table would hand eclipse
+				// attackers exactly the shortcut the table exists to
+				// prevent.
+				if !p.Inbound() {
+					srv.addrmanGood(p)
+				}
 			}
 			c.cont <- err
 
