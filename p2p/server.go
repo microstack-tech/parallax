@@ -674,11 +674,11 @@ func (srv *Server) Stop() {
 			srv.log.Info("addrbook saved", "path", srv.AddrBookPath, "entries", srv.addrbook.Size(nil, nil))
 		}
 	}
-	// Persist block-relay-only anchors so the next startup can
-	// re-attach to the same peers in the same role. Bitcoin Core
-	// m_anchors / anchors.dat (src/net.cpp:57). Disabled when
-	// AnchorsPath is empty.
-	srv.persistAnchors()
+	// Block-relay-only anchors are persisted by the run loop's
+	// spindown (see persistAnchors call in run), while the peer set
+	// is still intact. Doing it here — after loopWG.Wait — would
+	// always observe an empty peer set. Bitcoin Core m_anchors /
+	// anchors.dat (src/net.cpp:57).
 }
 
 // Start starts running the server.
@@ -1652,17 +1652,18 @@ func (srv *Server) replayAnchors() {
 	}
 }
 
-// persistAnchors snapshots the (IP, listen-port) of currently-
-// connected block-relay-only outbound peers (capped at
-// MaxBlockRelayAnchors) to anchors.dat. Called from Stop after
-// loopWG so the peer set is settled. Best-effort: errors are
+// persistAnchors snapshots the (IP, listen-port) of the given
+// block-relay-only outbound peers (capped at MaxBlockRelayAnchors)
+// to anchors.dat. Must be called with the live peer set BEFORE the
+// run loop tears peers down — by Stop's time the map is already
+// empty and every peer disconnected. Best-effort: errors are
 // logged, never propagated.
-func (srv *Server) persistAnchors() {
+func (srv *Server) persistAnchors(peers map[enode.ID]*Peer) {
 	if srv.AnchorsPath == "" {
 		return
 	}
 	addrs := make([]*net.TCPAddr, 0, MaxBlockRelayAnchors)
-	for _, p := range srv.Peers() {
+	for _, p := range peers {
 		if !p.BlockRelayOnly() {
 			continue
 		}
@@ -2003,6 +2004,13 @@ running:
 	}
 
 	srv.log.Trace("P2P networking is spinning down")
+
+	// Snapshot block-relay-only anchors while the peer set is still
+	// intact. This must happen before the disconnect loop below —
+	// once peers are torn down the set is empty and anchors.dat
+	// would be written empty (and thereby deleted). The run loop
+	// owns `peers`, so reading it here is race-free.
+	srv.persistAnchors(peers)
 
 	// Terminate discovery. If there is a running lookup it will terminate soon.
 	if srv.ntab != nil {
