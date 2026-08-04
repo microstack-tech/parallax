@@ -1279,16 +1279,19 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 		srv.addrmanAttemptByTCP(addr, false)
 		return fmt.Errorf("v2 dial %s: already connected", addr)
 	}
-	// Network-group diversity for automatic full-relay outbound dials
-	// (extra == 0). Refuse a second outbound peer in the same /16
-	// (IPv4) or /32 (IPv6) group so an attacker can't fill our
-	// outbound slots from one network. Mirrors Bitcoin Core's
-	// outbound_ipv46_peer_netgroups guard (src/net.cpp). The v1/v2
-	// dial scheduler enforces the same rule in checkDial; this covers
-	// runV2Dialer, which dials addrman entries without going through
-	// the scheduler. Feelers, block-relay-only, and anchor reconnects
-	// carry a non-zero extra and are exempt, as in Core.
-	if extra == 0 {
+	// Network-group diversity for outbound dials. Refuse a second
+	// outbound peer in the same /16 (IPv4) or /32 (IPv6) group so an
+	// attacker can't fill our outbound slots from one network.
+	// Mirrors Bitcoin Core's outbound_ipv46_peer_netgroups guard
+	// (src/net.cpp ThreadOpenConnections): full-relay, block-relay-
+	// only and anchor connections are all subject to the rule — the
+	// block-relay slots exist for eclipse resistance, so letting them
+	// cluster in one group would defeat their purpose. Only feeler
+	// probes are exempt; they are transient and never hold a slot.
+	// The v1/v2 dial scheduler enforces the same rule in checkDial;
+	// this covers runV2Dialer and the anchor replay, which dial
+	// without going through the scheduler.
+	if !extraHas(extra, feelerConn) {
 		if g := ipNetworkGroupKey(addr.IP); g != "" && srv.outboundGroupOccupied(g) {
 			srv.addrmanAttemptByTCP(addr, false)
 			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
