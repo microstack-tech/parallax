@@ -149,7 +149,7 @@ func TestQuorumRefreshDropsDisconnectedPeers(t *testing.T) {
 	// PeerDisconnected). Refresh with the truly-connected set must
 	// drop the orphaned report and quorum must follow.
 	connected := map[PeerKey]struct{}{"p1": {}, "p2": {}}
-	dropped := q.Refresh(time.Now(), connected)
+	dropped := q.Refresh(time.Now(), func() map[PeerKey]struct{} { return connected })
 	if dropped != 1 {
 		t.Errorf("Refresh dropped %d, want 1", dropped)
 	}
@@ -177,13 +177,13 @@ func TestQuorumRefreshNilConnectedKeepsReports(t *testing.T) {
 	}
 }
 
-// TestQuorumRefreshAgeEviction — Refresh runs the evictStaleLocked
-// pass first, dropping reports older than QuorumEvictAfter even if
-// the peer is still listed as connected. Defense-in-depth for a peer
-// whose session is alive but whose YourAddr report has gone stale
-// (which shouldn't happen given current handler discipline, but is
-// what QuorumEvictAfter exists to bound).
-func TestQuorumRefreshAgeEviction(t *testing.T) {
+// TestQuorumAgedReportSurvivesWhileConnected — DEFECT 1 regression.
+// YourAddr is single-shot per session, so a long-lived peer's report
+// ages past QuorumEvictAfter while the peer is still connected. The age
+// sweep must NOT drop such a report (doing so silently collapses quorum
+// on a stable topology); it may only reap the stale report of a peer
+// that is genuinely gone from the connected set.
+func TestQuorumAgedReportSurvivesWhileConnected(t *testing.T) {
 	q := NewQuorum()
 	addr := []byte{198, 51, 100, 9}
 
@@ -191,20 +191,71 @@ func TestQuorumRefreshAgeEviction(t *testing.T) {
 	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
 	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
 
-	// Move p1's report into the stale window, then refresh at "now".
+	// Age every report well past the cap — the steady state on a stable
+	// peer set, where no reconnect ever refreshes receivedAt.
 	q.mu.Lock()
 	for _, byPeer := range q.reports {
-		if entry, ok := byPeer["p1"]; ok {
+		for pk, entry := range byPeer {
 			entry.receivedAt = time.Now().Add(-QuorumEvictAfter - time.Minute)
-			byPeer["p1"] = entry
+			byPeer[pk] = entry
 		}
 	}
 	q.mu.Unlock()
 
-	connected := map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
-	q.Refresh(time.Now(), connected)
+	// All three peers are still connected: their aged votes must survive.
+	all := map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
+	q.Refresh(time.Now(), func() map[PeerKey]struct{} { return all })
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Fatal("aged reports from still-connected peers were wrongly evicted")
+	}
+
+	// p3's session vanished without firing Disconnect. Now the age sweep
+	// — driven by the reconciled connected set — reaps only that absent
+	// peer's stale vote, dropping quorum below threshold.
+	live := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	q.Refresh(time.Now(), func() map[PeerKey]struct{} { return live })
 	if _, _, _, ok := q.Winner(); ok {
-		t.Error("quorum still ok after stale report aged out")
+		t.Error("quorum still ok after the gone peer's stale vote was reaped")
+	}
+}
+
+// TestQuorumRefreshSnapshotLazyKeepsFreshVote — DEFECT 2 regression.
+// The connected snapshot must be evaluated lazily, under the report
+// lock, inside Refresh. A peer that completes Hello+YourAddr in the
+// window between an eager snapshot and the reconciliation is present in
+// the tally but absent from a stale eager snapshot, so it would be
+// deleted — and its single-shot vote lost for the whole session. This
+// test contrasts the two evaluation strategies over identical tallies.
+func TestQuorumRefreshSnapshotLazyKeepsFreshVote(t *testing.T) {
+	addr := []byte{198, 51, 100, 12}
+	build := func() *Quorum {
+		q := NewQuorum()
+		q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+		q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+		// p3 is the racing peer: its YourAddr has already committed.
+		q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+		return q
+	}
+
+	// Hazard: an eager snapshot captured before p3 connected omits p3;
+	// feeding it drops p3's committed vote and collapses quorum. This
+	// documents exactly the failure the lazy snapshot avoids.
+	qBug := build()
+	stale := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	qBug.Refresh(time.Now(), func() map[PeerKey]struct{} { return stale })
+	if _, _, _, ok := qBug.Winner(); ok {
+		t.Fatal("setup invariant: a stale snapshot missing p3 should drop its vote")
+	}
+
+	// Fixed: the snapshot is evaluated at reconciliation time, when p3's
+	// Report (and, in production, the Hello that precedes it) is already
+	// visible, so p3 is in the live set and its vote survives.
+	qFix := build()
+	qFix.Refresh(time.Now(), func() map[PeerKey]struct{} {
+		return map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
+	})
+	if _, _, _, ok := qFix.Winner(); !ok {
+		t.Fatal("fresh vote dropped despite the peer being present at reconcile time")
 	}
 }
 

@@ -366,6 +366,10 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 // Used by RunQuorumRefreshLoop to reconcile Quorum's report tally
 // against the actually-connected set — the "drop reports for peers no
 // longer connected" half of PIP-0006 §Phase 4's quorum re-eval.
+//
+// Passed to Quorum.Refresh as a function (not a pre-taken value) so the
+// snapshot is captured under the quorum's report lock, atomically with
+// respect to a peer completing Hello+YourAddr — see Refresh's contract.
 func (b *AddrmanBackend) connectedPeerKeys() map[PeerKey]struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -401,7 +405,11 @@ func (b *AddrmanBackend) RunQuorumRefreshLoopWithInterval(stop <-chan struct{}, 
 		case <-stop:
 			return
 		case now := <-t.C:
-			dropped := b.Q.Refresh(now, b.connectedPeerKeys())
+			// Pass the snapshot function, not a pre-taken snapshot, so
+			// Refresh evaluates it under the quorum lock — a peer that
+			// finishes its handshake mid-tick can't be seen as "in the
+			// tally but absent from the snapshot" and lose its vote.
+			dropped := b.Q.Refresh(now, b.connectedPeerKeys)
 			if dropped > 0 {
 				b.log.Debug("parallax-disc/1: quorum refresh dropped reports from disconnected peers",
 					"dropped", dropped)

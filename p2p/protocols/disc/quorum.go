@@ -28,12 +28,17 @@ import (
 // costs propagation latency, lowering it weakens sybil resistance.
 const QuorumThreshold = 3
 
-// QuorumEvictAfter caps how long a peer's YourAddr report stays in the
-// tally. Reports are refreshed on re-connect, so anything older than
-// this is a disconnected peer whose Disconnect() hook didn't fire (a
-// crash mid-shutdown, or a future code path that bypasses handler.Run's
-// defer). Held high enough that long-lived sessions — which only emit
-// YourAddr once at handshake time — keep their reports.
+// QuorumEvictAfter caps how long a *disconnected* peer's YourAddr report
+// lingers in the tally. YourAddr is single-shot per session (handler.go
+// treats a second one as a disconnect offense), so a live long-lived
+// peer never refreshes its receivedAt. The age sweep therefore exempts
+// reports whose peer is still in the last-known connected set (see
+// evictStaleLocked) and only reaps orphans — reports from a peer whose
+// Disconnect() hook never fired (a crash mid-shutdown, or a code path
+// that bypasses handler.Run's defer). Genuinely-gone peers are removed
+// promptly by Refresh's connected-set reconciliation; this cap is the
+// defense-in-depth backstop for the window between a silent disconnect
+// and the next Refresh tick.
 const QuorumEvictAfter = 3 * time.Hour
 
 // QuorumRefreshInterval is how often the periodic backstop sweep runs.
@@ -94,6 +99,14 @@ type Quorum struct {
 
 	// reports[addr][peerKey] = (group, receivedAt).
 	reports map[reportedAddr]map[PeerKey]reportEntry
+
+	// connected is the last-known set of live peer keys, refreshed by
+	// Refresh from the caller's authoritative connected set.
+	// evictStaleLocked consults it so a still-connected peer's
+	// single-shot YourAddr report is never aged out of quorum. nil until
+	// the first Refresh, before which no report can be old enough to age
+	// out anyway.
+	connected map[PeerKey]struct{}
 
 	// overrideAddr is set when the operator configured --nat extip:<IP>
 	// or UPnP/PMP resolved one. Short-circuits quorum entirely.
@@ -222,15 +235,29 @@ outer:
 	return n, append([]byte(nil), a...), p, true
 }
 
-// evictStaleLocked removes reports older than QuorumEvictAfter. O(N).
-// Called opportunistically — quorum state is small enough that a full
-// sweep on every Report/Winner is fine.
+// evictStaleLocked removes reports older than QuorumEvictAfter whose
+// reporting peer is no longer connected. O(N). Called opportunistically —
+// quorum state is small enough that a full sweep on every Report/Winner
+// is fine.
+//
+// A still-connected peer is exempt from the age sweep: YourAddr is
+// single-shot per session, so a long-lived peer's receivedAt never
+// advances and would otherwise decay out of quorum while the peer is
+// right there — silently stopping self-advertisement on a stable
+// topology. Removal of genuinely-gone peers is Refresh's job (it
+// reconciles against the authoritative connected set); this sweep only
+// reaps orphans whose Disconnect() hook was missed and which are absent
+// from the last-known connected set.
 func (q *Quorum) evictStaleLocked(now time.Time) {
 	for key, byPeer := range q.reports {
 		for pk, entry := range byPeer {
-			if now.Sub(entry.receivedAt) > QuorumEvictAfter {
-				delete(byPeer, pk)
+			if now.Sub(entry.receivedAt) <= QuorumEvictAfter {
+				continue
 			}
+			if _, live := q.connected[pk]; live {
+				continue
+			}
+			delete(byPeer, pk)
 		}
 		if len(byPeer) == 0 {
 			delete(q.reports, key)
@@ -239,28 +266,49 @@ func (q *Quorum) evictStaleLocked(now time.Time) {
 }
 
 // Refresh runs the periodic re-evaluation called for in PIP-0006 §Phase
-// 4: drop time-stale reports, then drop reports from peers that are no
-// longer connected. The connected set is supplied by the caller (so
-// Quorum doesn't depend on Server). A nil set is treated as "skip the
-// connected-set reconciliation" — useful for tests that exercise only
-// the time-eviction path.
+// 4: reconcile the tally against the peers that are actually connected,
+// dropping reports from peers no longer present, then age out any stale
+// orphans. The connected set is supplied by the caller (so Quorum
+// doesn't depend on Server).
+//
+// connectedFn is invoked *under q.mu* — the same lock that guards report
+// insertion (Report). This makes the snapshot atomic with respect to a
+// peer completing its handshake: any YourAddr report that has committed
+// by the time this reconciliation runs was preceded, in that peer's
+// handler goroutine, by the Hello that registers the peer as connected,
+// so a snapshot taken here observes the peer and will not delete its
+// fresh, single-shot vote. Snapshotting eagerly before locking would
+// leave a window in which a just-connected peer is absent from the
+// snapshot yet present in the tally, and its vote — unrecoverable,
+// because YourAddr is single-shot — would be dropped for the whole
+// session.
+//
+// A nil connectedFn skips the connected-set reconciliation (the age
+// sweep still runs) — useful for tests that exercise only the
+// time-eviction path.
 //
 // Returns the number of reports dropped by the connected-set check (the
 // time-eviction count is not surfaced; it's defense-in-depth and
 // rare). Callers can log or metric this.
-func (q *Quorum) Refresh(now time.Time, connected map[PeerKey]struct{}) int {
+func (q *Quorum) Refresh(now time.Time, connectedFn func() map[PeerKey]struct{}) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if connectedFn != nil {
+		// Record the live set before the age sweep so evictStaleLocked
+		// exempts still-connected peers.
+		q.connected = connectedFn()
+	}
+
 	q.evictStaleLocked(now)
 
-	if connected == nil {
+	if connectedFn == nil {
 		return 0
 	}
 	dropped := 0
 	for key, byPeer := range q.reports {
 		for pk := range byPeer {
-			if _, ok := connected[pk]; !ok {
+			if _, ok := q.connected[pk]; !ok {
 				delete(byPeer, pk)
 				dropped++
 			}
