@@ -90,6 +90,15 @@ type AddrmanBackend struct {
 	// the chosen subset of these. See relay.go for the picker.
 	peerOutboxes map[PeerKey]*peerRelayState
 
+	// getPeersPending marks peers we have solicited a GetPeers
+	// response from that has not yet arrived. Entries received while
+	// the response is pending are ingested but never relayed onward
+	// (Bitcoin: the !peer.m_getaddr_sent gate in the ADDR relay
+	// path). Set by NoteGetPeersSent, cleared by the first Peers
+	// message smaller than a full response (Bitcoin: m_getaddr_sent
+	// is cleared by any addr message under 1000 entries).
+	getPeersPending map[PeerKey]bool
+
 	// relayKey is the per-process secret used as the keyed-hash key
 	// for the address-relay PRF. 32 random bytes from crypto/rand at
 	// backend construction; never persisted, never rotated. Rotating
@@ -120,10 +129,11 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		log:           log,
 		isSelf:        isSelf,
 		helloProv:     helloProvider,
-		peerBuckets:   make(map[PeerKey]*tokenBucket),
-		handshakeByID: make(map[enode.ID]string),
-		peerHello:     make(map[PeerKey]Hello),
-		peerOutboxes:  make(map[PeerKey]*peerRelayState),
+		peerBuckets:     make(map[PeerKey]*tokenBucket),
+		handshakeByID:   make(map[enode.ID]string),
+		peerHello:       make(map[PeerKey]Hello),
+		peerOutboxes:    make(map[PeerKey]*peerRelayState),
+		getPeersPending: make(map[PeerKey]bool),
 	}
 	if _, err := rand.Read(b.relayKey[:]); err != nil {
 		// crypto/rand failures are catastrophic (see crypto.io's
@@ -206,6 +216,22 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 // the ADDR ingest path (src/net_processing.cpp).
 const ancientLastSeen = 100000000
 
+// maxRelayBatch is the largest Peers message whose entries are
+// eligible for onward relay. Genuine relay pushes arrive as 1-entry
+// messages; anything larger is bulk transfer, not gossip. Mirrors
+// Bitcoin's vAddr.size() <= 10 gate in the ADDR relay path.
+const maxRelayBatch = 10
+
+// NoteGetPeersSent records that we solicited a GetPeers response from
+// peer. Entries arriving while the response is pending are ingested
+// but never relayed onward; the mark is cleared by the first Peers
+// message smaller than a full response. Called by RequestPeers.
+func (b *AddrmanBackend) NoteGetPeersSent(peer *p2p.Peer) {
+	b.mu.Lock()
+	b.getPeersPending[peerKeyFor(peer)] = true
+	b.mu.Unlock()
+}
+
 // HandlePeers ingests a batch of gossiped PeerEntry records into
 // addrman with source=tcp_gossip. The 2-hour gossip penalty on
 // LastSeen (PIP-0006 Phase 2 rule: "Subtract a 2-hour penalty when the
@@ -227,6 +253,24 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 	if err != nil {
 		return
 	}
+
+	// Relay eligibility is per-message (Bitcoin's ADDR relay gates,
+	// net_processing.cpp): entries from a solicited GetPeers response
+	// are never re-gossiped, and only small unsolicited batches (the
+	// shape a genuine relay push has — RelayAddress sends 1-entry
+	// messages) qualify. Without the solicited-response gate, every
+	// 1000-entry GetPeers response would fan out again as up to 2000
+	// relayed messages. A batch smaller than a full response also
+	// completes any pending solicited exchange, mirroring Core's
+	// clearing of m_getaddr_sent on any sub-1000-entry addr message.
+	key := peerKeyFor(peer)
+	b.mu.Lock()
+	solicited := b.getPeersPending[key]
+	if len(entries) < MaxPeersPerMessage {
+		delete(b.getPeersPending, key)
+	}
+	b.mu.Unlock()
+	mayRelay := !solicited && len(entries) <= maxRelayBatch
 
 	now := time.Now()
 	for _, e := range entries {
@@ -264,17 +308,18 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		}
 		e.LastSeen = uint64(claimed.Unix())
 		// Plus the 2-hour gossip penalty applied by the Add path.
-		added := b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
-		// Bitcoin §RelayAddress: only newly-learned addresses get
-		// gossiped onward; if AddOne reports the entry was already
-		// known, we'd be amplifying without benefit. Reachability is
-		// a rough heuristic — we treat any entry that addrman accepted
-		// (passed the IsTerrible-style filters in IngestV2/IngestNode)
-		// as reachable for relay purposes, matching Bitcoin's "fReachable
-		// from caller" pattern. v2-native (KeyType=0) and legacy
-		// (KeyType=1) are both relayable; unknown/invalid would have
-		// been rejected upstream.
-		if added {
+		b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		// Bitcoin's per-entry relay gates: only a fresh claim (under
+		// 10 minutes old) on a routable address is gossiped onward,
+		// and only from a message that passed the per-message gates
+		// above. Relay is independent of whether addrman stored the
+		// entry — an already-known address still propagates (Core
+		// relays before AddrMan::Add); the per-destination knownAddr
+		// bloom in the relay drain is what suppresses repeats to the
+		// same peer, exactly like Core's m_addr_known. Freshness
+		// expiring 10 minutes after the original claim bounds any
+		// relay loop.
+		if mayRelay && naddr.Valid() && claimed.After(now.Add(-10*time.Minute)) {
 			b.RelayAddress(peer, e, true)
 		}
 	}
@@ -365,6 +410,7 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	delete(b.peerBuckets, key)
 	delete(b.handshakeByID, peer.ID())
 	delete(b.peerHello, key)
+	delete(b.getPeersPending, key)
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
 }

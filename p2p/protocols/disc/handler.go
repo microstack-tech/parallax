@@ -163,7 +163,7 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		if err := sendSelfAdvertise(backend, rw); err != nil {
 			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
 		}
-		if err := RequestPeers(st, rw); err != nil {
+		if err := RequestPeers(backend, peer, st, rw); err != nil {
 			log.Debug("parallax-disc/1: GetPeers send failed", "err", err)
 		}
 	}
@@ -530,11 +530,16 @@ func sendYourAddr(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *sta
 
 // RequestPeers sends a GetPeers on the session. Callers (the dialer in
 // Phase 4) invoke this once per outbound session. Repeated calls are
-// dropped silently.
-func RequestPeers(st *state, rw p2p.MsgReadWriter) error {
-	if st.getPeersSent.Load() >= 1 {
+// dropped silently. Backends that track solicited responses (the
+// production AddrmanBackend) are notified so the response bypasses
+// the ingest rate limit and its entries are excluded from onward
+// relay — Bitcoin's m_getaddr_sent + getaddr bucket-credit pattern.
+func RequestPeers(backend Backend, peer *p2p.Peer, st *state, rw p2p.MsgReadWriter) error {
+	if !st.getPeersSent.CompareAndSwap(0, 1) {
 		return nil
 	}
-	st.getPeersSent.Add(1)
+	if noter, ok := backend.(interface{ NoteGetPeersSent(*p2p.Peer) }); ok {
+		noter.NoteGetPeersSent(peer)
+	}
 	return p2p.Send(rw, GetPeersMsg, GetPeers{})
 }

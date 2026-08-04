@@ -267,10 +267,10 @@ func TestRelayAddressNonBlockingOnFullOutbox(t *testing.T) {
 	}
 }
 
-// TestHandlePeersFansOutNewlyLearned — a Peers message containing a
-// brand-new address triggers RelayAddress, which lands in some
-// peer's outbox. Duplicate ingest does NOT re-relay (addrman.AddOne
-// returns false).
+// TestHandlePeersFansOutNewlyLearned — a small Peers message
+// containing a fresh address triggers RelayAddress, which lands in
+// some peer's outbox. A stale claim (older than 10 minutes) is
+// ingested but NOT relayed — Bitcoin's nTime freshness gate.
 func TestHandlePeersFansOutNewlyLearned(t *testing.T) {
 	var key [32]byte
 	for i := range key {
@@ -352,8 +352,8 @@ func TestHandlePeersFansOutNewlyLearned(t *testing.T) {
 		t.Fatalf("fan-out too wide: %d > %d", received, RelayFanOutMax)
 	}
 
-	// Re-ingest the same entry: addrman.AddOne returns false (already
-	// known), so RelayAddress must NOT fire again.
+	// A stale claim fails the 10-minute freshness gate: ingested,
+	// never relayed.
 	for _, f := range candidates {
 		// Drain any leftover from the first round.
 		select {
@@ -361,15 +361,91 @@ func TestHandlePeersFansOutNewlyLearned(t *testing.T) {
 		default:
 		}
 	}
-	b.HandlePeers(originator.peer, []PeerEntry{entry})
+	stale := PeerEntry{
+		NetworkID: NetIPv4,
+		Addr:      []byte{9, 9, 9, 9},
+		TCPPort:   30303,
+		KeyType:   KeyTypeNone,
+		LastSeen:  uint64(time.Now().Add(-time.Hour).Unix()),
+	}
+	b.HandlePeers(originator.peer, []PeerEntry{stale})
 
 	for _, f := range candidates {
 		select {
 		case got := <-f.ch:
-			t.Fatalf("re-relay on duplicate ingest: peer=%s entry=%+v", f.key, got)
+			t.Fatalf("relay of a stale-claimed entry: peer=%s entry=%+v", f.key, got)
 		default:
 		}
 	}
+}
+
+// TestHandlePeersRelayGuards — the per-message relay gates from
+// Bitcoin's ADDR path: entries of a solicited GetPeers response are
+// never re-gossiped (and the pending mark clears once the response
+// arrives), and batches larger than maxRelayBatch don't relay.
+func TestHandlePeersRelayGuards(t *testing.T) {
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 7)
+	}
+	b := newRelayBackendForTest(t, key)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	origin := p2p.NewPeerForTest(id, "origin", nil, a)
+
+	// One relay candidate to observe fan-out.
+	candBox := make(chan PeerEntry, 64)
+	b.RegisterPeerOutbox(PeerKey("candidate"), candBox)
+
+	fresh := func(lastByte byte) PeerEntry {
+		return PeerEntry{
+			NetworkID: NetIPv4,
+			Addr:      []byte{8, 8, 8, lastByte},
+			TCPPort:   30303,
+			KeyType:   KeyTypeNone,
+			LastSeen:  uint64(time.Now().Unix()),
+		}
+	}
+	assertNoRelay := func(what string) {
+		t.Helper()
+		select {
+		case got := <-candBox:
+			t.Fatalf("%s relayed: %+v", what, got)
+		default:
+		}
+	}
+
+	// Solicited-response exclusion: after NoteGetPeersSent, a batch
+	// is ingested but not relayed.
+	b.NoteGetPeersSent(origin)
+	b.HandlePeers(origin, []PeerEntry{fresh(1)})
+	assertNoRelay("solicited-response entry")
+
+	// The sub-full-response batch above also cleared the pending
+	// mark: the next unsolicited push relays again.
+	b.HandlePeers(origin, []PeerEntry{fresh(2)})
+	select {
+	case <-candBox:
+	default:
+		t.Fatal("unsolicited push after response completion did not relay")
+	}
+
+	// Oversized batch: bulk transfer, not gossip.
+	batch := make([]PeerEntry, maxRelayBatch+1)
+	for i := range batch {
+		batch[i] = fresh(byte(10 + i))
+	}
+	b.HandlePeers(origin, batch)
+	assertNoRelay("oversized-batch entry")
 }
 
 // TestRelayAddressEmptyCandidatesNoOp — relaying with no other peers
