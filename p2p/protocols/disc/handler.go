@@ -116,10 +116,11 @@ type state struct {
 	// one response per session; further requests are silently ignored.
 	getPeersReceived atomic.Uint32
 
-	// knownAddr is the rolling bloom filter tracking addresses we've
-	// sent to this peer. Used to skip re-relaying addresses the peer
-	// already has (Phase 4 RelayAddress discipline).
-	knownAddr bloomFilter
+	// knownAddr is the rolling bloom filter tracking addresses the
+	// peer is known to have — both ones we sent it and ones it sent
+	// us. Used to skip re-relaying addresses the peer already has
+	// (Phase 4 RelayAddress discipline, Bitcoin's m_addr_known).
+	knownAddr rollingBloom
 }
 
 // Run is the per-peer entry point. Called by p2p.Server once the
@@ -434,7 +435,11 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 		if skip {
 			continue
 		}
-		kept = append(kept, pkt.Entries[i])
+		// The peer evidently knows this address — never relay it back
+		// (Bitcoin: AddAddressKnown on every received addr).
+		e := pkt.Entries[i]
+		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
+		kept = append(kept, e)
 	}
 	backend.HandlePeers(peer, kept)
 	return nil

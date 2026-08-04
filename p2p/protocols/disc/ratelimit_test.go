@@ -104,3 +104,36 @@ func TestBloomFilterLowFalsePositiveRate(t *testing.T) {
 		t.Errorf("bloom false-positive rate too high: %d/10000", fps)
 	}
 }
+
+// TestRollingBloomRotates — the known-address filter must keep the
+// most recent keys reliably while forgetting old generations, so a
+// weeks-long session can't saturate it into a filter whose false
+// positives silently stop all relay to the peer.
+func TestRollingBloomRotates(t *testing.T) {
+	var r rollingBloom
+	key := func(i int) []byte {
+		return []byte{byte(i >> 16), byte(i >> 8), byte(i), 0xAB}
+	}
+	const total = 4 * bloomGenerationCap
+	for i := 0; i < total; i++ {
+		r.Add(key(i))
+	}
+	// The retention guarantee: at least the last n=5000 (two full
+	// generations) inserts are remembered.
+	for i := total - 2*bloomGenerationCap; i < total; i++ {
+		if !r.Contains(key(i)) {
+			t.Fatalf("recent key %d missing from rolling bloom", i)
+		}
+	}
+	// Rotation actually forgets: the earliest generation is gone.
+	// Allow for false positives, but the bulk must be absent.
+	present := 0
+	for i := 0; i < bloomGenerationCap; i++ {
+		if r.Contains(key(i)) {
+			present++
+		}
+	}
+	if present > bloomGenerationCap/10 {
+		t.Fatalf("%d/%d oldest keys still present; rotation is not forgetting", present, bloomGenerationCap)
+	}
+}

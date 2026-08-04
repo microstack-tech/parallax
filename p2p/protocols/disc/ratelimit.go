@@ -45,6 +45,13 @@ const (
 	bloomBits   = 73984 // ~72 kbit, byte-aligned
 	bloomBytes  = bloomBits / 8
 	bloomHashes = 10
+
+	// bloomGenerationCap is the insert budget of one rolling-filter
+	// generation. Three generations at (n+1)/2 inserts each guarantee
+	// the filter remembers at least the n=5000 most recent keys —
+	// the same scheme as Bitcoin's CRollingBloomFilter{5000, 0.001}
+	// backing m_addr_known.
+	bloomGenerationCap = (5000 + 1) / 2
 )
 
 // tokenBucket is a classic leaky-bucket rate limiter. Refill happens
@@ -113,18 +120,16 @@ func (b *tokenBucket) Level() float64 {
 	return b.level
 }
 
-// bloomFilter is a fixed-size counting-free bloom filter. Thread-safe.
-// One per peer. Cleared on session start (fresh allocation).
+// bloomFilter is a fixed-size counting-free bloom filter. NOT
+// thread-safe on its own — it is a generation inside rollingBloom,
+// which serializes access under its mutex.
 type bloomFilter struct {
-	mu   sync.Mutex
 	bits [bloomBytes]byte
 }
 
 // Contains checks whether key may have been seen. False positives are
 // possible; false negatives are not.
 func (f *bloomFilter) Contains(key []byte) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	for i := 0; i < bloomHashes; i++ {
 		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
 		if f.bits[pos/8]&(1<<(pos%8)) == 0 {
@@ -136,11 +141,54 @@ func (f *bloomFilter) Contains(key []byte) bool {
 
 // Add marks key as seen.
 func (f *bloomFilter) Add(key []byte) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	for i := 0; i < bloomHashes; i++ {
 		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
 		f.bits[pos/8] |= 1 << (pos % 8)
+	}
+}
+
+// rollingBloom keeps the most recent ~5000 keys by cycling three
+// bloom generations: inserts land in the current generation, and when
+// it reaches its insert budget the oldest generation is dropped. A
+// session that relays addresses for weeks therefore never saturates
+// the filter (a fixed filter's false-positive rate climbs toward 1
+// and silently stops all relay to that peer — worst on the long-lived
+// backbone links). Mirrors Bitcoin's CRollingBloomFilter behavior for
+// m_addr_known. The zero value is ready to use.
+type rollingBloom struct {
+	mu   sync.Mutex
+	gens [3]bloomFilter
+	// cur indexes the generation receiving inserts; curCount is the
+	// number of inserts it has absorbed.
+	cur      int
+	curCount int
+}
+
+// Contains checks whether key may have been seen in any live
+// generation. False positives possible, false negatives not (within
+// the retention window).
+func (r *rollingBloom) Contains(key []byte) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.gens {
+		if r.gens[i].Contains(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// Add marks key as seen, rotating generations when the current one
+// is full.
+func (r *rollingBloom) Add(key []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gens[r.cur].Add(key)
+	r.curCount++
+	if r.curCount >= bloomGenerationCap {
+		r.cur = (r.cur + 1) % len(r.gens)
+		r.gens[r.cur] = bloomFilter{}
+		r.curCount = 0
 	}
 }
 
