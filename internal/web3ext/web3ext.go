@@ -183,6 +183,16 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'uptime',
+			call: 'admin_uptime',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'stop',
+			call: 'admin_stop',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'exportChain',
 			call: 'admin_exportChain',
 			params: 3,
