@@ -17,9 +17,11 @@
 package discover
 
 import (
+	"net"
 	"testing"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
@@ -98,6 +100,72 @@ func TestRejectCacheCapEviction(t *testing.T) {
 	if !c.Contains(mkID(byte(max + 5))) {
 		t.Fatalf("most recent insert should be retained")
 	}
+}
+
+// newTestFilterTable creates a table with an accept-all node filter so the
+// verifyAndAdd / lookup-time ENR verification paths are exercised.
+func newTestFilterTable(t transport) (*Table, *enode.DB) {
+	db, _ := enode.OpenDB("")
+	tab, _ := newTable(t, db, nil, func(*enode.Node) bool { return true }, logging.Root())
+	go tab.loop()
+	return tab, db
+}
+
+// Regression: a node whose verified ENR is in the positive nodedb cache must
+// not be dropped because of a stale reject-cache entry. Before the positive
+// cache was consulted first, a single transient RequestENR failure (one
+// dropped UDP packet) blacklisted a known-good node for rejectCacheTTL.
+func TestVerifyAndAddPrefersNodedbOverRejectCache(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestFilterTable(transport)
+	defer db.Close()
+	defer tab.close()
+
+	n := nodeAtDistance(tab.self().ID(), 250, net.IP{203, 0, 113, 1})
+	// The node has been verified before: its record is in the nodedb.
+	if err := db.UpdateNode(unwrapNode(n)); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	// A transient RequestENR failure put it in the negative cache.
+	tab.rejects.Add(n.ID())
+
+	// The transport has no record for n, so any RequestENR round-trip would
+	// fail; the add can only succeed through the nodedb fast path.
+	tab.verifyAndAdd(n)
+
+	if tab.getNode(n.ID()) == nil {
+		t.Fatalf("nodedb-verified node was dropped due to reject-cache entry")
+	}
+}
+
+// Regression: same as above, but for the lookup-time verification path in
+// lookup.query.
+func TestLookupPrefersNodedbOverRejectCache(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestFilterTable(transport)
+	defer db.Close()
+	defer tab.close()
+
+	target := nodeAtDistance(tab.self().ID(), 250, net.IP{203, 0, 113, 2})
+	if err := db.UpdateNode(unwrapNode(target)); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	tab.rejects.Add(target.ID())
+
+	it := &lookup{
+		tab:       tab,
+		queryfunc: func(*node) ([]*node, error) { return []*node{target}, nil },
+	}
+	reply := make(chan []*node, 1)
+	asked := nodeAtDistance(tab.self().ID(), 240, net.IP{203, 0, 113, 3})
+	it.query(asked, reply)
+
+	for _, n := range <-reply {
+		if n.ID() == target.ID() {
+			return
+		}
+	}
+	t.Fatalf("nodedb-verified node missing from lookup reply due to reject-cache entry")
 }
 
 func TestRejectCacheCapPrefersExpiredEviction(t *testing.T) {

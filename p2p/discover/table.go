@@ -616,26 +616,28 @@ func (tab *Table) addVerifiedNode(n *node) {
 //
 // Two short-circuits avoid redundant RequestENR round-trips:
 //
-//  1. If n.ID() is in the negative cache (recent RequestENR error or filter
-//     rejection), drop immediately. Each non-Parallax / dead ID then costs
-//     us at most one round-trip per rejectCacheTTL, regardless of how many
-//     neighbors keep returning it in their FINDNODE responses.
-//
-//  2. If we already have a verified ENR for n.ID() in the local nodedb,
+//  1. If we already have a verified ENR for n.ID() in the local nodedb,
 //     reuse it. The nodedb only persists nodes that previously passed
 //     nodeFilter (see copyLiveNodes), so a hit means the ID is trusted.
 //     If it has gone offline since, the table revalidator will prune it.
+//     Checked first so that a transient RequestENR failure (one dropped
+//     UDP packet) cannot blacklist a known-good node for rejectCacheTTL.
+//
+//  2. If n.ID() is in the negative cache (recent RequestENR error or filter
+//     rejection), drop immediately. Each non-Parallax / dead ID then costs
+//     us at most one round-trip per rejectCacheTTL, regardless of how many
+//     neighbors keep returning it in their FINDNODE responses.
 func (tab *Table) verifyAndAdd(n *node) {
 	if tab.nodeFilter == nil {
 		tab.addVerifiedNode(n)
 		return
 	}
 	id := n.ID()
-	if tab.rejects.Contains(id) {
-		return
-	}
 	if cached := tab.db.Node(id); cached != nil {
 		tab.addVerifiedNode(wrapNode(cached))
+		return
+	}
+	if tab.rejects.Contains(id) {
 		return
 	}
 	select {

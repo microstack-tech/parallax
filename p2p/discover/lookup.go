@@ -172,20 +172,22 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 		add := n
 		if it.tab.nodeFilter != nil {
 			id := n.ID()
-			// Negative cache: a recent RequestENR error or filter rejection
-			// for this ID short-circuits without another round-trip. Without
-			// this, the same non-Parallax peer being returned by every
-			// neighbor's FINDNODE response would burn one RequestENR per
-			// occurrence (the a55b10... storm in the original report).
-			if it.tab.rejects.Contains(id) {
-				continue
-			}
 			// Positive cache: a verified ENR already in the local nodedb
 			// means we previously accepted this ID. Reuse it instead of
 			// round-tripping. The nodedb only persists filter-passing
-			// records (see copyLiveNodes), so this is safe.
+			// records (see copyLiveNodes), so this is safe. Checked before
+			// the negative cache so a transient RequestENR failure cannot
+			// blacklist a known-good node for rejectCacheTTL.
 			if cached := it.tab.db.Node(id); cached != nil {
 				add = wrapNode(cached)
+			} else if it.tab.rejects.Contains(id) {
+				// Negative cache: a recent RequestENR error or filter
+				// rejection for this ID short-circuits without another
+				// round-trip. Without this, the same non-Parallax peer being
+				// returned by every neighbor's FINDNODE response would burn
+				// one RequestENR per occurrence (the a55b10... storm in the
+				// original report).
+				continue
 			} else {
 				nn, err := it.tab.net.RequestENR(unwrapNode(n))
 				if err != nil {
