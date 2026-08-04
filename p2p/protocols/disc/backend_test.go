@@ -837,3 +837,79 @@ func TestHandlePeersLastSeenSanitization(t *testing.T) {
 		}
 	}
 }
+
+// TestSolicitedPeersResponseBypassesRateLimit — a GetPeers response we
+// solicited must be ingested in full: NoteGetPeersSent credits the
+// peer's ingest bucket with MaxPeersPerMessage tokens on top of the
+// steady-state gossip rate (Bitcoin: m_addr_token_bucket +=
+// MAX_ADDR_TO_SEND on getaddr send). Without the credit, a fresh
+// node's per-session address learning is capped at the burst (~1% of
+// what the peer sent). Unsolicited bulk pushes stay rate-limited.
+func TestSolicitedPeersResponseBypassesRateLimit(t *testing.T) {
+	mkPeer := func(t *testing.T) (*p2p.Peer, func()) {
+		t.Helper()
+		a, d, err := pipes.TCPPipe()
+		if err != nil {
+			t.Fatalf("TCPPipe: %v", err)
+		}
+		var id enode.ID
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		p := p2p.NewPeerForTest(id, "test", nil, a)
+		return p, func() { a.Close(); d.Close() }
+	}
+	// Spread entries across distinct /16 groups: addrman's per-source
+	// bucket limits cap how many same-group addresses one source can
+	// place, which would mask the rate-limit behavior under test.
+	batch := make([]PeerEntry, MaxPeersPerMessage)
+	for i := range batch {
+		first := byte(5 + i%94)
+		if first >= 10 {
+			first++ // skip the private 10.0.0.0/8 block
+		}
+		batch[i] = PeerEntry{
+			NetworkID: NetIPv4,
+			Addr:      []byte{first, byte(i / 94), 33, 44},
+			TCPPort:   32110,
+			KeyType:   KeyTypeNone,
+			LastSeen:  uint64(time.Now().Unix()),
+		}
+	}
+
+	t.Run("solicited response ingests in full", func(t *testing.T) {
+		m, err := addrman.New(addrman.Deterministic(21))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := NewAddrmanBackend(m, nil, nil, nil, nil)
+		peer, closeFn := mkPeer(t)
+		defer closeFn()
+
+		b.NoteGetPeersSent(peer)
+		b.HandlePeers(peer, batch)
+		// Allow a margin for stochastic (bucket, position) collisions
+		// inside addrman — one source group maps into at most 64 new
+		// buckets, so ~10% of a 1000-entry batch collides away. The
+		// property under test is that ingest is not capped at the
+		// ~10-token burst.
+		if got := m.Size(nil, nil); got < MaxPeersPerMessage*4/5 {
+			t.Fatalf("addrman size after solicited response = %d, want >= %d", got, MaxPeersPerMessage*4/5)
+		}
+	})
+
+	t.Run("unsolicited bulk push stays rate-limited", func(t *testing.T) {
+		m, err := addrman.New(addrman.Deterministic(22))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := NewAddrmanBackend(m, nil, nil, nil, nil)
+		peer, closeFn := mkPeer(t)
+		defer closeFn()
+
+		b.HandlePeers(peer, batch)
+		if got := m.Size(nil, nil); got > 2*int(outboundBurst) {
+			t.Fatalf("addrman size after unsolicited bulk push = %d, want <= burst %v", got, outboundBurst)
+		}
+	})
+}

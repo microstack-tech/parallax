@@ -230,6 +230,12 @@ func (b *AddrmanBackend) NoteGetPeersSent(peer *p2p.Peer) {
 	b.mu.Lock()
 	b.getPeersPending[peerKeyFor(peer)] = true
 	b.mu.Unlock()
+	// Accept a full response on top of the steady-state gossip rate.
+	// Without this credit a solicited 1000-entry response would be
+	// ~99% rate-limit-dropped and bootstrap would lean entirely on
+	// seed nodes (Bitcoin: m_addr_token_bucket += MAX_ADDR_TO_SEND
+	// when sending getaddr).
+	b.ingestBucketFor(peer).Credit(MaxPeersPerMessage)
 }
 
 // HandlePeers ingests a batch of gossiped PeerEntry records into

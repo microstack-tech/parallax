@@ -74,9 +74,16 @@ func (b *tokenBucket) Take(now time.Time) bool {
 
 	elapsed := now.Sub(b.lastFill).Seconds()
 	if elapsed > 0 {
-		b.level += elapsed * b.rate
-		if b.level > b.burst {
-			b.level = b.burst
+		// Refill tops the level toward burst but never past it, and
+		// never touches a level already above burst — a Credit for a
+		// solicited response may legitimately hold the level there,
+		// and clamping would destroy the credit (Bitcoin: "Don't
+		// increment bucket if it's already full").
+		if b.level < b.burst {
+			b.level += elapsed * b.rate
+			if b.level > b.burst {
+				b.level = b.burst
+			}
 		}
 		b.lastFill = now
 	}
@@ -85,6 +92,18 @@ func (b *tokenBucket) Take(now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// Credit adds n tokens, allowing the level to exceed burst. Used when
+// soliciting a GetPeers response: the reply may carry a full
+// MaxPeersPerMessage batch, which must bypass the steady-state gossip
+// rate (Bitcoin: peer.m_addr_token_bucket += MAX_ADDR_TO_SEND on
+// getaddr send). The excess drains through Take; lazy refill never
+// raises the level past burst on its own.
+func (b *tokenBucket) Credit(n float64) {
+	b.mu.Lock()
+	b.level += n
+	b.mu.Unlock()
 }
 
 // Level returns the current fill level. Read-only; for tests.
