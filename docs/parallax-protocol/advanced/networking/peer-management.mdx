@@ -57,7 +57,7 @@ backend looks for any other peer whose effective listen address
 matches `(IP, ListenPort)`. If one exists, the duplicate is dropped:
 
 - if exactly one of the two is inbound, drop it;
-- otherwise drop the younger connection (smaller `created` timestamp).
+- otherwise drop the younger connection (larger `created` timestamp).
 
 The result is a single peer entry per logical neighbour even under
 cross-dial races.
@@ -211,10 +211,14 @@ or too many unsolicited `Peers` messages. The peer is disconnected
 immediately and its source IP is added to the discourage Bloom on
 session-end.
 
-Trusted peers bypass both checks. Banned IPs are hard-rejected at
-the listener; discouraged IPs are only rejected at saturation —
-when the node still has free inbound slots there's no benefit to
-turning them away.
+Banned IPs are hard-rejected at the listener before the handshake,
+with no trusted exemption — at that stage the node cannot yet know
+whether the remote is trusted, so a banned IP is rejected even for
+a would-be trusted peer (operators should unban rather than work
+around it). Only the discourage check exempts trusted peers:
+discouraged IPs are rejected only at saturation — when the node
+still has free inbound slots there's no benefit to turning them
+away.
 
 The discourage filter is in-memory and reset on every restart. The
 ban list persists.
@@ -246,4 +250,7 @@ The corresponding `parallax-cli` subcommands are `setban`,
 | `MaxBlockRelayPeers` | 2 | Outbound slots reserved for block-relay-only. Capped at `maxDialedConns / 2`. Negative disables the bucket entirely; every outbound dial then becomes full-relay. |
 | `AnchorsPath` | `<datadir>/anchors.dat` | Empty disables anchor persistence. |
 | `BanList` | non-`nil` BanMan with `<datadir>/banlist.json` | `nil` disables ban / discourage gating. Useful in ephemeral tests. |
-| `BanTime` | 24 h (`DefaultBanDuration`) | Default duration applied when `setban` is called with `bantime=0`. |
+
+The ban duration is not a configuration knob: it is chosen per call
+via the `bantime` argument to `setban`, and `bantime=0` falls back
+to the fixed internal default `DefaultBanDuration` (24 h).

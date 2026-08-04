@@ -325,7 +325,7 @@ Removes a remote node from the trusted peer set, but it does not disconnect it a
 
 ### admin\_setban
 
-Adds or removes an entry in the persistent ban list. Banned IPs are hard-rejected at the listener for every inbound; trusted peers bypass the check.
+Adds or removes an entry in the persistent ban list. Banned IPs are hard-rejected at the listener for every inbound, with no trusted-peer exemption — the rejection happens before the handshake, so the node cannot yet know whether the remote is trusted. If a banned range must reach a trusted peer, unban it rather than working around the check.
 
 Arguments:
 
