@@ -174,11 +174,18 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 			id := n.ID()
 			// Positive cache: a verified ENR already in the local nodedb
 			// means we previously accepted this ID. Reuse it instead of
-			// round-tripping. The nodedb only persists filter-passing
-			// records (see copyLiveNodes), so this is safe. Checked before
-			// the negative cache so a transient RequestENR failure cannot
-			// blacklist a known-good node for rejectCacheTTL.
-			if cached := it.tab.db.Node(id); cached != nil {
+			// round-tripping — but only when it still describes the
+			// endpoint this neighbor advertised (cachedRecordUsable;
+			// a moved node must be re-fetched at its new endpoint, not
+			// pinned to the stale record) and when it passes the
+			// CURRENT filter: pre-2.0 datadirs can carry stale
+			// non-Parallax records that predate the filter (see
+			// loadSeedNodes), and this path feeds dial candidates
+			// directly. Checked before the negative cache so a
+			// transient RequestENR failure cannot blacklist a
+			// known-good node for rejectCacheTTL.
+			if cached := it.tab.db.Node(id); cached != nil &&
+				cachedRecordUsable(cached, n, 0) && it.tab.nodeFilter(cached) {
 				add = wrapNode(cached)
 			} else if it.tab.rejects.Contains(id, n.IP()) {
 				// Negative cache: a recent RequestENR error or filter

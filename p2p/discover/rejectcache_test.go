@@ -23,6 +23,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 )
 
 func newTestRejectCache(ttl time.Duration, max int) *rejectCache {
@@ -137,7 +138,7 @@ func TestVerifyAndAddPrefersNodedbOverRejectCache(t *testing.T) {
 
 	// The transport has no record for n, so any RequestENR round-trip would
 	// fail; the add can only succeed through the nodedb fast path.
-	tab.verifyAndAdd(n)
+	tab.verifyAndAdd(n, 0)
 
 	if tab.getNode(n.ID()) == nil {
 		t.Fatalf("nodedb-verified node was dropped due to reject-cache entry")
@@ -211,5 +212,90 @@ func TestRejectCacheKeyedByEndpoint(t *testing.T) {
 	}
 	if c.Contains(id, goodIP) {
 		t.Fatalf("rejection at attacker endpoint must not blacklist the same ID at its honest endpoint")
+	}
+}
+
+// Regression: the positive nodedb cache must be bypassed when the node
+// is observed at a different endpoint than the cached record carries.
+// A node that changed IP keeps pinging from the new address, recording
+// fresh pongs that keep the stale db record alive indefinitely — so
+// without the bypass, the cached (dead) endpoint is pinned permanently
+// and the node's real endpoint is never learned.
+func TestVerifyAndAddRefetchesMovedNode(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestFilterTable(transport)
+	defer db.Close()
+	defer tab.close()
+
+	id := idAtDistance(tab.self().ID(), 250)
+	oldIP := net.IP{203, 0, 113, 10}
+	newIP := net.IP{203, 0, 113, 20}
+	mk := func(ip net.IP) *node {
+		var r enr.Record
+		r.Set(enr.IP(ip))
+		return wrapNode(enode.SignNull(&r, id))
+	}
+
+	// The stale record (old endpoint) sits in the nodedb; the node
+	// itself now answers RequestENR with its fresh record.
+	if err := db.UpdateNode(unwrapNode(mk(oldIP))); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	fresh := mk(newIP)
+	transport.updateRecord(unwrapNode(fresh))
+
+	// Observed pinging from the new address. The re-fetch runs on the
+	// bounded async verification path, so poll for the outcome.
+	tab.verifyAndAdd(mk(newIP), 0)
+
+	got := waitForTableNode(t, tab, id)
+	if !got.IP().Equal(newIP) {
+		t.Fatalf("table has IP %v, want re-fetched endpoint %v (stale cached record was reused)", got.IP(), newIP)
+	}
+}
+
+// waitForTableNode polls for id to appear in the table, failing the
+// test after a deadline. Needed because verifyAndAdd's RequestENR path
+// completes on a bounded background goroutine.
+func waitForTableNode(t *testing.T, tab *Table, id enode.ID) *enode.Node {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if n := tab.getNode(id); n != nil {
+			return n
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("node missing from table")
+	return nil
+}
+
+// Regression: a ping claiming a newer ENR sequence than the cached
+// record must trigger a re-fetch even when the endpoint is unchanged.
+func TestVerifyAndAddRefetchesOnNewerSeq(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestFilterTable(transport)
+	defer db.Close()
+	defer tab.close()
+
+	id := idAtDistance(tab.self().ID(), 250)
+	ip := net.IP{203, 0, 113, 30}
+	mk := func(seq uint64) *node {
+		var r enr.Record
+		r.Set(enr.IP(ip))
+		r.SetSeq(seq)
+		return wrapNode(enode.SignNull(&r, id))
+	}
+
+	if err := db.UpdateNode(unwrapNode(mk(1))); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	transport.updateRecord(unwrapNode(mk(5)))
+
+	tab.verifyAndAdd(mk(1), 5)
+
+	got := waitForTableNode(t, tab, id)
+	if got.Seq() != 5 {
+		t.Fatalf("table has seq %d, want re-fetched record seq 5", got.Seq())
 	}
 }

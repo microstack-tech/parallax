@@ -616,12 +616,14 @@ func (tab *Table) addVerifiedNode(n *node) {
 //
 // Two short-circuits avoid redundant RequestENR round-trips:
 //
-//  1. If we already have a verified ENR for n.ID() in the local nodedb,
-//     reuse it. The nodedb only persists nodes that previously passed
-//     nodeFilter (see copyLiveNodes), so a hit means the ID is trusted.
-//     If it has gone offline since, the table revalidator will prune it.
-//     Checked first so that a transient RequestENR failure (one dropped
-//     UDP packet) cannot blacklist a known-good node for rejectCacheTTL.
+//  1. If we already have a verified ENR for n.ID() in the local nodedb
+//     that still describes the observed endpoint (and isn't outdated by
+//     the observed ENR sequence), reuse it. The nodedb only persists
+//     nodes that previously passed nodeFilter (see copyLiveNodes), so a
+//     hit means the ID is trusted. If it has gone offline since, the
+//     table revalidator will prune it. Checked first so that a
+//     transient RequestENR failure (one dropped UDP packet) cannot
+//     blacklist a known-good node for rejectCacheTTL.
 //
 //  2. If (n.ID(), n.IP()) is in the negative cache (recent RequestENR error
 //     or filter rejection), drop immediately. Each non-Parallax / dead
@@ -629,13 +631,16 @@ func (tab *Table) addVerifiedNode(n *node) {
 //     regardless of how many neighbors keep returning it in their FINDNODE
 //     responses. Keyed per (ID, IP) so a spoofed advertisement can't
 //     blacklist the real node.
-func (tab *Table) verifyAndAdd(n *node) {
+//
+// observedSeq is the ENR sequence the remote claims for itself (the
+// EIP-868 ENRSeq from a ping), or 0 when the caller has no claim.
+func (tab *Table) verifyAndAdd(n *node, observedSeq uint64) {
 	if tab.nodeFilter == nil {
 		tab.addVerifiedNode(n)
 		return
 	}
 	id := n.ID()
-	if cached := tab.db.Node(id); cached != nil {
+	if cached := tab.db.Node(id); cached != nil && cachedRecordUsable(cached, n, observedSeq) {
 		tab.addVerifiedNode(wrapNode(cached))
 		return
 	}
@@ -664,6 +669,22 @@ func (tab *Table) verifyAndAdd(n *node) {
 		}
 		tab.addVerifiedNode(wrapNode(rn))
 	}()
+}
+
+// cachedRecordUsable reports whether a previously-verified nodedb
+// record still describes the node we just observed. The positive cache
+// must be bypassed when the observed endpoint differs from the cached
+// one: a node that changed IP keeps pinging from its new address,
+// which records fresh pongs that keep the stale db record alive
+// indefinitely — reusing it would mask the node's real endpoint
+// permanently, while a re-fetch at the observed endpoint learns the
+// move immediately. It is also bypassed when the node claims a newer
+// ENR sequence than the cached record carries (it re-published).
+func cachedRecordUsable(cached *enode.Node, observed *node, observedSeq uint64) bool {
+	if !cached.IP().Equal(observed.IP()) || cached.UDP() != observed.UDP() {
+		return false
+	}
+	return observedSeq <= cached.Seq()
 }
 
 // delete removes an entry from the node table. It is used to evacuate dead nodes.
