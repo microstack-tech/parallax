@@ -782,3 +782,58 @@ func TestAddrmanBackendHandlePeersNilSelfFn(t *testing.T) {
 		t.Fatalf("addrman size = %d, want 1", got)
 	}
 }
+
+// TestHandlePeersLastSeenSanitization — gossip ingest must preserve
+// plausible LastSeen claims and rewrite only garbage ones (Bitcoin
+// parity, src/net_processing.cpp ADDR handling): an ancient sentinel
+// or a future-dated claim becomes now-5days; everything else is stored
+// as claimed (minus the 2h gossip penalty). An ingest-time floor would
+// forever refresh dead addresses, keeping them inside addrman's 30-day
+// IsTerrible horizon and in hop-to-hop circulation.
+func TestHandlePeersLastSeenSanitization(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(13))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	now := time.Now()
+	cases := []struct {
+		name  string
+		claim uint64
+		want  time.Time // expected stored value before the 2h gossip penalty
+	}{
+		{"stale claim preserved", uint64(now.Add(-20 * 24 * time.Hour).Unix()), now.Add(-20 * 24 * time.Hour)},
+		{"fresh claim preserved", uint64(now.Add(-30 * time.Second).Unix()), now.Add(-30 * time.Second)},
+		{"ancient sentinel rewritten", 1, now.Add(-5 * 24 * time.Hour)},
+		{"future claim rewritten", uint64(now.Add(time.Hour).Unix()), now.Add(-5 * 24 * time.Hour)},
+	}
+	for i, tc := range cases {
+		addrBytes := []byte{51, 15, 0, byte(i + 1)}
+		b.HandlePeers(peer, []PeerEntry{{
+			NetworkID: NetIPv4, Addr: addrBytes, TCPPort: 32110,
+			KeyType: KeyTypeNone, LastSeen: tc.claim,
+		}})
+		naddr, _ := addrman.NewNetAddr(addrman.NetIPv4, addrBytes, 32110)
+		info := m.Lookup(naddr)
+		if info == nil {
+			t.Fatalf("%s: entry missing from addrman", tc.name)
+		}
+		want := tc.want.Add(-2 * time.Hour)
+		if diff := info.LastSeen.Sub(want); diff < -10*time.Second || diff > 10*time.Second {
+			t.Errorf("%s: stored LastSeen = %v, want ~%v", tc.name, info.LastSeen, want)
+		}
+	}
+}

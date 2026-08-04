@@ -200,6 +200,12 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 	b.Q.Report(peerKeyFor(peer), net, addr, port, group)
 }
 
+// ancientLastSeen is the garbage-timestamp sentinel threshold: any
+// claimed LastSeen at or below it (about March 1973 in Unix seconds)
+// is treated as unset. Mirrors Bitcoin's 100000000-second cutoff in
+// the ADDR ingest path (src/net_processing.cpp).
+const ancientLastSeen = 100000000
+
 // HandlePeers ingests a batch of gossiped PeerEntry records into
 // addrman with source=tcp_gossip. The 2-hour gossip penalty on
 // LastSeen (PIP-0006 Phase 2 rule: "Subtract a 2-hour penalty when the
@@ -244,17 +250,19 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 				continue
 			}
 		}
-		// Clamp LastSeen to [now-10min, now+10min] per PIP-0006
-		// Phase 2. Future-dating is rejected by falling back to now
-		// — matches Bitcoin's ingest, which never trusts a
-		// forward-dated address.
+		// Sanitize LastSeen the way Bitcoin ingests addr timestamps
+		// (net_processing.cpp ADDR handling): an ancient sentinel
+		// (pre-2001) or a claim more than 10 minutes in the future is
+		// replaced with now-5days; every other claim is preserved
+		// as-is. Preserving old claims is what lets dead addresses age
+		// out — addrman's IsTerrible drops entries past the 30-day
+		// horizon, which an ingest-time floor would forever reset,
+		// keeping zombie addresses in circulation hop-to-hop.
 		claimed := time.Unix(int64(e.LastSeen), 0)
-		if claimed.Before(now.Add(-10 * time.Minute)) {
-			claimed = now.Add(-10 * time.Minute)
+		if e.LastSeen <= ancientLastSeen || claimed.After(now.Add(10*time.Minute)) {
+			claimed = now.Add(-5 * 24 * time.Hour)
 		}
-		if claimed.After(now.Add(10 * time.Minute)) {
-			claimed = now
-		}
+		e.LastSeen = uint64(claimed.Unix())
 		// Plus the 2-hour gossip penalty applied by the Add path.
 		added := b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
 		// Bitcoin §RelayAddress: only newly-learned addresses get
