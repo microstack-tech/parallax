@@ -1201,16 +1201,18 @@ func (srv *Server) runV2Dialer() {
 		}
 		srv.log.Trace("pip6: runV2Dialer iter", "addr", tcp.String(), "sincePrev", sincePrev)
 		prev = now
-		// Fill the block-relay-only bucket first. On a v2-native
-		// network runV2Dialer is the dominant dial source, so
-		// without this the block-relay-only slots (MaxBlockRelayPeers)
-		// would never fill and the anti-eclipse property they exist
-		// for would not hold. Once the bucket is full, dial
-		// full-relay. Bitcoin Core keeps a fixed number of
-		// block-relay-only connections the same way (src/net.cpp
-		// ThreadOpenConnections, MAX_BLOCK_RELAY_ONLY_CONNECTIONS).
+		// Fill full-relay slots first; the block-relay-only bucket
+		// fills once the full-relay target (total outbound budget
+		// minus the reserved block-relay slots) is met. Bitcoin
+		// Core's ThreadOpenConnections opens OUTBOUND_FULL_RELAY up
+		// to m_max_outbound_full_relay before any BLOCK_RELAY
+		// connection, and the scheduler path (pickDynDialFlags)
+		// orders the same way — a fresh v2-native node must not
+		// spend its earliest outbound sessions on peers that relay
+		// neither transactions nor addresses.
 		dial := srv.DialV2
-		if want := srv.maxBlockRelayDial(); want > 0 && srv.blockRelayOutboundCount() < want {
+		if v2DialWantsBlockRelay(srv.dialedOutboundCount(), srv.blockRelayOutboundCount(),
+			srv.maxDialedConns(), srv.maxBlockRelayDial()) {
 			dial = srv.DialV2BlockRelay
 		}
 		if err := dial(tcp); err != nil {
@@ -1224,6 +1226,23 @@ func (srv *Server) runV2Dialer() {
 			}
 		}
 	}
+}
+
+// v2DialWantsBlockRelay reports whether the next addrman-driven v2
+// dial should fill a block-relay-only slot instead of a full-relay
+// one. Full-relay first, block-relay after — the same order as the
+// scheduler's pickDynDialFlags and Bitcoin Core's
+// ThreadOpenConnections. Pure function for unit testing; the live
+// counts come from the peer set at pick time.
+func v2DialWantsBlockRelay(dialedOutbound, blockRelayOutbound, maxDialed, maxBlockRelay int) bool {
+	if maxBlockRelay <= 0 || blockRelayOutbound >= maxBlockRelay {
+		return false
+	}
+	fullRelayTarget := maxDialed - maxBlockRelay
+	if fullRelayTarget < 0 {
+		fullRelayTarget = 0
+	}
+	return dialedOutbound-blockRelayOutbound >= fullRelayTarget
 }
 
 // DialV2 opens a v2-handshake TCP connection to the supplied address

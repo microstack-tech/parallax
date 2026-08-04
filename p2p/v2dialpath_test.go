@@ -116,3 +116,31 @@ func TestV2DialGroupLimitExemptions(t *testing.T) {
 		t.Error("feeler probe must be exempt from the group limit")
 	}
 }
+
+// TestV2DialWantsBlockRelay — the addrman-driven v2 dialer fills
+// full-relay slots before the block-relay-only bucket, mirroring
+// pickDynDialFlags and Bitcoin Core's ThreadOpenConnections order.
+// Defaults for context: MaxPeers=100, DialRatio=3 -> maxDialed=33,
+// maxBlockRelay=2 -> full-relay target 31.
+func TestV2DialWantsBlockRelay(t *testing.T) {
+	cases := []struct {
+		name                   string
+		dialed, br, max, maxBR int
+		want                   bool
+	}{
+		{"fresh node dials full-relay first", 0, 0, 33, 2, false},
+		{"below full-relay target stays full-relay", 30, 0, 33, 2, false},
+		{"full-relay target met fills block-relay", 31, 0, 33, 2, true},
+		{"one block-relay short of budget", 32, 1, 33, 2, true},
+		{"block-relay budget full", 33, 2, 33, 2, false},
+		{"block-relay disabled", 31, 0, 33, 0, false},
+		{"tiny budget: full-relay keeps priority", 0, 0, 2, 1, false},
+		{"tiny budget: block-relay after full-relay", 1, 0, 2, 1, true},
+	}
+	for _, tc := range cases {
+		if got := v2DialWantsBlockRelay(tc.dialed, tc.br, tc.max, tc.maxBR); got != tc.want {
+			t.Errorf("%s: v2DialWantsBlockRelay(%d, %d, %d, %d) = %v, want %v",
+				tc.name, tc.dialed, tc.br, tc.max, tc.maxBR, got, tc.want)
+		}
+	}
+}
