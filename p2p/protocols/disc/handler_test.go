@@ -228,6 +228,61 @@ func TestHandlerBlockRelayOnlySkipsAddressGossip(t *testing.T) {
 	}
 }
 
+// outboxTrackingBackend records whether RegisterPeerOutbox was called.
+type outboxTrackingBackend struct {
+	*testBackend
+	mu         sync.Mutex
+	registered bool
+}
+
+func (b *outboxTrackingBackend) RegisterPeerOutbox(_ PeerKey, _ chan<- PeerEntry) <-chan struct{} {
+	b.mu.Lock()
+	b.registered = true
+	b.mu.Unlock()
+	return make(chan struct{})
+}
+
+func (b *outboxTrackingBackend) UnregisterPeerOutbox(_ PeerKey) {}
+
+func (b *outboxTrackingBackend) wasRegistered() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.registered
+}
+
+// TestHandlerBlockRelayOnlyGetsNoRelayOutbox — block-relay-only peers
+// must be excluded from the relay fan-out: no outbox is registered
+// for them, so freshly-learned addresses are never pushed to a peer
+// that committed not to gossip. A full-relay peer does get one.
+func TestHandlerBlockRelayOnlyGetsNoRelayOutbox(t *testing.T) {
+	// Block-relay-only: greeting is Hello + YourAddr only (no
+	// self-advertise, no GetPeers), and no relay outbox is
+	// registered. Drain the two greeting messages to unblock Run,
+	// then confirm no registration happened.
+	brBackend := &outboxTrackingBackend{testBackend: &testBackend{obsOK: true}}
+	appBR, _ := runHandlerWithPeer(t, brBackend, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+	drainOne(t, appBR) // Hello
+	drainOne(t, appBR) // YourAddr
+	time.Sleep(50 * time.Millisecond)
+	if brBackend.wasRegistered() {
+		t.Error("block-relay-only peer must not get a relay outbox")
+	}
+	appBR.Close()
+
+	// Full-relay peer: greeting includes GetPeers, and the outbox is
+	// registered.
+	fullBackend := &outboxTrackingBackend{testBackend: &testBackend{obsOK: true}}
+	appFull, _ := runHandlerWithPeer(t, fullBackend, nil)
+	drainGreeting(t, appFull)
+	time.Sleep(50 * time.Millisecond)
+	if !fullBackend.wasRegistered() {
+		t.Error("full-relay peer must get a relay outbox")
+	}
+	appFull.Close()
+}
+
 // TestHandlerBlockRelayOnlyDropsIncomingGetPeers — receiving a
 // GetPeers from a block-relay-only peer is silently dropped (no
 // Peers reply). The handler must not throw an error.
@@ -554,6 +609,39 @@ func TestHandlerRejectsOversizedPeersMessage(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("handler did not exit on oversize Peers")
 	}
+}
+
+// TestHandlerAcceptsMultipleUnsolicitedPeers — address relay pushes
+// freshly-learned addresses as single-entry Peers messages
+// throughout a session. The handler must ingest every one of them
+// without disconnecting or flagging the peer as misbehaving; an
+// earlier revision capped unsolicited Peers at one, which made
+// honest relaying peers discourage each other.
+func TestHandlerAcceptsMultipleUnsolicitedPeers(t *testing.T) {
+	b := &testBackend{obsOK: true}
+	app, done := runHandler(t, b)
+	drainAndOpen(t, app)
+
+	const n = 5
+	for i := range n {
+		msg := Peers{Entries: []PeerEntry{
+			{NetworkID: NetIPv4, Addr: []byte{10, 0, 0, byte(i + 1)}, TCPPort: 30303, KeyType: KeyTypeNone},
+		}}
+		if err := p2p.Send(app, PeersMsg, msg); err != nil {
+			t.Fatalf("Send %d: %v", i, err)
+		}
+	}
+	// All n batches should have been ingested (subject to the ingest
+	// token bucket, which the testBackend does not throttle).
+	waitForSample(t, b, n, time.Second)
+
+	// The session must still be alive: no disconnect fired.
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited on unsolicited Peers stream: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	app.Close()
 }
 
 // TestHandlerRejectsDoubleYourAddr — YourAddr is single-shot; a second

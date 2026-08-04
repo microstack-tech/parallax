@@ -103,15 +103,10 @@ type state struct {
 	gotYourAddr atomic.Bool
 
 	// peersReceived counts Peers messages received on this session.
-	// Bitcoin parity: >1 unsolicited Peers per 24h disconnects; we
-	// enforce the stricter in-session version (only one solicited
-	// response plus one self-advertise are ever expected on an
-	// outbound session).
+	// Retained for diagnostics; no longer gates disconnection, since
+	// address relay legitimately pushes unsolicited Peers messages
+	// throughout a session (see handlePeers).
 	peersReceived atomic.Uint32
-
-	// peersUnsolicited counts Peers messages that arrived without a
-	// matching GetPeers we sent. More than one is a disconnect.
-	peersUnsolicited atomic.Uint32
 
 	// getPeersSent counts GetPeers requests we've issued to this peer.
 	// One-request-per-session is the rule (Bitcoin parity).
@@ -195,7 +190,12 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		outbox chan PeerEntry
 		stop   <-chan struct{}
 	)
-	if reg, ok := backend.(outboxRegistrar); ok {
+	// Block-relay-only peers are excluded from the relay fan-out for
+	// the same reason they get no self-advertise or GetPeers above:
+	// by spec they don't participate in address gossip. Registering
+	// their outbox would both leak addrbook entries to a peer that
+	// committed not to gossip and waste a fan-out slot per address.
+	if reg, ok := backend.(outboxRegistrar); ok && !peer.BlockRelayOnly() {
 		outbox = make(chan PeerEntry, relayOutboxBuffer)
 		stop = reg.RegisterPeerOutbox(peerKeyFor(peer), outbox)
 	}
@@ -410,19 +410,18 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	}
 	st.peersReceived.Add(1)
 
-	// Unsolicited-rate enforcement: every Peers message past the first
-	// (which answers our GetPeers) is unsolicited. The initial
-	// 1-entry self-advertise from an outbound peer's greeting is
-	// allowed — detected by size==1 and peersReceived==1 AND no
-	// GetPeers has been sent yet.
-	solicited := st.getPeersSent.Load() >= 1 && st.peersReceived.Load() == 1
-	selfAdvertise := len(pkt.Entries) == 1 && st.peersReceived.Load() == 1
-	if !solicited && !selfAdvertise {
-		if st.peersUnsolicited.Add(1) > 1 {
-			peer.MisbehavingFor("disc-unsolicited-peers")
-			return errors.New("disc: too many unsolicited Peers messages")
-		}
-	}
+	// Unsolicited Peers messages are expected on an ongoing basis:
+	// address relay (RelayAddress) pushes freshly-learned addresses to
+	// its fan-out targets as single-entry Peers messages throughout a
+	// session, exactly like Bitcoin Core's unsolicited ADDR pushes.
+	// We therefore do NOT disconnect a peer for sending more than one
+	// unsolicited Peers message. DoS is bounded the way Bitcoin Core
+	// bounds it: MaxPeersPerMessage caps entries per message (oversize
+	// is a disconnect via Validate above), and the per-peer ingest
+	// token bucket in HandlePeers drops entries that exceed the addr
+	// ingest rate. An earlier revision capped unsolicited messages at
+	// one, which made honest relaying peers disconnect and discourage
+	// each other and broke gossip between upgraded nodes.
 
 	// Filter out skippable entries; disconnect on any shape violation.
 	kept := pkt.Entries[:0]
