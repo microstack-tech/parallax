@@ -134,11 +134,11 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		log = logging.Root()
 	}
 	b := &AddrmanBackend{
-		m:             m,
-		Q:             q,
-		log:           log,
-		isSelf:        isSelf,
-		helloProv:     helloProvider,
+		m:               m,
+		Q:               q,
+		log:             log,
+		isSelf:          isSelf,
+		helloProv:       helloProvider,
 		peerBuckets:     make(map[PeerKey]*tokenBucket),
 		handshakeByID:   make(map[enode.ID]string),
 		peerHello:       make(map[PeerKey]Hello),
