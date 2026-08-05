@@ -682,3 +682,126 @@ func BenchmarkHandshakeRoundTrip(b *testing.B) {
 		_ = c.Close()
 	}
 }
+
+// TestEmptyFrameRoundTrip — a zero-length Write produces a tag-only
+// frame that must Read back as a non-nil empty slice: Read never
+// yields (nil, nil), which is the invariant FuzzReadFrame asserts.
+func TestEmptyFrameRoundTrip(t *testing.T) {
+	a, b := handshakedPair(t)
+	if err := a.Write([]byte{}); err != nil {
+		t.Fatalf("write empty frame: %v", err)
+	}
+	pt, err := b.Read()
+	if err != nil {
+		t.Fatalf("read empty frame: %v", err)
+	}
+	if pt == nil {
+		t.Fatal("Read returned nil plaintext for a valid empty frame")
+	}
+	if len(pt) != 0 {
+		t.Fatalf("plaintext = %x, want empty", pt)
+	}
+	// The stream stays usable afterwards.
+	if err := a.Write([]byte("after")); err != nil {
+		t.Fatal(err)
+	}
+	if pt, err := b.Read(); err != nil || string(pt) != "after" {
+		t.Fatalf("frame after empty = %q err=%v", pt, err)
+	}
+}
+
+// TestTransportBreaksAfterFrameFailure — any framing failure latches
+// the Conn: subsequent Reads/Writes fail with ErrTransportBroken. A
+// partial write would otherwise be retryable under the same send
+// nonce (ChaCha20-Poly1305 nonce reuse), and a read-side failure
+// leaves the stream position ambiguous.
+func TestTransportBreaksAfterFrameFailure(t *testing.T) {
+	a, b := handshakedPair(t)
+
+	// Corrupt a frame in transit by writing garbage bytes straight to
+	// the underlying conn, then let the reader hit the AEAD reject.
+	if _, err := a.Underlying().Write([]byte{0x00, 0x00, 0x20}); err != nil {
+		t.Fatal(err)
+	}
+	junk := make([]byte, 0x20)
+	if _, err := a.Underlying().Write(junk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(); err == nil {
+		t.Fatal("expected AEAD failure on corrupted frame")
+	}
+	if _, err := b.Read(); !errors.Is(err, ErrTransportBroken) {
+		t.Fatalf("second Read after failure = %v, want ErrTransportBroken", err)
+	}
+	if err := b.Write([]byte("x")); !errors.Is(err, ErrTransportBroken) {
+		t.Fatalf("Write after read failure = %v, want ErrTransportBroken", err)
+	}
+
+	// An oversize-plaintext Write touches nothing on the wire and
+	// must NOT latch the sender.
+	big := make([]byte, MaxFrameLen+1)
+	if err := a.Write(big); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("oversize write = %v, want ErrFrameTooLarge", err)
+	}
+	if err := a.Write([]byte("still fine")); err != nil {
+		t.Fatalf("write after oversize rejection = %v, want nil", err)
+	}
+}
+
+// handshakedPair returns two Conns on a loopback TCP pair with the
+// v2 handshake completed. TCP (unlike net.Pipe) is kernel-buffered,
+// so single-goroutine write-then-read tests don't deadlock.
+func handshakedPair(t *testing.T) (*Conn, *Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	type accepted struct {
+		c   net.Conn
+		err error
+	}
+	acceptCh := make(chan accepted, 1)
+	go func() {
+		c, err := ln.Accept()
+		acceptCh <- accepted{c, err}
+	}()
+	dialFD, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := <-acceptCh
+	if acc.err != nil {
+		t.Fatal(acc.err)
+	}
+	t.Cleanup(func() {
+		dialFD.Close()
+		acc.c.Close()
+	})
+
+	init := NewConn(dialFD)
+	resp := NewConn(acc.c)
+	errCh := make(chan error, 1)
+	go func() {
+		// Consume the version magic the dispatcher would normally
+		// peek before AcceptHandshake.
+		var magic [1]byte
+		if _, err := readFull(acc.c, magic[:]); err != nil {
+			errCh <- err
+			return
+		}
+		if magic[0] != VersionMagic {
+			errCh <- errors.New("bad magic")
+			return
+		}
+		errCh <- resp.AcceptHandshake()
+	}()
+	if err := init.DialHandshake(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	return init, resp
+}
