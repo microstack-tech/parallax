@@ -762,6 +762,17 @@ func (srv *Server) Start() (err error) {
 	srv.setupDialScheduler()
 	srv.replayAnchors()
 
+	// Periodic ban-list sweep + dump (Bitcoin's 15-minute
+	// DUMP_BANS_INTERVAL): keeps expired entries out of the map and
+	// banlist.json in the steady state, not just after mutations.
+	if srv.BanList != nil {
+		srv.loopWG.Add(1)
+		go func() {
+			defer srv.loopWG.Done()
+			srv.BanList.RunSweeper(srv.quit)
+		}()
+	}
+
 	srv.loopWG.Add(1)
 	go srv.run()
 	return nil

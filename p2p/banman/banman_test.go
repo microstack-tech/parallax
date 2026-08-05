@@ -496,3 +496,45 @@ func TestListBannedDurationFields(t *testing.T) {
 		t.Fatalf("time_remaining = %d, want in (0, %d]", e.TimeRemaining, e.BanDuration)
 	}
 }
+
+// TestLoadToleratesUnreadableFile — an unreadable banlist path (here:
+// a directory) must not fail construction; Core recreates the banlist
+// database on any load failure.
+func TestLoadToleratesUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "banlist.json")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bm, err := New(path, logging.Root())
+	if err != nil {
+		t.Fatalf("New with unreadable banlist = %v, want nil (recreate semantics)", err)
+	}
+	if got := len(bm.ListBanned()); got != 0 {
+		t.Fatalf("banlist not empty after recreate: %d entries", got)
+	}
+}
+
+// TestSweepBannedPrunesExpired — the periodic sweep drops expired
+// entries from the in-memory map without waiting for a query.
+func TestSweepBannedPrunesExpired(t *testing.T) {
+	bm, err := New("", logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bm.Ban(net.IPv4(10, 4, 4, 4), time.Millisecond, ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	if err := bm.Ban(net.IPv4(10, 5, 5, 5), time.Hour, ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	// Sub-second bans round up to 1s; wait out the short one.
+	time.Sleep(1100 * time.Millisecond)
+	bm.SweepBanned()
+	bm.mu.Lock()
+	n := len(bm.banned)
+	bm.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("banned map has %d entries after sweep, want 1", n)
+	}
+}

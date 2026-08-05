@@ -176,7 +176,12 @@ func (b *BanMan) BanSubnet(subnet *net.IPNet, duration time.Duration, reason str
 	}
 	b.banned[key] = bannedNet{entry: entry, ipnet: parsed}
 	b.mu.Unlock()
-	return b.Dump()
+	// The in-memory ban is active regardless of persistence: a full
+	// disk must not make setban report failure for a ban that IS
+	// enforced. Bitcoin Core's DumpBanlist likewise logs and never
+	// fails the caller.
+	b.dumpAndLog()
+	return nil
 }
 
 // Unban removes a single-IP ban. Returns ok=true iff the entry
@@ -203,7 +208,17 @@ func (b *BanMan) UnbanSubnet(subnet *net.IPNet) (bool, error) {
 	if !existed {
 		return false, nil
 	}
-	return true, b.Dump()
+	b.dumpAndLog()
+	return true, nil
+}
+
+// dumpAndLog persists the banlist, logging rather than propagating
+// failures — callers have already mutated the in-memory state, which
+// is enforced regardless of persistence.
+func (b *BanMan) dumpAndLog() {
+	if err := b.Dump(); err != nil {
+		b.log.Warn("banman: banlist dump failed", "file", b.file, "err", err)
+	}
 }
 
 // IsBannedSubnet reports whether exactly this subnet has an active
@@ -268,6 +283,45 @@ func (b *BanMan) IsDiscouraged(addr net.IP) bool {
 	return b.discouraged.Contains(canonicalIP(addr))
 }
 
+// SweepInterval is the cadence of the periodic sweep-and-dump loop.
+// Bitcoin Core runs SweepBanned + DumpBanlist on the same 15-minute
+// scheduler tick (DUMP_BANS_INTERVAL).
+const SweepInterval = 15 * time.Minute
+
+// RunSweeper prunes expired entries and rewrites banlist.json every
+// SweepInterval until stop fires. Without it, expired entries persist
+// in the file until the next mutation (harmless — Load drops them —
+// but a divergence from Core's steady-state file contents). Callers
+// own the goroutine.
+func (b *BanMan) RunSweeper(stop <-chan struct{}) {
+	t := time.NewTicker(SweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			b.SweepBanned()
+			b.dumpAndLog()
+		}
+	}
+}
+
+// SweepBanned drops expired entries from the in-memory map. Expiry
+// is otherwise lazy (checked on every query); the periodic sweep
+// keeps the map and the dumped file tidy, mirroring Core's
+// SweepBanned.
+func (b *BanMan) SweepBanned() {
+	now := time.Now().Unix()
+	b.mu.Lock()
+	for key, bn := range b.banned {
+		if bn.entry.BannedTill <= now {
+			delete(b.banned, key)
+		}
+	}
+	b.mu.Unlock()
+}
+
 // ClearBanned removes every banned entry. Mirrors clearbanned RPC
 // (src/rpc/net.cpp:868). Does NOT clear the discourage filter — that
 // surface is restart-only.
@@ -275,7 +329,8 @@ func (b *BanMan) ClearBanned() error {
 	b.mu.Lock()
 	b.banned = make(map[string]bannedNet)
 	b.mu.Unlock()
-	return b.Dump()
+	b.dumpAndLog()
+	return nil
 }
 
 // BanInfo is the shape returned from ListBanned, suitable for RPC
@@ -391,7 +446,14 @@ func (b *BanMan) Load() error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("banman: read %s: %w", b.file, err)
+		// An unreadable banlist (EACCES, path-is-a-directory) must
+		// not stop the node from starting any more than a corrupt
+		// one does — Bitcoin Core treats every load failure as
+		// "Recreating the banlist database" and proceeds with an
+		// empty banmap (src/banman.cpp). The next Dump rewrites the
+		// path; if that also fails it is logged there.
+		b.log.Warn("banman: banlist file unreadable, recreating", "file", b.file, "err", err)
+		return nil
 	}
 	var body banlistFile
 	if err := json.Unmarshal(raw, &body); err != nil {
