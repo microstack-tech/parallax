@@ -37,6 +37,10 @@ type testBackend struct {
 	gotHellos []Hello
 	obsOK     bool
 	self      *PeerEntry // if non-nil, SelfEntry returns (*self, true)
+	// selfEntryPort records the listenPort argument of the last
+	// SelfEntry call, so tests can assert the handler threads the
+	// local Hello's listen port through the self-advertise.
+	selfEntryPort uint16
 	// localHello is the Hello returned from LocalHello(). Tests that
 	// drive Hello flows can set the nonce or other fields.
 	localHello Hello
@@ -77,9 +81,10 @@ func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 	return b.sample
 }
 
-func (b *testBackend) SelfEntry(_ uint16) (PeerEntry, bool) {
+func (b *testBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.selfEntryPort = listenPort
 	if b.self == nil {
 		return PeerEntry{}, false
 	}
@@ -925,5 +930,41 @@ func TestPreHelloMessageDisconnectsWithoutDiscourage(t *testing.T) {
 	}
 	if peer.ShouldDiscourage() {
 		t.Fatalf("pre-Hello message stamped discourage (reason %q); want plain disconnect", peer.DiscourageReason())
+	}
+}
+
+// TestSelfAdvertisePassesListenPort — the handler must thread the
+// local Hello's listen port into SelfEntry so a port-less quorum
+// winner (e.g. a --nat extip override without a port) can fall back
+// to it. Passing 0 made that fallback dead code: a port-0 winner
+// would be advertised as TCPPort 0, which fails Validate() on every
+// receiver and gets this node discouraged on sight.
+func TestSelfAdvertisePassesListenPort(t *testing.T) {
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{
+		obsOK:      true,
+		localHello: Hello{ProtoVersion: HelloMinProtoVersion, ListenPort: 32110, Services: ServiceNodeNetwork},
+	}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() {
+		appRW.Close()
+		<-done
+	})
+
+	drainGreeting(t, appRW)
+
+	b.mu.Lock()
+	got := b.selfEntryPort
+	b.mu.Unlock()
+	if got != 32110 {
+		t.Fatalf("SelfEntry called with listenPort %d, want the local Hello's 32110", got)
 	}
 }

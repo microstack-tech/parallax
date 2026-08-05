@@ -439,6 +439,12 @@ func (b *AddrmanBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 	if port == 0 {
 		port = listenPort
 	}
+	// Still no port — a port-less winner on a non-listening node.
+	// A PeerEntry with TCPPort 0 fails Validate() on every receiver
+	// and flags us as misbehaving, so advertise nothing.
+	if port == 0 {
+		return PeerEntry{}, false
+	}
 	return PeerEntry{
 		NetworkID: net,
 		Addr:      addr,

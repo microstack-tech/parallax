@@ -293,9 +293,13 @@ func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-cha
 // sendSelfAdvertise writes a 1-entry Peers message containing our
 // current self-address claim to an outbound peer. Mirrors Bitcoin's
 // addr(self) sequence on outbound-full-relay peers. Skipped silently
-// if no self-address is available (no quorum, no override).
+// if no self-address is available (no quorum, no override). The local
+// listen port is passed so SelfEntry can complete a port-less quorum
+// winner (e.g. a --nat extip override without a port): advertising
+// TCPPort 0 would fail Validate() on every receiver and get this
+// node discouraged on sight.
 func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
-	self, ok := backend.SelfEntry(0)
+	self, ok := backend.SelfEntry(backend.LocalHello().ListenPort)
 	if !ok {
 		return nil
 	}

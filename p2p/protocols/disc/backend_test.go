@@ -988,3 +988,35 @@ func bytesEqual(a, b []byte) bool {
 	}
 	return true
 }
+
+// TestSelfEntryPortFallback — a port-less quorum winner (the shape a
+// --nat extip override without a port produces) takes the local
+// listen port; with no listen port either, SelfEntry advertises
+// nothing rather than emit a TCPPort-0 entry, which fails Validate()
+// on every receiver and would get this node discouraged on sight. A
+// winner that carries its own port keeps it.
+func TestSelfEntryPortFallback(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	b.Q.SetOverride(NetIPv4, []byte{198, 51, 100, 7}, 0)
+	e, ok := b.SelfEntry(32110)
+	if !ok {
+		t.Fatal("SelfEntry with listen port = not ok, want entry")
+	}
+	if e.TCPPort != 32110 {
+		t.Fatalf("TCPPort = %d, want the substituted listen port 32110", e.TCPPort)
+	}
+	if _, ok := b.SelfEntry(0); ok {
+		t.Fatal("SelfEntry advertised a port-less entry on a non-listening node")
+	}
+
+	b.Q.SetOverride(NetIPv4, []byte{198, 51, 100, 7}, 4444)
+	e, ok = b.SelfEntry(32110)
+	if !ok || e.TCPPort != 4444 {
+		t.Fatalf("ported override: entry = %+v ok = %v, want TCPPort 4444", e, ok)
+	}
+}
