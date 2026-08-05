@@ -748,6 +748,37 @@ func TestTransportBreaksAfterFrameFailure(t *testing.T) {
 	}
 }
 
+// TestLargeFrameRoundTrip locks in that a frame the size of the
+// protocol layer's largest legal message (prl/snap maxMessageSize,
+// 10 MiB, plus the RLP code prefix) traverses the transport. The
+// v2 transport sends one message per frame with no fragmentation,
+// so a MaxFrameLen below this size breaks block/state sync between
+// v2 peers: WriteMsg fails with ErrFrameTooLarge and the peer is
+// torn down.
+func TestLargeFrameRoundTrip(t *testing.T) {
+	a, b, cleanup := pairConns(t)
+	defer cleanup()
+
+	const size = 10*1024*1024 + 9 // maxMessageSize + RLP code prefix
+	payload := make([]byte, size)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	werr := make(chan error, 1)
+	go func() { werr <- a.Write(payload) }()
+
+	got, err := b.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if err := <-werr; err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("round-tripped frame differs from payload")
+	}
+}
+
 // handshakedPair returns two Conns on a loopback TCP pair with the
 // v2 handshake completed. TCP (unlike net.Pipe) is kernel-buffered,
 // so single-goroutine write-then-read tests don't deadlock.

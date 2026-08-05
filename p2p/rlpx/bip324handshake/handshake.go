@@ -46,11 +46,15 @@ const KeyLen = 32
 // NonceLen is the ChaCha20-Poly1305 nonce length (12 bytes = 96 bits).
 const NonceLen = chacha20poly1305.NonceSize
 
-// MaxFrameLen caps the size of a single post-handshake frame. Matches
-// the rest of the p2p stack's MaxMessageSize (~16 MiB is the legacy
-// RLPx cap; we pick a tighter 1 MiB for v2 since parallax-disc/1 and
-// parallax/* messages don't need more).
-const MaxFrameLen = 1 << 20 // 1 MiB
+// MaxFrameLen caps the size of a single post-handshake frame. The v2
+// transport writes each devp2p message as exactly one frame (no
+// fragmentation), so the cap must exceed the largest legal protocol
+// message: parallax/* and snap/* enforce a 10 MiB maxMessageSize, plus
+// the RLP-encoded message code prefix. 12 MiB leaves headroom while
+// staying under the structural 16 MiB limit of the 3-byte length
+// prefix, so the read side still rejects an inflated length claim
+// before allocating the full 24-bit maximum.
+const MaxFrameLen = 12 * 1024 * 1024 // 12 MiB
 
 // Conn is a v2-handshake-authenticated bidirectional session. After
 // Handshake succeeds, callers use Read/Write for length-prefixed AEAD
