@@ -2903,6 +2903,13 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 		p.SetBlockRelayOnly(true)
 		p.SetRelayTxs(false)
 	}
+	// Feelers take no part in tx relay either: Core never sets up tx
+	// relay for ConnectionType::FEELER, so the broadcast path must
+	// not pick a feeler during its short lifetime (the prl handlers
+	// already drop tx-bearing messages FROM feelers).
+	if c.is(feelerConn) {
+		p.SetRelayTxs(false)
+	}
 	// Stamp admission-time discourage-filter membership so inbound
 	// eviction prefers this peer over well-behaved ones. Bitcoin sets
 	// CNode.m_prefer_evict from AddrIsDiscouraged at accept; the

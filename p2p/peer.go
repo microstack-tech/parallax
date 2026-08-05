@@ -210,6 +210,15 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 // defaultRelayTxs sets the initial RelayTxs state. New peers are
 // assumed to relay tx until Hello receipt explicitly disclaims it.
 // Called from newPeer; exposed only as a documentation hook.
+//
+// Deliberate divergence from Bitcoin Core (m_relays_txs defaults
+// false until the version message's fRelay bit is seen): Core's
+// version message is mandatory, but the disc Hello is not — legacy
+// peers never send one, and a false default would permanently
+// disable tx relay to every legacy peer. Not exploitable as a
+// protection lever: a peer that withholds its Hello has lastTxRx=0
+// (no tx-round protection) and is disqualified from the block-relay
+// eviction round by relayTxs=true.
 func defaultRelayTxs(p *Peer) { p.relayTxs.Store(true) }
 
 // NewPeerForTest returns a peer backed by the supplied net.Conn so
