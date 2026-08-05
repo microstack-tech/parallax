@@ -247,7 +247,7 @@ func TestClientSugarCommandsRegistered(t *testing.T) {
 	}
 }
 
-// TestSetbanCommandRegistered — sanity-check that the three new ban
+// TestBanCommandsRegistered — sanity-check that the three ban
 // commands are wired into the sugar list with the right shape.
 func TestBanCommandsRegistered(t *testing.T) {
 	want := map[string]bool{

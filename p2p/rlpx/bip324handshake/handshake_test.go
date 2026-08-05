@@ -593,7 +593,7 @@ func TestReadFrameNonceDesyncRejected(t *testing.T) {
 
 	// Capture the wire bytes for one legitimate frame.
 	var captured bytes.Buffer
-	tee := &teeWriter{w: respConn.Underlying(), buf: &captured}
+	tee := &captureConn{buf: &captured}
 	teeProbe := &Conn{
 		conn:      tee,
 		sendAEAD:  initConn.sendAEAD,
@@ -615,21 +615,21 @@ func TestReadFrameNonceDesyncRejected(t *testing.T) {
 	}
 }
 
-// teeWriter splits writes between the real conn and a capture buffer.
-// Used to snapshot a legitimate AEAD frame for the desync test.
-type teeWriter struct {
-	w   net.Conn
+// captureConn is a write-sink net.Conn that records everything
+// written to it. Used to snapshot a legitimate AEAD frame for the
+// desync test; nothing is forwarded anywhere.
+type captureConn struct {
 	buf *bytes.Buffer
 }
 
-func (t *teeWriter) Read([]byte) (int, error)         { return 0, io.EOF }
-func (t *teeWriter) Close() error                     { return nil }
-func (t *teeWriter) LocalAddr() net.Addr              { return dummyAddr{} }
-func (t *teeWriter) RemoteAddr() net.Addr             { return dummyAddr{} }
-func (t *teeWriter) SetDeadline(time.Time) error      { return nil }
-func (t *teeWriter) SetReadDeadline(time.Time) error  { return nil }
-func (t *teeWriter) SetWriteDeadline(time.Time) error { return nil }
-func (t *teeWriter) Write(p []byte) (int, error) {
+func (t *captureConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (t *captureConn) Close() error                     { return nil }
+func (t *captureConn) LocalAddr() net.Addr              { return dummyAddr{} }
+func (t *captureConn) RemoteAddr() net.Addr             { return dummyAddr{} }
+func (t *captureConn) SetDeadline(time.Time) error      { return nil }
+func (t *captureConn) SetReadDeadline(time.Time) error  { return nil }
+func (t *captureConn) SetWriteDeadline(time.Time) error { return nil }
+func (t *captureConn) Write(p []byte) (int, error) {
 	t.buf.Write(p)
 	return len(p), nil
 }
