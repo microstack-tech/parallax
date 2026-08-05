@@ -33,7 +33,8 @@ const ProtocolName = "parallax-disc"
 // uniquely determines Length — two peers advertising parallax-disc/1
 // with different Lengths compute different per-protocol code offsets and
 // silently misroute the message codes of every capability sorting after
-// "parallax-disc" (parallax-snap, prl). This is therefore safe ONLY
+// "parallax-disc" (parallax-snap; the base "parallax" capability sorts
+// before it and is unaffected). This is therefore safe ONLY
 // under a coordinated flag-day upgrade in which no rc1 (Length 3) node
 // ever connects to an rc2+ (Length 4) node. If a mixed population is
 // ever possible, bump this to 2 instead of changing Length again.

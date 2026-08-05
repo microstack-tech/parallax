@@ -290,9 +290,13 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 	mayRelay := !solicited && len(entries) <= maxRelayBatch
 
 	now := time.Now()
+	rateLimited := 0
 	for _, e := range entries {
 		if !bucket.Take(now) {
-			// Rate-limit drop — silent (Bitcoin parity).
+			// Rate-limit drop — no disconnect, no misbehavior mark
+			// (Bitcoin parity), but counted for diagnostics like
+			// Core's m_addr_rate_limited.
+			rateLimited++
 			continue
 		}
 		net := addrmanNetID(e.NetworkID)
@@ -339,6 +343,10 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		if mayRelay && naddr.Valid() && claimed.After(now.Add(-10*time.Minute)) {
 			b.RelayAddress(peer, e, true)
 		}
+	}
+	if rateLimited > 0 {
+		b.log.Debug("parallax-disc/1: rate-limited address ingest",
+			"peer", peer.ID(), "dropped", rateLimited, "received", len(entries))
 	}
 }
 
@@ -665,8 +673,12 @@ func (b *AddrmanBackend) SetCrossDialHost(h CrossDialHost) {
 	b.crossDialHostMu.Unlock()
 }
 
-// peerKeyFor returns the stable PeerKey for the session lifetime. We
-// use the enode.ID hex because it's unique per connection.
+// peerKeyFor returns the stable PeerKey for the session lifetime: the
+// enode.ID hex. For v2 handshakes the ID derives from ephemeral
+// session keys, so it's unique per connection; for legacy peers it's
+// the persistent node ID, stable across that peer's reconnects (only
+// one live session per legacy ID exists at a time, so per-session
+// state keyed on it cannot collide).
 func peerKeyFor(peer *p2p.Peer) PeerKey {
 	id := peer.ID()
 	return PeerKey(id.String())
