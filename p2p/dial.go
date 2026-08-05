@@ -726,13 +726,13 @@ func ipNetworkGroupKey(ip net.IP) string {
 
 // nodeNetworkGroupKey computes the same key from an enode.Node so
 // checkDial can compare a candidate against the live set without
-// having a *conn yet. Returns the empty string for addresses that
-// are exempt from group-diversity (loopback, link-local, private
-// ranges in test deployments) — a non-empty key signals a routable
-// public-Internet endpoint.
+// having a *conn yet. Returns the empty string only for loopback and
+// link-local addresses — private RFC1918 ranges are NOT exempt and
+// group normally (Bitcoin group-limits them too; test deployments on
+// one LAN share a single group and rely on the static-dial
+// exemption instead).
 //
-// Mirrors Bitcoin Core's m_is_local exemption (eviction.cpp:115)
-// plus the privacy-network exemption (net.cpp:2675-2683).
+// Mirrors Bitcoin Core's m_is_local exemption (eviction.cpp:115).
 func nodeNetworkGroupKey(n *enode.Node) string {
 	ip := n.IP()
 	if ip == nil {
