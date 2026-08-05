@@ -49,10 +49,10 @@ const QuorumEvictAfter = 3 * time.Hour
 const QuorumRefreshInterval = time.Hour
 
 // PeerKey uniquely identifies a peer within the quorum tally. We want
-// per-peer reports (one peer, one vote) but across sessions a single
-// peer might reconnect — using the RemoteAddr string is the simplest
-// stable identifier during the lifetime of a session. Replaced on
-// reconnect.
+// per-peer reports (one peer, one vote). The production key is the
+// session's enode.ID in hex (see peerKeyFor) — unique per session for
+// v2 handshakes (ephemeral-key-derived) and stable across a legacy
+// peer's reconnects. Replaced on reconnect either way.
 type PeerKey string
 
 // reportedAddr is a (NetID, Addr bytes, port) triple. Stored as the
@@ -186,16 +186,50 @@ func (q *Quorum) Winner() (net uint8, addr []byte, port uint16, ok bool) {
 		return n, append([]byte(nil), a...), p, true
 	}
 
-	// Check every tallied address and return the first with quorum.
-	// A well-connected node will typically have exactly one address at
-	// quorum; map-iteration order is fine for tie-breaking.
-	for key := range q.reports {
-		n, a, p, winOK := q.winnerLocked(key)
-		if winOK {
-			return n, a, p, true
+	// Score every address at quorum and pick deterministically. A
+	// well-connected node typically has exactly one address at
+	// quorum, but when several coexist (an attacker holding three
+	// groups at quorum alongside the honest tally, or our own address
+	// having just changed) the pick must not flap with map-iteration
+	// order — a flapping winner hands ~half of all outbound
+	// self-advertisements to whichever address shouldn't win.
+	//
+	// Ranking: most distinct groups first (an attacker must now
+	// out-group the full honest tally, not merely reach threshold);
+	// ties broken by the freshest backing report, so when our address
+	// changes, new sessions voting for the new address overtake the
+	// static old tally as churn accrues; final tie broken by key
+	// order for determinism.
+	var (
+		found     bool
+		bestKey   reportedAddr
+		bestScore int
+		bestFresh time.Time
+	)
+	for key, byPeer := range q.reports {
+		score := countDistinctGroups(byPeer, 0)
+		if score < QuorumThreshold {
+			continue
+		}
+		var latest time.Time
+		for _, e := range byPeer {
+			if e.receivedAt.After(latest) {
+				latest = e.receivedAt
+			}
+		}
+		better := !found ||
+			score > bestScore ||
+			(score == bestScore && latest.After(bestFresh)) ||
+			(score == bestScore && latest.Equal(bestFresh) && key < bestKey)
+		if better {
+			found, bestKey, bestScore, bestFresh = true, key, score, latest
 		}
 	}
-	return 0, nil, 0, false
+	if !found {
+		return 0, nil, 0, false
+	}
+	n, a, p := unpackReportedAddr(bestKey)
+	return n, append([]byte(nil), a...), p, true
 }
 
 // winnerLocked checks whether the specified address has quorum.
@@ -208,14 +242,22 @@ func (q *Quorum) winnerLocked(key reportedAddr) (uint8, []byte, uint16, bool) {
 	if !ok {
 		return 0, nil, 0, false
 	}
-	// Count distinct groups. O(N) over reporters — small N.
+	if countDistinctGroups(byPeer, QuorumThreshold) < QuorumThreshold {
+		return 0, nil, 0, false
+	}
+	n, a, p := unpackReportedAddr(key)
+	return n, append([]byte(nil), a...), p, true
+}
+
+// countDistinctGroups counts the distinct non-empty network groups in
+// a report set, stopping early at cap when cap > 0. O(N²) over
+// reporters — small N. Malformed (empty) groups never contribute to
+// quorum, per the PIP-0006 Phase 4 rule.
+func countDistinctGroups(byPeer map[PeerKey]reportEntry, cap int) int {
 	var groups [][]byte
 outer:
 	for _, entry := range byPeer {
 		if len(entry.group) == 0 {
-			// Skip malformed groups. The plan calls out
-			// "addresses with group = 0 or unparseable groups
-			// never contribute to quorum".
 			continue
 		}
 		for _, existing := range groups {
@@ -224,15 +266,11 @@ outer:
 			}
 		}
 		groups = append(groups, entry.group)
-		if len(groups) >= QuorumThreshold {
+		if cap > 0 && len(groups) >= cap {
 			break
 		}
 	}
-	if len(groups) < QuorumThreshold {
-		return 0, nil, 0, false
-	}
-	n, a, p := unpackReportedAddr(key)
-	return n, append([]byte(nil), a...), p, true
+	return len(groups)
 }
 
 // evictStaleLocked removes reports older than QuorumEvictAfter whose

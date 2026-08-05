@@ -17,6 +17,7 @@
 package disc
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -286,4 +287,54 @@ func FuzzQuorumReports(f *testing.F) {
 		}
 		q.SetOverride(0, nil, 0)
 	})
+}
+
+// TestWinnerDeterministicAcrossMultipleQuorums — when two addresses
+// hold quorum simultaneously, Winner must rank deterministically:
+// most distinct groups first, freshest backing report on ties. The
+// old first-map-hit pick flapped with iteration order, handing ~half
+// of all self-advertisements to an attacker who merely reached
+// threshold alongside the honest tally; it also let a dead address
+// linger as winner forever after an IP change.
+func TestWinnerDeterministicAcrossMultipleQuorums(t *testing.T) {
+	q := NewQuorum()
+	oldAddr := []byte{198, 51, 100, 1}
+	newAddr := []byte{203, 0, 113, 9}
+
+	group := func(b byte) []byte { return []byte{NetIPv4, b, 0} }
+
+	// Old address: quorum from 3 groups (reports land first, so they
+	// are older).
+	for i := 0; i < 3; i++ {
+		q.Report(PeerKey(fmt.Sprintf("old-%d", i)), NetIPv4, oldAddr, 32110, group(byte(10+i)))
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	// New address: quorum from 3 different groups, strictly fresher.
+	for i := 0; i < 3; i++ {
+		q.Report(PeerKey(fmt.Sprintf("new-%d", i)), NetIPv4, newAddr, 32110, group(byte(20+i)))
+	}
+
+	// Equal group counts: freshest tally wins, on every call.
+	for i := 0; i < 20; i++ {
+		_, addr, _, ok := q.Winner()
+		if !ok {
+			t.Fatal("no winner with two quorums present")
+		}
+		if !bytesEqual(addr, newAddr) {
+			t.Fatalf("call %d: winner = %v, want fresher %v", i, addr, newAddr)
+		}
+	}
+
+	// A fourth distinct group for the old address outranks freshness.
+	q.Report(PeerKey("o3"), NetIPv4, oldAddr, 32110, group(13))
+	for i := 0; i < 20; i++ {
+		_, addr, _, ok := q.Winner()
+		if !ok {
+			t.Fatal("no winner")
+		}
+		if !bytesEqual(addr, oldAddr) {
+			t.Fatalf("call %d: winner = %v, want higher-group-count %v", i, addr, oldAddr)
+		}
+	}
 }
