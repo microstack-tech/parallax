@@ -397,9 +397,7 @@ scripts or in health probes.`,
 Adds an address to the addrman with source=manual. Manual entries persist
 across restarts, are exempt from source-aware bucket eviction, and are
 dialed before any other source. Accepts either plain ip:port (v2.0-native
-peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).
-
-Requires the node to be running with --experimental-addrman.`,
+peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).`,
 	}
 
 	removenodeCommand = cli.Command{

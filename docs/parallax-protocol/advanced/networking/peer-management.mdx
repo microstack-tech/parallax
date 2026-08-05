@@ -101,7 +101,7 @@ in an already-occupied group is rejected at dial time with
 exempt so single-host dev / test setups keep working.
 
 This is the dial-side counterpart to the eviction algorithm's
-`protectByNetGroupKeyed` round (see below): it spreads outbound
+network-group protection round (see below): it spreads outbound
 peers across distinct groups so no single autonomous system can
 dominate the outbound set.
 
@@ -148,8 +148,14 @@ along a different quality axis:
    recent block delivery across the full inbound set.
 6. **Connection age** — preserve the oldest 50 % of remaining peers.
 
-After the rounds, the surviving candidates are bucketed by network
-group; the most populated group is selected (ties broken by youngest
+A prefer-evict pass then runs over the survivors: if any of them
+misbehaved this session or connected from an address in the
+discourage filter, the candidate set narrows to those peers — a peer
+we already caught misbehaving absorbs the eviction before any
+well-behaved survivor does.
+
+Finally, the surviving candidates are bucketed by network group; the
+most populated group is selected (ties broken by youngest
 representative connection), and the youngest peer in that group is
 disconnected with `DiscTooManyPeers`.
 
@@ -193,10 +199,14 @@ On clean shutdown the node writes `<datadir>/anchors.dat`: the
 outbound peer, capped at 2 entries. On the next startup those
 peers are re-dialled as block-relay-only and the file is deleted
 immediately. A crash mid-startup therefore replays anchors at most
-once.
+once. If block-relay-only peers are disabled
+(`MaxBlockRelayPeers < 0`), a leftover `anchors.dat` is deleted
+without being replayed.
 
-The wire format is RLP with a schema-version byte; future-schema
-files are refused without truncation.
+The wire format is RLP with a schema-version byte. Anchors are
+ephemeral hints: like Bitcoin Core, the file is deleted after every
+startup read regardless of parse outcome, so a file written by a
+newer schema is discarded rather than replayed.
 
 ## Misbehavior, discourage, and ban
 
@@ -204,8 +214,12 @@ The node tracks two distinct rejection sets:
 
 | Set | Storage | Source | Rejects |
 | --- | --- | --- | --- |
-| **Banned** | persistent (`<datadir>/banlist.json`) | operator (`setban` RPC) | every inbound from a matching IP/CIDR. |
-| **Discouraged** | in-memory Bloom filter, ~50k capacity | automatic (peer misbehavior during a session) | inbound from a matching IP **only when the inbound pool is at saturation**. |
+| **Banned** | persistent (`<datadir>/banlist.json`) | operator (`setban` RPC) | every inbound from a matching IP/CIDR, and every automatic outbound dial to one. |
+| **Discouraged** | in-memory Bloom filter, ~50k capacity | automatic (peer misbehavior during a session) | inbound from a matching IP **only when the inbound pool is at saturation**; automatic outbound dials always. Under saturation, discouraged survivors are also the preferred eviction victims. |
+
+Matching addresses are additionally filtered out of addrman dial
+selection, so neither set is reachable through the dial scheduler
+either.
 
 A peer is flagged for discourage when the disc/1 handler observes a
 protocol-discipline violation — oversized message, message before
