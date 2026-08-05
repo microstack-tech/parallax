@@ -85,6 +85,19 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
+				// Candidates must be representable as IP:port — the
+				// v2 dialer can't use anything else, and skipping
+				// here also guarantees the self-check below can
+				// never be bypassed by an unparseable address.
+				ap, apOk := addr.AddrPort()
+				if !apOk {
+					logging.Trace("pip6: V2Iter skip (no ip:port form)", "addr", addr.String())
+					skips++
+					if skips >= maxSkipsBeforeBackoff {
+						goto idleBackoff
+					}
+					continue
+				}
 				// Skip the local node's own endpoint. The
 				// disc-protocol quorum can ingest our own
 				// observed external IP into addrman; without
@@ -92,16 +105,14 @@ func (it *V2Iter) Next() bool {
 				// cycle and the v2 dial guard burns cycles
 				// rejecting it. Cheap to test, cheap to skip.
 				if it.isSelf != nil {
-					if ap, apOk := addr.AddrPort(); apOk {
-						tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
-						if it.isSelf(tcp) {
-							logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
-							skips++
-							if skips >= maxSkipsBeforeBackoff {
-								goto idleBackoff
-							}
-							continue
+					tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
+					if it.isSelf(tcp) {
+						logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
+						skips++
+						if skips >= maxSkipsBeforeBackoff {
+							goto idleBackoff
 						}
+						continue
 					}
 				}
 				// Skip entries addrman already considers dead.
