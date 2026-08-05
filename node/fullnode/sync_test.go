@@ -17,6 +17,7 @@
 package protocol
 
 import (
+	"math/big"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +27,9 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/validation/forkid"
 )
 
 // Tests that snap sync is disabled after a successful sync cycle.
@@ -92,5 +96,77 @@ func testSnapSyncDisabling(t *testing.T, prlVer uint, snapVer uint) {
 	}
 	if atomic.LoadUint32(&empty.handler.snapSync) == 1 {
 		t.Fatalf("snap sync not disabled after successful synchronisation")
+	}
+}
+
+// Tests that the initial pool announcement at registration respects the
+// tx-relay class of the link: a block-relay-only peer must receive no
+// NewPooledTransactionHashes for the pending pool, while a full-relay
+// peer must.
+func TestSyncTransactionsSkipsBlockRelay66(t *testing.T) {
+	testSyncTransactionsRelayGate(t, prl.Parallax66, true)
+}
+
+func TestSyncTransactionsAnnouncesFullRelay66(t *testing.T) {
+	testSyncTransactionsRelayGate(t, prl.Parallax66, false)
+}
+
+func testSyncTransactionsRelayGate(t *testing.T, protocol uint, blockRelay bool) {
+	t.Parallel()
+
+	handler := newTestHandler()
+	defer handler.close()
+
+	// Seed the pool so registration has something to announce.
+	tx := types.NewTransaction(0, util.Address{}, big.NewInt(0), 100000, big.NewInt(0), nil)
+	tx, _ = types.SignTx(tx, types.HomesteadSigner{}, testKey)
+	handler.txpool.AddRemotes([]*types.Transaction{tx})
+
+	p2pSrc, p2pSink := p2p.MsgPipe()
+	defer p2pSrc.Close()
+	defer p2pSink.Close()
+
+	sinkP2P := p2p.NewPeerPipe(enode.ID{2}, "", nil, p2pSink)
+	if blockRelay {
+		sinkP2P.SetBlockRelayOnly(true)
+		sinkP2P.SetRelayTxs(false)
+	}
+	src := prl.NewPeer(protocol, p2p.NewPeerPipe(enode.ID{1}, "", nil, p2pSrc), p2pSrc, handler.txpool)
+	sink := prl.NewPeer(protocol, sinkP2P, p2pSink, handler.txpool)
+	defer src.Close()
+	defer sink.Close()
+
+	go handler.handler.runParallaxPeer(sink, func(peer *prl.Peer) error {
+		return prl.Handle((*prlHandler)(handler.handler), peer)
+	})
+	var (
+		genesis = handler.chain.Genesis()
+		head    = handler.chain.CurrentBlock()
+		td      = handler.chain.GetTd(head.Hash(), head.NumberU64())
+	)
+	if err := src.Handshake(1, td, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
+		t.Fatalf("failed to run protocol handshake: %v", err)
+	}
+	msgs := make(chan p2p.Msg, 1)
+	go func() {
+		if msg, err := p2pSrc.ReadMsg(); err == nil {
+			msgs <- msg
+		}
+	}()
+	if blockRelay {
+		select {
+		case msg := <-msgs:
+			t.Fatalf("block-relay-only peer received message %#x at registration", msg.Code)
+		case <-time.After(250 * time.Millisecond):
+		}
+	} else {
+		select {
+		case msg := <-msgs:
+			if msg.Code != prl.NewPooledTransactionHashesMsg {
+				t.Fatalf("unexpected message %#x, want NewPooledTransactionHashes", msg.Code)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("full-relay peer received no pool announcement")
+		}
 	}
 }

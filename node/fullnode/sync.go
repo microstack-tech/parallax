@@ -36,6 +36,16 @@ const (
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *prl.Peer) {
+	// Never announce the pool on links that opted out of tx relay.
+	// Block-relay-only peers negotiated RELAY_TX=false (Bitcoin Core
+	// never sets up tx relay for them, src/net_processing.cpp), and
+	// the receive-side gates silently drop their GetPooledTransactions
+	// requests — an announcement here would both leak tx traffic on a
+	// link that promised none and strand the remote's fetcher on
+	// hashes it can never retrieve.
+	if p.BlockRelayOnly() || !p.RelayTxs() {
+		return
+	}
 	// Assemble the set of transaction to broadcast or announce to the remote
 	// peer. Fun fact, this is quite an expensive operation as it needs to sort
 	// the transactions if the sorting is not cached yet. However, with a random
