@@ -1448,3 +1448,53 @@ func selectCrossDialLoser(a, b *Peer) *Peer {
 	}
 	return a
 }
+
+// TestPostHandshakeEnforcesBlockRelayCap — the checkpoint rejects a
+// dialed block-relay conn when the bucket is already full. The dial
+// scheduler and runV2Dialer each check the bucket against the live
+// peer set before dialing, but neither sees the other's in-flight
+// dials, so two racing picks can both target the last slot; the
+// checkpoint, serialized on the run loop, is where the excess is
+// caught before it becomes a persistent overshoot.
+func TestPostHandshakeEnforcesBlockRelayCap(t *testing.T) {
+	srv := newSelfEndpointServer(t, nil, 0)
+	// MaxBlockRelayPeers 0 -> default cap of 2; MaxPeers must be
+	// large enough that the maxDialedConns/2 clamp doesn't shrink it.
+	srv.Config.MaxPeers = 30
+
+	mkBRPeer := func(ip net.IP) *Peer {
+		p := makeEvictionPeer(t, evictionOpts{ip: ip})
+		p.rw.set(dynDialedConn, true)
+		p.rw.set(blockRelayConn, true)
+		return p
+	}
+	mkConn := func(flags connFlag, ip net.IP) *conn {
+		pipe, _ := net.Pipe()
+		t.Cleanup(func() { pipe.Close() })
+		fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: ip, Port: 32110}}
+		return &conn{
+			fd:    fake,
+			flags: flags,
+			node:  enode.SignNull(new(enr.Record), randomID()),
+		}
+	}
+
+	peers := map[enode.ID]*Peer{}
+	first := mkBRPeer(net.IPv4(10, 0, 0, 1))
+	peers[randomID()] = first
+
+	// One of two slots used: a fresh block-relay dial is admitted.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn|blockRelayConn, net.IPv4(10, 1, 0, 1))); err != nil {
+		t.Fatalf("block-relay conn with a free slot: err = %v, want nil", err)
+	}
+	peers[randomID()] = mkBRPeer(net.IPv4(10, 2, 0, 1))
+
+	// Bucket full: the racing third block-relay dial is rejected.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn|blockRelayConn, net.IPv4(10, 3, 0, 1))); !errors.Is(err, DiscTooManyPeers) {
+		t.Fatalf("block-relay conn past the cap: err = %v, want DiscTooManyPeers", err)
+	}
+	// A full-relay dial is unaffected by block-relay saturation.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn, net.IPv4(10, 4, 0, 1))); err != nil {
+		t.Fatalf("full-relay conn at block-relay saturation: err = %v, want nil", err)
+	}
+}

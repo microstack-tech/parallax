@@ -2469,6 +2469,18 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 			return DiscTooManyPeers
 		}
 	}
+	// Block-relay bucket cap, enforced at the checkpoint where all
+	// dial paths serialize on the run loop. The scheduler and
+	// runV2Dialer each check the bucket against the live peer set
+	// before dialing, but neither sees the other's in-flight dials,
+	// so two racing picks can both target the last slot — and
+	// without this check the overshoot would persist until a
+	// natural disconnect, since nothing evicts the excess.
+	if c.is(blockRelayConn) && !c.is(feelerConn) {
+		if blockRelayOutboundCountIn(peers) >= srv.maxBlockRelayDial() {
+			return DiscTooManyPeers
+		}
+	}
 	// Phase 2b dedup: v2 sessions derive node.ID from ephemeral
 	// X25519 keys, so reconnecting to the same remote yields a
 	// fresh-looking ID that the map above can't flag. Fall back to
