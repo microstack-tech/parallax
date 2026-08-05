@@ -886,3 +886,44 @@ func TestHandlerHelloBeatsDeadline(t *testing.T) {
 		// Survived well past the deadline.
 	}
 }
+
+// TestPreHelloMessageDisconnectsWithoutDiscourage — a message before
+// Hello ends the session with a plain disconnect and must NOT stamp
+// the discourage filter. A pre-flag-day node (protocol Length 3, no
+// HelloMsg) leads every session with GetPeers or YourAddr; a
+// discourage stamp would ban its address across reconnects —
+// including after the node upgrades — turning a brief mixed-
+// population rollout window into a longer-lived partition.
+func TestPreHelloMessageDisconnectsWithoutDiscourage(t *testing.T) {
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{obsOK: true}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() { appRW.Close() })
+
+	drainGreeting(t, appRW)
+
+	// Lead with GetPeers instead of Hello, the exact first message a
+	// pre-flag-day node sends.
+	if err := p2p.Send(appRW, GetPeersMsg, GetPeers{}); err != nil {
+		t.Fatalf("send pre-Hello GetPeers: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("session survived a pre-Hello message")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler still running after pre-Hello message")
+	}
+	if peer.ShouldDiscourage() {
+		t.Fatalf("pre-Hello message stamped discourage (reason %q); want plain disconnect", peer.DiscourageReason())
+	}
+}

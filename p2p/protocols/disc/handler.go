@@ -323,11 +323,16 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 
 	// Enforce the protocol's first-message ordering: Hello must be
 	// the first message on every session. Anything else before Hello
-	// is a violation. Once gotHello is true, the rule is satisfied.
-	// The Hello message itself bypasses the gate (it's allowed to
-	// be the first thing we see).
+	// ends the session — but with a plain disconnect, NOT a
+	// discourage stamp. A pre-flag-day node (protocol Length 3, no
+	// HelloMsg) leads every session with GetPeers or YourAddr;
+	// stamping it would ban the address across reconnects, including
+	// after that node upgrades, turning a brief mixed-population
+	// rollout window into a longer-lived partition. A malicious peer
+	// skipping Hello costs us one accepted connection, which the
+	// disconnect already answers. Once gotHello is true, the rule is
+	// satisfied; the Hello message itself bypasses the gate.
 	if msg.Code != HelloMsg && !st.gotHello.Load() {
-		peer.MisbehavingFor("disc-pre-hello-msg")
 		return fmt.Errorf("disc: msg 0x%02x before Hello", msg.Code)
 	}
 
