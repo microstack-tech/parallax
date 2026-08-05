@@ -2358,6 +2358,22 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 	if c.node.ID() == srv.localnode.ID() {
 		return DiscSelf
 	}
+	// Re-check the ban list after the handshake. The accept-loop
+	// check (checkInboundConn) runs before the handshake starts; a
+	// setban issued while handshakes are in flight only disconnects
+	// peers already registered, so without this re-check a connection
+	// that passed accept before the ban and completed the handshake
+	// after it would be admitted and survive for the ban's whole
+	// lifetime. Bitcoin's window is near zero because CNode registers
+	// at accept; ours closes here. Applies to both directions —
+	// outbound dials are pre-checked too, but static/admin dials can
+	// race a ban the same way. Trusted peers bypass, matching the
+	// NoBan permission.
+	if srv.BanList != nil && !c.is(trustedConn) {
+		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsBanned(remote.IP) {
+			return DiscUselessPeer
+		}
+	}
 	// Discouraged-at-saturation rejection (Bitcoin Core
 	// src/net.cpp:1808, nInbound + 1 >= nMaxInbound). At inbound
 	// saturation we'd normally evict to make room. If the

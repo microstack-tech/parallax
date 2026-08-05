@@ -20,9 +20,12 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p/banman"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
@@ -112,5 +115,48 @@ func TestPeerMisbehavingForFlagsAndDisconnects(t *testing.T) {
 	peer.MisbehavingFor("second-reason")
 	if got := peer.DiscourageReason(); got != "test-violation" {
 		t.Errorf("idempotency lost: reason = %q after second MisbehavingFor", got)
+	}
+}
+
+// TestPostHandshakeRejectsFreshlyBanned — a setban issued while a
+// handshake is in flight must reject the connection at the
+// post-handshake checkpoint. The accept-loop ban check runs before
+// the handshake starts and setban only disconnects registered peers,
+// so without the re-check a connection straddling the ban would be
+// admitted and survive for the ban's whole lifetime. Trusted conns
+// bypass (NoBan permission parity).
+func TestPostHandshakeRejectsFreshlyBanned(t *testing.T) {
+	bm, err := banman.New("", logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bannedIP := net.IPv4(192, 0, 2, 77)
+	if err := bm.Ban(bannedIP, time.Hour, banman.ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newSelfEndpointServer(t, nil, 0)
+	srv.BanList = bm
+	srv.Config.MaxPeers = 10
+
+	mkConn := func(flags connFlag) *conn {
+		pipe, _ := net.Pipe()
+		t.Cleanup(func() { pipe.Close() })
+		fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: bannedIP, Port: 32110}}
+		return &conn{
+			fd:    fake,
+			flags: flags,
+			node:  enode.SignNull(new(enr.Record), randomID()),
+		}
+	}
+
+	if err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, 0, mkConn(inboundConn)); !errors.Is(err, DiscUselessPeer) {
+		t.Fatalf("inbound banned conn: err = %v, want DiscUselessPeer", err)
+	}
+	if err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, 0, mkConn(dynDialedConn)); !errors.Is(err, DiscUselessPeer) {
+		t.Fatalf("outbound banned conn: err = %v, want DiscUselessPeer", err)
+	}
+	if err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, 0, mkConn(inboundConn|trustedConn)); err != nil {
+		t.Fatalf("trusted banned conn: err = %v, want nil (trusted bypass)", err)
 	}
 }
