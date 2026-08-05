@@ -552,10 +552,13 @@ func (p *Peer) pingLoop() {
 		case <-ping.C:
 			// Stamp send time BEFORE the SendItems call returns so a
 			// fast pong reply (test pipes) can't observe an unset
-			// lastPingSent. The race window is harmless either way:
-			// a pong arriving before the stamp would yield a
-			// nonsense RTT and be ignored by the min-update.
-			p.lastPingSent.Store(int64(mclock.Now()))
+			// lastPingSent. Stamp only when no ping is outstanding
+			// (the pong consumes the stamp via Swap): overwriting an
+			// outstanding stamp would measure a late pong for ping N
+			// against ping N+1's send time and under-report minPing.
+			// One outstanding ping at a time is also Core's
+			// m_ping_nonce_sent discipline.
+			p.lastPingSent.CompareAndSwap(0, int64(mclock.Now()))
 			if err := SendItems(p.rw, pingMsg); err != nil {
 				p.protoErr <- err
 				return
@@ -574,11 +577,13 @@ func (p *Peer) pingLoop() {
 // and updates minPing if the new sample improves on the running
 // minimum. Called from handle() on pongMsg receipt.
 //
-// A zero lastPingSent means we received a pong without ever sending
-// a ping (test scaffolding, or an adversarial peer); skip the update.
-// Negative RTT (clock skew, monotonic-broken stub) is also ignored.
+// A zero lastPingSent means we received a pong without an
+// outstanding ping (test scaffolding, an adversarial peer, or a
+// duplicate pong); skip the update. The Swap consumes the stamp so
+// each ping is measured against at most one pong. Negative RTT
+// (clock skew, monotonic-broken stub) is also ignored.
 func (p *Peer) recordPongRTT() {
-	sent := p.lastPingSent.Load()
+	sent := p.lastPingSent.Swap(0)
 	if sent == 0 {
 		return
 	}
