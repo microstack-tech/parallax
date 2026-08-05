@@ -1925,6 +1925,18 @@ func (srv *Server) replayAnchors() {
 	if srv.AnchorsPath == "" || srv.NoDial {
 		return
 	}
+	// An operator who disabled the block-relay bucket
+	// (MaxBlockRelayPeers < 0) must not get block-relay peers
+	// resurrected from a stale anchors.dat — and persistAnchors
+	// would then re-write them on shutdown, carrying the bypass
+	// across restarts indefinitely. Still delete the file (anchors
+	// are ephemeral hints either way).
+	if srv.maxBlockRelayDial() <= 0 {
+		if err := removeAnchors(srv.AnchorsPath); err != nil {
+			srv.log.Warn("anchors: remove with block-relay disabled failed", "path", srv.AnchorsPath, "err", err)
+		}
+		return
+	}
 	addrs, err := loadAnchors(srv.AnchorsPath)
 	if err != nil {
 		// Delete the unreadable file: anchors are ephemeral hints,
