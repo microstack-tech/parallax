@@ -22,6 +22,7 @@ import (
 	"crypto/elliptic"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"time"
@@ -317,7 +318,19 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 			if *bantime < 0 {
 				return false, errors.New("bantime cannot be negative")
 			}
-			duration = time.Duration(*bantime) * time.Second
+			// time.Duration counts int64 nanoseconds, so seconds
+			// above ~292 years overflow the multiplication to a
+			// negative value — which BanSubnet would then silently
+			// replace with the 24h default while the RPC reports
+			// success. Clamp so the huge relative bantimes Bitcoin
+			// operators use as "permanent" (e.g. 9999999999) keep
+			// their intent. Core adds the offset in whole seconds
+			// and is immune (src/banman.cpp BanMan::Ban).
+			secs := *bantime
+			if maxSecs := int64(math.MaxInt64 / int64(time.Second)); secs > maxSecs {
+				secs = maxSecs
+			}
+			duration = time.Duration(secs) * time.Second
 		}
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err

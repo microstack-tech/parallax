@@ -110,6 +110,35 @@ func TestSetbanArgumentValidation(t *testing.T) {
 	}
 }
 
+// TestSetbanHugeRelativeBantime — the "permanent ban" idiom of a huge
+// relative bantime (Bitcoin operators commonly pass 9999999999) must
+// keep its intent. The naive seconds-to-Duration multiplication
+// overflows int64 nanoseconds for anything above ~292 years, going
+// negative — which BanSubnet would silently replace with the 24h
+// default while the RPC reports success.
+func TestSetbanHugeRelativeBantime(t *testing.T) {
+	api := startBanTestNode(t)
+
+	huge := int64(9999999999)
+	if ok, err := api.Setban("192.0.2.7", "add", &huge, nil); err != nil || !ok {
+		t.Fatalf("setban add with huge bantime: ok=%v err=%v", ok, err)
+	}
+	list, err := api.Listbanned()
+	if err != nil {
+		t.Fatalf("listbanned: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("listbanned = %d entries, want 1", len(list))
+	}
+	// Anything at least a century out preserves the operator's
+	// "permanent" intent; the 24h-default failure mode is orders of
+	// magnitude short of this.
+	const century = int64(100 * 365 * 24 * 60 * 60)
+	if got := list[0].BannedTill - list[0].BanCreated; got < century {
+		t.Fatalf("huge bantime collapsed: ban lasts %d seconds, want >= %d", got, century)
+	}
+}
+
 // TestSetbanV4MappedCIDR — an IPv4-mapped IPv6 CIDR bans the embedded
 // IPv4 subnet (Core's CSubNet semantics), not a huge IPv6 range.
 func TestSetbanV4MappedCIDR(t *testing.T) {
