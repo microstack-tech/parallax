@@ -90,3 +90,42 @@ func TestBlockRelayOnlyDropsTxRelay(t *testing.T) {
 		})
 	}
 }
+
+// TestFeelerDropsTxRelay — feelers are short-lived liveness probes
+// and take no part in tx relay (Bitcoin: RejectIncomingTxs covers
+// ConnectionType::FEELER). Each tx-bearing handler must drop the
+// message before any payload work, exactly like block-relay-only.
+func TestFeelerDropsTxRelay(t *testing.T) {
+	t.Parallel()
+
+	var id enode.ID
+	id[0] = 0xfe
+	p2pPeer := p2p.NewPeer(id, "feeler-test", nil)
+	p2pPeer.MarkFeelerForTest()
+	peer := NewPeer(Parallax66, p2pPeer, nil, nil)
+	defer peer.Close()
+	if !peer.Feeler() {
+		t.Fatal("test peer should be a feeler")
+	}
+
+	cases := []struct {
+		name string
+		fn   func(Backend, Decoder, *Peer) error
+	}{
+		{"handleTransactions", handleTransactions},
+		{"handleNewPooledTransactionHashes", handleNewPooledTransactionHashes},
+		{"handlePooledTransactions66", handlePooledTransactions66},
+		{"handleGetPooledTransactions66", handleGetPooledTransactions66},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &trackingDecoder{}
+			if err := tc.fn(nil, d, peer); err != nil {
+				t.Fatalf("%s returned err: %v", tc.name, err)
+			}
+			if d.called {
+				t.Fatalf("%s decoded a tx message from a feeler", tc.name)
+			}
+		})
+	}
+}

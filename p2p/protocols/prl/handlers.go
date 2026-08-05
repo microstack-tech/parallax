@@ -423,11 +423,12 @@ func handleReceipts66(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
-	// Block-relay-only peers MUST NOT relay tx in either direction
+	// Block-relay-only peers and feelers MUST NOT relay tx in either
+	// direction
 	// (Bitcoin Core src/net_processing.cpp:3681 m_relay_txs gate).
 	// Silently drop to avoid leaking which of our outbound slots is
 	// the block-relay-only one.
-	if peer.BlockRelayOnly() {
+	if peer.BlockRelayOnly() || peer.Feeler() {
 		return nil
 	}
 	// New transaction announcement arrived, make sure we have
@@ -451,7 +452,7 @@ func handleGetPooledTransactions66(backend Backend, msg Decoder, peer *Peer) err
 	// (we advertised m_relay_txs=false in Hello.Services). Treat the
 	// request as a protocol-discipline violation: drop without
 	// answering. Silent so an attacker can't probe the bit.
-	if peer.BlockRelayOnly() {
+	if peer.BlockRelayOnly() || peer.Feeler() {
 		return nil
 	}
 	// Decode the pooled transactions retrieval message
@@ -492,10 +493,11 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsPac
 }
 
 func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
-	// Block-relay-only peers MUST NOT push tx to us. Drop silently —
+	// Block-relay-only peers and feelers MUST NOT push tx to us. Drop
+	// silently —
 	// stamping lastTxRx for them would also corrupt the eviction
 	// "newest tx among tx-relayers" round (eviction.cpp:194).
-	if peer.BlockRelayOnly() {
+	if peer.BlockRelayOnly() || peer.Feeler() {
 		return nil
 	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
@@ -519,7 +521,7 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 
 func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
 	// Same block-relay-only rule as handleTransactions.
-	if peer.BlockRelayOnly() {
+	if peer.BlockRelayOnly() || peer.Feeler() {
 		return nil
 	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them

@@ -442,11 +442,23 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
+// Feeler reports whether this is a short-lived feeler/addrfetch
+// probe connection. Feelers exist only to verify liveness and warm
+// the addrbook; like block-relay-only peers they take no part in
+// transaction relay (Bitcoin: RejectIncomingTxs covers feelers too).
+func (p *Peer) Feeler() bool {
+	return p.rw.is(feelerConn)
+}
+
 // MarkInboundForTest sets the inbound conn flag on a test-constructed
 // peer. Production conns get the flag at accept time; test harnesses
 // (NewPeer / NewPeerForTest) start with no flags and need this to
 // exercise inbound-only paths such as the GetPeers response gate.
 func (p *Peer) MarkInboundForTest() { p.rw.set(inboundConn, true) }
+
+// MarkFeelerForTest sets the feeler conn flag on a test-constructed
+// peer, for exercising feeler-only gates (see MarkInboundForTest).
+func (p *Peer) MarkFeelerForTest() { p.rw.set(feelerConn, true) }
 
 // UsingV2Handshake reports whether this session is authenticated via
 // the PIP-0006 Phase 2b BIP324-style v2 handshake (true) or the legacy
