@@ -168,6 +168,19 @@ type dialScheduler struct {
 	// Updated at peerAdded / peerRemoved time alongside dialPeers.
 	outboundGroups map[string]int
 
+	// dialingGroups counts the network groups of in-flight dials
+	// (d.dialing), mirroring dialingBlockRelay: outboundGroups only
+	// updates when a peer attaches, so without this a burst of
+	// same-group candidates discovered in one round would all pass
+	// checkDial before any of them connects — defeating the
+	// one-per-group rule exactly in the startup window it exists
+	// for. Bitcoin Core is immune structurally because
+	// ThreadOpenConnections dials one candidate at a time. Static
+	// dials are counted too: they are exempt from the check but
+	// occupy groups against dynamic dials, same as attached static
+	// peers in outboundGroups.
+	dialingGroups map[string]int
+
 	// The static map tracks all static dial tasks. The subset of usable static dial tasks
 	// (i.e. those passing checkDial) is kept in staticPool. The scheduler prefers
 	// launching random static tasks from the pool over launching dynamic dials from the
@@ -253,6 +266,7 @@ func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupF
 		setupFunc:       setupFunc,
 		dialing:         make(map[enode.ID]*dialTask),
 		outboundGroups:  make(map[string]int),
+		dialingGroups:   make(map[string]int),
 		static:          make(map[enode.ID]*dialTask),
 		peers:           make(map[enode.ID]struct{}),
 		inboundProgress: make(map[enode.ID]int),
@@ -416,8 +430,17 @@ loop:
 
 		case task := <-d.doneCh:
 			id := task.dest.ID()
-			if _, ok := d.dialing[id]; ok && task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
-				d.dialingBlockRelay--
+			if _, ok := d.dialing[id]; ok {
+				if task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
+					d.dialingBlockRelay--
+				}
+				if g := nodeNetworkGroupKey(task.dest); g != "" {
+					if d.dialingGroups[g] <= 1 {
+						delete(d.dialingGroups, g)
+					} else {
+						d.dialingGroups[g]--
+					}
+				}
 			}
 			delete(d.dialing, id)
 			d.updateStaticPool(id)
@@ -662,7 +685,12 @@ func (d *dialScheduler) checkDial(n *enode.Node, flags connFlag) error {
 	// group-limited.
 	if flags&staticDialedConn == 0 {
 		if g := nodeNetworkGroupKey(n); g != "" {
-			if d.outboundGroups[g] > 0 {
+			// Attached peers AND in-flight dials both occupy the
+			// group: a successful dial passes through peerAdded
+			// (outboundGroups) before its task reaches doneCh
+			// (dialingGroups), so the combined check never sees a
+			// gap between the two.
+			if d.outboundGroups[g] > 0 || d.dialingGroups[g] > 0 {
 				return errOutboundGroupOccupied
 			}
 		}
@@ -829,6 +857,9 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	d.dialing[task.dest.ID()] = task
 	if task.flags&blockRelayConn != 0 {
 		d.dialingBlockRelay++
+	}
+	if g := nodeNetworkGroupKey(task.dest); g != "" {
+		d.dialingGroups[g]++
 	}
 	go func() {
 		task.run(d)

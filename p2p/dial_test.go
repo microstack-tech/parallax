@@ -537,6 +537,53 @@ func TestDialSchedSkipsBannedAddresses(t *testing.T) {
 	})
 }
 
+// TestDialSchedGroupLimitInFlight — the one-outbound-per-group rule
+// counts in-flight dials, not just attached peers. A burst of
+// same-/16 candidates discovered back-to-back must produce exactly
+// one dial; the group frees again when the dial fails or the
+// attached peer disconnects.
+func TestDialSchedGroupLimitInFlight(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	nodeA := newNode(uintID(0x60), "44.55.1.1:32110")
+	nodeB := newNode(uintID(0x61), "44.55.2.2:32110")
+	nodeC := newNode(uintID(0x62), "44.55.3.3:32110")
+	runDialTest(t, config, []dialTestRound{
+		// A and B share 44.55.0.0/16: only A is dialed, because A's
+		// in-flight dial already occupies the group when B arrives.
+		{
+			discovered:   []*enode.Node{nodeA, nodeB},
+			wantNewDials: []*enode.Node{nodeA},
+		},
+		// A's dial fails, releasing the in-flight slot.
+		{
+			failed: []enode.ID{uintID(0x60)},
+		},
+		// The rediscovered B is dialable again.
+		{
+			discovered:   []*enode.Node{nodeB},
+			wantNewDials: []*enode.Node{nodeB},
+		},
+		// B attaches; the group moves from in-flight to attached
+		// and C stays blocked.
+		{
+			succeeded:  []enode.ID{uintID(0x61)},
+			discovered: []*enode.Node{nodeC},
+		},
+		// B disconnects, freeing the attached slot; C is dialable
+		// after rediscovery.
+		{
+			peersRemoved: []enode.ID{uintID(0x61)},
+			discovered:   []*enode.Node{nodeC},
+			wantNewDials: []*enode.Node{nodeC},
+		},
+	})
+}
+
 // TestDialSchedDiscouragedGate — discouragement blocks dynamic dials
 // but not static ones. A ban blocks both; discouragement is stamped
 // automatically on misbehavior and has no clearing RPC, so honoring
