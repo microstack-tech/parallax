@@ -71,8 +71,8 @@ algorithm consumes them; admin RPC surfaces them for diagnostics.
 | Field | What it measures |
 | --- | --- |
 | `MinPing` | Smallest ping RTT observed across the session, in nanoseconds. |
-| `LastBlockRx` | Monotonic time of the most recent block-bearing message (`NewBlockHashes`, `NewBlock`, `BlockBodies`, `BlockHeaders`). |
-| `LastTxRx` | Monotonic time of the most recent tx-bearing message (`Transactions`, `PooledTransactions`). Block-relay-only peers leave this at zero. |
+| `LastBlockRx` | Monotonic time of the last block *accepted* from this peer — stamped when a propagated `NewBlock` imports successfully, not on mere receipt of block-bearing messages. Mirrors Bitcoin Core's `m_last_block_time` (acceptance, not traffic), so a peer serving headers/bodies during sync earns no stamp. |
+| `LastTxRx` | Monotonic time of the last transaction from this peer *accepted into the pool* — stamped on pool admission, not message receipt, mirroring Core's `m_last_tx_time`. Block-relay-only peers leave this at zero. |
 | `BytesRx` | Cumulative payload bytes received. Framing overhead excluded so v1/v2 transports compare meaningfully. |
 | `RelayTxs` | Mirror of the peer's `Hello.Services & RELAY_TX` bit. Defaults true; flipped to false on block-relay-only outbound. |
 | `NetworkGroup` | Cached `/16`-IPv4 or `/32`-IPv6 prefix bytes, computed once at peer attach. |

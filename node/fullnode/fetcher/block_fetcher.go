@@ -228,10 +228,15 @@ func NewBlockFetcher(light bool, getHeader HeaderRetrievalFn, getBlock blockRetr
 }
 
 // SetBlockAcceptedHook installs a callback invoked with the origin peer id
-// after a propagated block from that peer passes verification and is
-// successfully imported into the chain. Known blocks are filtered before
-// import, so the callback fires only for novel valid blocks — the peer did
-// useful work. Must be set before Start.
+// after a propagated block from that peer passes verification and the
+// insert callback returns success. Known blocks are filtered before
+// import, so the callback fires only for novel valid blocks — the peer
+// did useful work. Caveat: while the node is below its checkpoint or
+// still snap-syncing, the handler's inserter discards propagated blocks
+// yet reports success, so the hook fires for blocks that were never
+// imported; forging one still requires novel valid PoW on a known
+// parent, so the eviction credit it grants is paid for. Must be set
+// before Start.
 func (f *BlockFetcher) SetBlockAcceptedHook(fn func(peer string)) {
 	f.blockAccepted = fn
 }

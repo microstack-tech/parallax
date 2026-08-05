@@ -466,7 +466,8 @@ Uses admin_setban.`,
 		Category: "CLIENT COMMANDS",
 		Description: `
 Returns the persistent ban list as JSON. Each entry has address (CIDR),
-ban_created and banned_until (Unix seconds), and an optional reason tag.
+ban_created and banned_until (Unix seconds), ban_duration and
+time_remaining (seconds). Matches Bitcoin Core's listbanned fields.
 Uses admin_listbanned.`,
 	}
 

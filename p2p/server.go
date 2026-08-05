@@ -113,6 +113,11 @@ type Config struct {
 	// reachable. Defaults to defaultMinLegacyPeers when zero. Set
 	// to a negative value to disable the floor entirely.
 	//
+	// The floor constrains outbound dials only: inbound peers
+	// cannot be attributed to an addrman source (their ephemeral
+	// source port never matches the stored listen-port entry), so
+	// they are conservatively never counted against the cap.
+	//
 	// Rationale: during v2.x, prevents a v2.0 node from ending up
 	// with all peers running the same new code — bounds the blast
 	// radius of a v2.0-specific bug. Not a defense against any
@@ -2481,11 +2486,14 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 			// makes feeler connections regardless of its limits
 			// (they're never counted toward outbound totals). A
 			// feeler exists to verify reachability and feed the
-			// tried table; at most one is in flight and it self-
-			// disconnects after feelerLifetime, so the overshoot is
-			// bounded and transient. Rejecting it at saturation
-			// would silently stop tried-table maintenance exactly
-			// when the node is busiest.
+			// tried table; the periodic feeler runs one at a time,
+			// though the startup addrfetch sweep dials every
+			// configured bootnode concurrently, so the transient
+			// overshoot is bounded by the bootnode count plus one.
+			// Every feeler self-disconnects after its lifetime.
+			// Rejecting them at saturation would silently stop
+			// tried-table maintenance exactly when the node is
+			// busiest.
 			return DiscTooManyPeers
 		}
 	}
