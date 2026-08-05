@@ -269,6 +269,26 @@ func TestComputeDiscOffsetCases(t *testing.T) {
 			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "snap", Version: 1}},
 			wantErr: true,
 		},
+		{
+			// A parallax version we don't offer is not negotiated, so
+			// it must not shift the layout — name-only matching would
+			// count 17 codes the server never allocates.
+			name:    "unknown parallax version excluded",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 99}, {Name: "parallax-disc", Version: 1}},
+			wantOff: 16,
+		},
+		{
+			// Only one version per name is negotiated; advertising two
+			// parallax versions must not double-count the block.
+			name:    "duplicate parallax versions counted once",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax", Version: 99}, {Name: "parallax-disc", Version: 1}},
+			wantOff: 16 + 17,
+		},
+		{
+			name:    "unsupported parallax-disc version",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 2}},
+			wantErr: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
