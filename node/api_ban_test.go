@@ -93,6 +93,15 @@ func TestSetbanArgumentValidation(t *testing.T) {
 	if _, err := api.Setban("192.0.2.7", "add", &past, &abs); err == nil {
 		t.Fatal("absolute bantime in the past did not error")
 	}
+	// bantime=0 with absolute resolves to the epoch: an error (Core:
+	// "Absolute timestamp is in the past"), never the 24h default.
+	zero := int64(0)
+	if _, err := api.Setban("192.0.2.7", "add", &zero, &abs); err == nil {
+		t.Fatal("absolute bantime of zero did not error")
+	}
+	if _, err := api.Setban("192.0.2.7", "add", nil, &abs); err == nil {
+		t.Fatal("absolute with omitted bantime did not error")
+	}
 	if _, err := api.Setban("not-an-ip", "add", nil, nil); err == nil {
 		t.Fatal("malformed subnet did not error")
 	}
@@ -109,8 +118,10 @@ func TestSetbanV4MappedCIDR(t *testing.T) {
 	if ok, err := api.Setban("::ffff:1.2.3.0/24", "add", nil, nil); err != nil || !ok {
 		t.Fatalf("setban add v4-mapped /24: ok=%v err=%v", ok, err)
 	}
-	if ok, err := api.Setban("::ffff:4.5.6.0/120", "add", nil, nil); err != nil || !ok {
-		t.Fatalf("setban add v4-mapped /120: ok=%v err=%v", ok, err)
+	// Core rejects any prefix above /32 for a v4-mapped target,
+	// including the IPv6-style /96../128 forms.
+	if _, err := api.Setban("::ffff:4.5.6.0/120", "add", nil, nil); err == nil {
+		t.Fatal("v4-mapped /120 prefix did not error")
 	}
 	list, _ := api.Listbanned()
 	var subnets []string
@@ -118,8 +129,8 @@ func TestSetbanV4MappedCIDR(t *testing.T) {
 		subnets = append(subnets, e.Subnet)
 	}
 	joined := strings.Join(subnets, ",")
-	if !strings.Contains(joined, "1.2.3.0/24") || !strings.Contains(joined, "4.5.6.0/24") {
-		t.Fatalf("listbanned subnets = %v, want 1.2.3.0/24 and 4.5.6.0/24", subnets)
+	if !strings.Contains(joined, "1.2.3.0/24") {
+		t.Fatalf("listbanned subnets = %v, want 1.2.3.0/24", subnets)
 	}
 	if !api.node.Server().BanList.IsBanned([]byte{1, 2, 3, 99}) {
 		t.Fatal("host inside v4-mapped /24 ban not banned")

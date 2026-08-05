@@ -298,19 +298,26 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 			return false, errors.New("IP/subnet already banned")
 		}
 		duration := time.Duration(0) // banman.New default
-		if bantime != nil && *bantime != 0 {
-			if absolute != nil && *absolute {
-				until := time.Unix(*bantime, 0)
-				if !until.After(time.Now()) {
-					return false, errors.New("absolute bantime must be in the future")
-				}
-				duration = time.Until(until)
-			} else {
-				if *bantime < 0 {
-					return false, errors.New("bantime cannot be negative")
-				}
-				duration = time.Duration(*bantime) * time.Second
+		if absolute != nil && *absolute {
+			// With absolute set, bantime IS the expiry — including
+			// an omitted or zero bantime, which resolves to the
+			// epoch and errors, matching Core's "Error: Absolute
+			// timestamp is in the past" rather than silently falling
+			// back to the 24h default.
+			var ts int64
+			if bantime != nil {
+				ts = *bantime
 			}
+			until := time.Unix(ts, 0)
+			if !until.After(time.Now()) {
+				return false, errors.New("absolute bantime must be in the future")
+			}
+			duration = time.Until(until)
+		} else if bantime != nil && *bantime != 0 {
+			if *bantime < 0 {
+				return false, errors.New("bantime cannot be negative")
+			}
+			duration = time.Duration(*bantime) * time.Second
 		}
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err
@@ -387,19 +394,17 @@ func parseBanSubnet(s string) (*net.IPNet, error) {
 			return nil, fmt.Errorf("invalid CIDR %q: %w", s, err)
 		}
 		// An IPv4-mapped IPv6 CIDR ("::ffff:1.2.3.0/24") means the
-		// embedded IPv4 subnet — Core's CSubNet applies the prefix to
-		// the v4 address it normalizes to. Convert here, before the
-		// ::ffff: mapping prefix is masked away, or the ban would
-		// silently cover a huge IPv6 range ("::/24") instead. The
-		// IPv6-style form ("::ffff:1.2.3.0/120") shifts down by the
-		// 96 mapping bits; prefixes between /33 and /95 are
-		// meaningless for a v4 target and rejected.
+		// embedded IPv4 subnet — Core's CSubNet normalizes the
+		// address to IPv4 and applies the prefix to it. Convert
+		// here, before the ::ffff: mapping prefix is masked away, or
+		// the ban would silently cover a huge IPv6 range ("::/24")
+		// instead. Prefixes above /32 are meaningless for a v4
+		// target and rejected, exactly as Core rejects them —
+		// including the IPv6-style /96../128 forms an earlier
+		// revision accepted as a custom extension.
 		if v4 := ip.To4(); v4 != nil {
 			if ones, bits := subnet.Mask.Size(); bits == 128 {
-				switch {
-				case ones >= 96:
-					ones -= 96
-				case ones > 32:
+				if ones > 32 {
 					return nil, fmt.Errorf("invalid prefix length /%d for IPv4-mapped subnet %q", ones, s)
 				}
 				mask := net.CIDRMask(ones, 32)
