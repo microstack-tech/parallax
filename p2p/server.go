@@ -353,6 +353,14 @@ type Server struct {
 	v2DialRecentMu sync.Mutex
 	v2DialRecent   map[string]time.Time
 
+	// quitCtx is cancelled together with quit. It bounds operations
+	// that take a context — most importantly the v2/feeler TCP dials,
+	// whose 15s connect timeout would otherwise stall Stop's
+	// loopWG.Wait for its full remainder (Bitcoin Core interrupts its
+	// connect loop the same way via interruptNet).
+	quitCtx    context.Context
+	quitCancel context.CancelFunc
+
 	// Channels into the run loop.
 	quit                    chan struct{}
 	addtrusted              chan *enode.Node
@@ -674,6 +682,9 @@ func (srv *Server) Stop() {
 		srv.v2Iter.Close()
 	}
 	close(srv.quit)
+	if srv.quitCancel != nil {
+		srv.quitCancel()
+	}
 	srv.lock.Unlock()
 	srv.loopWG.Wait()
 
@@ -736,6 +747,7 @@ func (srv *Server) Start() (err error) {
 		srv.listenFunc = net.Listen
 	}
 	srv.quit = make(chan struct{})
+	srv.quitCtx, srv.quitCancel = context.WithCancel(context.Background())
 	srv.delpeer = make(chan peerDrop)
 	srv.checkpointPostHandshake = make(chan *conn)
 	srv.checkpointAddPeer = make(chan *conn)
@@ -1352,7 +1364,15 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
 		}
 	}
-	fd, err := net.DialTimeout("tcp", addr.String(), defaultDialTimeout)
+	// Dial under quitCtx so Stop interrupts an in-flight connect
+	// (e.g. a feeler probing a SYN-blackholed address) instead of
+	// waiting out the remainder of the 15s timeout in loopWG.Wait.
+	ctx := srv.quitCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dialer := &net.Dialer{Timeout: defaultDialTimeout}
+	fd, err := dialer.DialContext(ctx, "tcp", addr.String())
 	if err != nil {
 		srv.addrmanAttemptByTCP(addr, true)
 		return fmt.Errorf("v2 dial %s: %w", addr, err)
