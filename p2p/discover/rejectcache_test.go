@@ -18,6 +18,7 @@ package discover
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,9 +29,11 @@ import (
 
 func newTestRejectCache(ttl time.Duration, max int) *rejectCache {
 	return &rejectCache{
-		entries: make(map[rejectKey]time.Time),
-		ttl:     ttl,
-		max:     max,
+		entries:  make(map[rejectKey]time.Time),
+		perIP:    make(map[[16]byte]int),
+		ttl:      ttl,
+		max:      max,
+		perIPCap: rejectCachePerIPMax,
 	}
 }
 
@@ -310,4 +313,75 @@ func TestVerifyAndAddRefetchesOnNewerSeq(t *testing.T) {
 	if got.Seq() != 5 {
 		t.Fatalf("table has seq %d, want re-fetched record seq 5", got.Seq())
 	}
+}
+
+// TestRejectCachePerIPCap — node IDs are free to generate, so a single
+// IP must not be able to fill the cache with (freshID, sameIP) entries
+// and starve legitimate suppressions. The per-IP quota drops newcomers
+// from a saturated IP while other IPs are unaffected.
+func TestRejectCachePerIPCap(t *testing.T) {
+	c := newTestRejectCache(time.Hour, 4096)
+	c.perIPCap = 8
+
+	for i := 0; i < c.perIPCap+10; i++ {
+		c.Add(mkID(byte(i+1)), mkIP(1))
+	}
+	if got := c.Len(); got != c.perIPCap {
+		t.Fatalf("one IP holds %d entries, want per-IP cap %d", got, c.perIPCap)
+	}
+	if c.Contains(mkID(byte(c.perIPCap+10)), mkIP(1)) {
+		t.Fatal("newcomer admitted past a saturated per-IP quota")
+	}
+	// A different IP is unaffected by the first IP's saturation.
+	c.Add(mkID(200), mkIP(2))
+	if !c.Contains(mkID(200), mkIP(2)) {
+		t.Fatal("entry from a fresh IP rejected while another IP is saturated")
+	}
+	// Refreshing an existing entry from the saturated IP still works.
+	c.Add(mkID(1), mkIP(1))
+	if !c.Contains(mkID(1), mkIP(1)) {
+		t.Fatal("TTL refresh at per-IP cap failed")
+	}
+}
+
+// TestRejectCachePerIPCapReleasesOnExpiry — expired entries release
+// their per-IP quota slot (via lazy Contains deletion and the cap-
+// boundary sweep), so a saturated IP can admit fresh entries again
+// after its old ones expire.
+func TestRejectCachePerIPCapReleasesOnExpiry(t *testing.T) {
+	c := newTestRejectCache(5*time.Millisecond, 4096)
+	c.perIPCap = 4
+
+	for i := 0; i < c.perIPCap; i++ {
+		c.Add(mkID(byte(i+1)), mkIP(1))
+	}
+	time.Sleep(20 * time.Millisecond)
+	// The quota is saturated with expired entries; Add's sweep must
+	// reclaim them and admit the newcomer.
+	c.Add(mkID(99), mkIP(1))
+	if !c.Contains(mkID(99), mkIP(1)) {
+		t.Fatal("expired entries did not release the per-IP quota")
+	}
+}
+
+// TestRejectCacheConcurrentAccess — Add/Contains from concurrent
+// goroutines, for the race detector. The cache is reached from the
+// async verify goroutines and lookup goroutines simultaneously.
+func TestRejectCacheConcurrentAccess(t *testing.T) {
+	c := newTestRejectCache(time.Minute, 128)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				id := mkID(byte(g*32 + i%32))
+				ip := mkIP(byte(g + 1))
+				c.Add(id, ip)
+				c.Contains(id, ip)
+				c.Len()
+			}
+		}(g)
+	}
+	wg.Wait()
 }

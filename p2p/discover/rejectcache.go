@@ -37,6 +37,17 @@ const (
 	// network ID per FINDNODE response and ~30 lookups/min, 4096 covers more
 	// than 2 hours of rejected-ID history.
 	rejectCacheMax = 4096
+
+	// rejectCachePerIPMax bounds how many live entries a single IP can
+	// hold. Node IDs are free to generate, so without this an attacker
+	// pinging from one address with a fresh key per ping fills the
+	// whole cache with (freshID, attackerIP) entries in minutes and
+	// starves the legitimate suppressions the cache exists for. Real
+	// endpoints produce at most a handful of distinct dead IDs per IP
+	// (a NAT fronting several nodes); 32 is generous for that while
+	// forcing an attacker to control ~128 distinct addresses to
+	// saturate the cache.
+	rejectCachePerIPMax = 32
 )
 
 // rejectKey identifies one rejected verification target. Keyed by
@@ -76,33 +87,41 @@ func makeRejectKey(id enode.ID, ip net.IP) rejectKey {
 // round-trip per occurrence for the TTL window. The sweep is O(n) but
 // runs only at the cap boundary.
 type rejectCache struct {
-	mu      sync.Mutex
-	entries map[rejectKey]time.Time // value = absolute expiry
-	ttl     time.Duration
-	max     int
+	mu       sync.Mutex
+	entries  map[rejectKey]time.Time // value = absolute expiry
+	perIP    map[[16]byte]int        // live entries per IP (see rejectCachePerIPMax)
+	ttl      time.Duration
+	max      int
+	perIPCap int
 }
 
 func newRejectCache() *rejectCache {
 	return &rejectCache{
-		entries: make(map[rejectKey]time.Time),
-		ttl:     rejectCacheTTL,
-		max:     rejectCacheMax,
+		entries:  make(map[rejectKey]time.Time),
+		perIP:    make(map[[16]byte]int),
+		ttl:      rejectCacheTTL,
+		max:      rejectCacheMax,
+		perIPCap: rejectCachePerIPMax,
 	}
 }
 
 // Add records (id, ip) as recently rejected. Re-adding refreshes the
-// TTL. When the cache is full of live entries, the newcomer is dropped
-// (see the type comment for why live entries are never evicted).
+// TTL. When the cache is full of live entries, or the IP already holds
+// its per-IP quota, the newcomer is dropped (see the type comment for
+// why live entries are never evicted).
 func (c *rejectCache) Add(id enode.ID, ip net.IP) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
 	key := makeRejectKey(id, ip)
-	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.max {
-		c.sweepExpiredLocked(now)
-		if len(c.entries) >= c.max {
-			return
+	if _, exists := c.entries[key]; !exists {
+		if len(c.entries) >= c.max || c.perIP[key.ip] >= c.perIPCap {
+			c.sweepExpiredLocked(now)
+			if len(c.entries) >= c.max || c.perIP[key.ip] >= c.perIPCap {
+				return
+			}
 		}
+		c.perIP[key.ip]++
 	}
 	c.entries[key] = now.Add(c.ttl)
 }
@@ -118,7 +137,7 @@ func (c *rejectCache) Contains(id enode.ID, ip net.IP) bool {
 		return false
 	}
 	if time.Now().After(exp) {
-		delete(c.entries, key)
+		c.deleteLocked(key)
 		return false
 	}
 	return true
@@ -132,12 +151,22 @@ func (c *rejectCache) Len() int {
 	return len(c.entries)
 }
 
+// deleteLocked removes an entry and releases its per-IP quota slot.
+func (c *rejectCache) deleteLocked(key rejectKey) {
+	delete(c.entries, key)
+	if n := c.perIP[key.ip]; n <= 1 {
+		delete(c.perIP, key.ip)
+	} else {
+		c.perIP[key.ip] = n - 1
+	}
+}
+
 // sweepExpiredLocked drops expired entries. Called only at the cap
-// boundary, so the O(n) scan stays off the handlePing hot path.
+// boundaries, so the O(n) scan stays off the handlePing hot path.
 func (c *rejectCache) sweepExpiredLocked(now time.Time) {
 	for key, exp := range c.entries {
 		if now.After(exp) {
-			delete(c.entries, key)
+			c.deleteLocked(key)
 		}
 	}
 }
