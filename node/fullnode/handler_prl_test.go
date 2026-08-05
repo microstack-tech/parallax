@@ -753,3 +753,62 @@ func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 		}
 	}
 }
+
+// Tests that a feeler connection completes the status handshake but never
+// registers into the peerset: no peerset entry, no sync candidacy, and all
+// subsequent protocol traffic drained without effect.
+func TestFeelerNeverRegisters66(t *testing.T) { testFeelerNeverRegisters(t, prl.Parallax66) }
+
+func testFeelerNeverRegisters(t *testing.T, protocol uint) {
+	t.Parallel()
+
+	handler := newTestHandler()
+	defer handler.close()
+
+	p2pSrc, p2pSink := p2p.MsgPipe()
+	defer p2pSrc.Close()
+	defer p2pSink.Close()
+
+	sinkP2P := p2p.NewPeerPipe(enode.ID{2}, "", nil, p2pSink)
+	sinkP2P.MarkFeelerForTest()
+
+	src := prl.NewPeer(protocol, p2p.NewPeerPipe(enode.ID{1}, "", nil, p2pSrc), p2pSrc, handler.txpool)
+	sink := prl.NewPeer(protocol, sinkP2P, p2pSink, handler.txpool)
+	defer src.Close()
+	defer sink.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- handler.handler.runParallaxPeer(sink, func(peer *prl.Peer) error {
+			return prl.Handle((*prlHandler)(handler.handler), peer)
+		})
+	}()
+	var (
+		genesis = handler.chain.Genesis()
+		head    = handler.chain.CurrentBlock()
+		td      = handler.chain.GetTd(head.Hash(), head.NumberU64())
+	)
+	if err := src.Handshake(1, td, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
+		t.Fatalf("failed to run protocol handshake: %v", err)
+	}
+	// Traffic after the handshake must be drained, not dispatched.
+	if err := src.SendNewBlockHashes([]util.Hash{{0x01}}, []uint64{1}); err != nil {
+		t.Fatalf("failed to send block announcement: %v", err)
+	}
+	// The feeler must never appear in the peerset. Poll briefly: a
+	// registration would happen synchronously before the drain loop,
+	// so any nonzero count is a straight failure.
+	for i := 0; i < 10; i++ {
+		if n := handler.handler.peers.len(); n != 0 {
+			t.Fatalf("feeler registered into peerset: %d peers", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Tearing down the pipe must end the drain loop.
+	p2pSrc.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("feeler drain loop did not exit on disconnect")
+	}
+}

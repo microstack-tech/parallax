@@ -156,6 +156,25 @@ func Handle(backend Backend, peer *Peer) error {
 	}
 }
 
+// HandleDiscard keeps a connection serviced without acting on any of
+// its protocol traffic: every message is read and discarded until the
+// connection is torn down. Feeler sessions use this — the status
+// handshake is the whole point of the probe, and Bitcoin Core
+// disconnects feelers right after version/verack without ever setting
+// up relay state (src/net.cpp), so nothing past the handshake may
+// feed the peerset, fetchers, or sync.
+func HandleDiscard(peer *Peer) error {
+	for {
+		msg, err := peer.rw.ReadMsg()
+		if err != nil {
+			return err
+		}
+		if err := msg.Discard(); err != nil {
+			return err
+		}
+	}
+}
+
 type (
 	msgHandler func(backend Backend, msg Decoder, peer *Peer) error
 	Decoder    interface {

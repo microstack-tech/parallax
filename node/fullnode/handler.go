@@ -283,6 +283,18 @@ func (h *handler) runParallaxPeer(peer *prl.Peer, handler prl.Handler) error {
 		peer.Log().Debug("Parallax handshake failed", "err", err)
 		return err
 	}
+	// Feelers stop here: the completed handshake is the reachability
+	// proof the probe exists for, and the p2p layer disconnects the
+	// session on its own schedule (disconnectFeelerAfter). They must
+	// never register into the peerset — that would count them toward
+	// maxPeers admission and minSyncPeers, and on a sparse peer set
+	// let a 10-30s probe become the sync master, aborting the sync
+	// round when it disconnects. Drain the session until teardown so
+	// the disc protocol sharing the connection can finish its work.
+	if peer.Peer.Feeler() {
+		peer.Log().Debug("Parallax feeler handshake complete, holding unregistered")
+		return prl.HandleDiscard(peer)
+	}
 	reject := false // reserved peer slots
 	if atomic.LoadUint32(&h.snapSync) == 1 {
 		if snap == nil {
