@@ -2880,6 +2880,18 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 		p.SetBlockRelayOnly(true)
 		p.SetRelayTxs(false)
 	}
+	// Stamp admission-time discourage-filter membership so inbound
+	// eviction prefers this peer over well-behaved ones. Bitcoin sets
+	// CNode.m_prefer_evict from AddrIsDiscouraged at accept; the
+	// session-local misbehavior flag alone misses a previously-
+	// discouraged address that reconnects while inbound is
+	// unsaturated (the saturation hard-reject doesn't fire) and then
+	// behaves.
+	if srv.BanList != nil && c.is(inboundConn) {
+		if ra, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && srv.BanList.IsDiscouraged(ra.IP) {
+			p.MarkPreferEvict()
+		}
+	}
 	go srv.runPeer(p)
 	return p
 }

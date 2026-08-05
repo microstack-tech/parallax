@@ -320,6 +320,16 @@ func TestPreferEvictNarrowsToDiscouraged(t *testing.T) {
 	if len(got) != 1 || got[0] != good {
 		t.Fatal("preferEvict must be a no-op without flagged peers")
 	}
+
+	// A peer admitted from a discouraged address (m_prefer_evict
+	// stamped at accept) is preferred even if it behaved perfectly
+	// this session.
+	reoffender := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: time.Minute})
+	reoffender.MarkPreferEvict()
+	got = preferEvict([]*Peer{good, reoffender})
+	if len(got) != 1 || got[0] != reoffender {
+		t.Fatalf("preferEvict must narrow to the admission-time discouraged peer, got %v", got)
+	}
 }
 
 // TestProtectByRatioProtectsHalfOldest — exactly half the candidate

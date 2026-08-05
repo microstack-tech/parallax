@@ -245,14 +245,16 @@ func protectByRatio(candidates []*Peer) []*Peer {
 // preferEvict narrows the surviving candidates to peers flagged for
 // discouragement, when any exist. Mirrors Core's prefer_evict
 // filter (eviction.cpp:209-215): a peer we already caught
-// misbehaving should absorb the eviction before any well-behaved
-// survivor does. Runs after the protection rounds on purpose — if
-// a misbehaving peer is genuinely our best block source, Core
-// prefers keeping it anyway, and so do we.
+// misbehaving — this session (ShouldDiscourage) or before admission
+// (PreferEvict, the discourage-filter membership stamped at accept,
+// Core's m_prefer_evict) — should absorb the eviction before any
+// well-behaved survivor does. Runs after the protection rounds on
+// purpose — if a misbehaving peer is genuinely our best block
+// source, Core prefers keeping it anyway, and so do we.
 func preferEvict(candidates []*Peer) []*Peer {
 	flagged := make([]*Peer, 0, len(candidates))
 	for _, p := range candidates {
-		if p.ShouldDiscourage() {
+		if p.ShouldDiscourage() || p.PreferEvict() {
 			flagged = append(flagged, p)
 		}
 	}

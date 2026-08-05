@@ -165,6 +165,12 @@ type Peer struct {
 	// count the same victim twice and over-admit past the inbound
 	// cap.
 	discRequested atomic.Bool
+	// preferEvictFlag marks a peer admitted from an address that was
+	// in the discourage filter at admission time. Such peers absorb
+	// inbound eviction before well-behaved ones (Bitcoin:
+	// CNode.m_prefer_evict, set from AddrIsDiscouraged at accept).
+	preferEvictFlag atomic.Bool
+
 	// shouldDiscourage is set by MisbehavingFor when a protocol
 	// violation should cause the peer to be disconnected and added
 	// to the discourage Bloom filter. Bitcoin Core's
@@ -344,6 +350,15 @@ func (p *Peer) MisbehavingFor(reason string) {
 // discourage during the session. Used by the Server's session-end
 // hook to populate the BanList.
 func (p *Peer) ShouldDiscourage() bool { return p.shouldDiscourage.Load() }
+
+// MarkPreferEvict stamps the peer as a preferred inbound-eviction
+// victim. Set at admission when the remote address was already in
+// the discourage filter (Bitcoin: CNode.m_prefer_evict from
+// AddrIsDiscouraged at accept). Sticky for the session.
+func (p *Peer) MarkPreferEvict() { p.preferEvictFlag.Store(true) }
+
+// PreferEvict reports the admission-time discouraged mark.
+func (p *Peer) PreferEvict() bool { return p.preferEvictFlag.Load() }
 
 // DiscourageReason returns the misbehavior tag set by the first
 // MisbehavingFor call on this peer, or the empty string if none.
