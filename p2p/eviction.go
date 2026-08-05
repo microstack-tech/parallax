@@ -284,7 +284,8 @@ func pickEvictionVictim(candidates []*Peer) *Peer {
 	var bestGroup []*Peer
 	bestCount := 0
 	var bestYoungest mclock.AbsTime
-	for _, members := range groups {
+	var bestKey uint64
+	for key, members := range groups {
 		count := len(members)
 		// Find youngest in this group.
 		youngest := members[0].Created()
@@ -293,14 +294,18 @@ func pickEvictionVictim(candidates []*Peer) *Peer {
 				youngest = m.Created()
 			}
 		}
+		// The final key comparison exists only to keep the pick
+		// deterministic when two groups tie on both count and
+		// youngest-connection time — Go map iteration order is
+		// random, whereas Core's banked std::map walks groups in
+		// key order and always resolves such ties the same way.
 		switch {
 		case count > bestCount:
-			bestGroup = members
-			bestCount = count
-			bestYoungest = youngest
+			bestGroup, bestCount, bestYoungest, bestKey = members, count, youngest, key
 		case count == bestCount && youngest > bestYoungest:
-			bestGroup = members
-			bestYoungest = youngest
+			bestGroup, bestYoungest, bestKey = members, youngest, key
+		case count == bestCount && youngest == bestYoungest && bestGroup != nil && key > bestKey:
+			bestGroup, bestKey = members, key
 		}
 	}
 	// Within bestGroup, return the youngest member.
