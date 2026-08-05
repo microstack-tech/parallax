@@ -160,3 +160,40 @@ func TestPostHandshakeRejectsFreshlyBanned(t *testing.T) {
 		t.Fatalf("trusted banned conn: err = %v, want nil (trusted bypass)", err)
 	}
 }
+
+// TestDiscourageTargetExemptions — the disconnect-time discourage
+// stamp skips trusted, static, and loopback peers, mirroring Bitcoin
+// Core's MaybeDiscourageAndDisconnect exemptions (NoBan permission,
+// manual connections, local addresses). A plain misbehaving inbound
+// peer is stamped with its remote IP.
+func TestDiscourageTargetExemptions(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		opts      evictionOpts
+		misbehave bool
+		want      bool
+	}{
+		{"misbehaving inbound", evictionOpts{inbound: true, ip: net.IPv4(192, 0, 2, 10)}, true, true},
+		{"well-behaved inbound", evictionOpts{inbound: true, ip: net.IPv4(192, 0, 2, 11)}, false, false},
+		{"trusted", evictionOpts{inbound: true, trusted: true, ip: net.IPv4(192, 0, 2, 12)}, true, false},
+		{"static", evictionOpts{static: true, ip: net.IPv4(192, 0, 2, 13)}, true, false},
+		{"loopback", evictionOpts{inbound: true, ip: net.IPv4(127, 0, 0, 1)}, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := makeEvictionPeer(t, tc.opts)
+			if tc.misbehave {
+				p.MisbehavingFor("test-violation")
+			}
+			ip, ok := discourageTarget(p)
+			if ok != tc.want {
+				t.Fatalf("discourageTarget ok = %v, want %v", ok, tc.want)
+			}
+			if ok && !ip.Equal(tc.opts.ip) {
+				t.Fatalf("discourageTarget ip = %v, want %v", ip, tc.opts.ip)
+			}
+		})
+	}
+}

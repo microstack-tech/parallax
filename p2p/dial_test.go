@@ -537,6 +537,40 @@ func TestDialSchedSkipsBannedAddresses(t *testing.T) {
 	})
 }
 
+// TestDialSchedDiscouragedGate — discouragement blocks dynamic dials
+// but not static ones. A ban blocks both; discouragement is stamped
+// automatically on misbehavior and has no clearing RPC, so honoring
+// it on statics would strand an operator-chosen peering until
+// restart. Core's manual connections likewise bypass discouragement.
+func TestDialSchedDiscouragedGate(t *testing.T) {
+	t.Parallel()
+
+	discouraged := map[string]bool{"7.7.7.7": true, "8.8.8.8": true}
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isDiscouraged: func(ip net.IP) bool {
+			return discouraged[ip.String()]
+		},
+	}
+	staticNode := newNode(uintID(0x50), "7.7.7.7:32110")
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+			discovered: []*enode.Node{
+				newNode(uintID(0x51), "8.8.8.8:32110"), // discouraged dynamic → skip
+				newNode(uintID(0x52), "1.2.3.4:32110"), // ok
+			},
+			wantNewDials: []*enode.Node{
+				staticNode, // discouraged but static → dialed
+				newNode(uintID(0x52), "1.2.3.4:32110"),
+			},
+		},
+	})
+}
+
 // TestDialSchedInboundProgressRefcount — two inbound conns claiming
 // the same NodeID register independently; the dial scheduler must
 // keep blocking until BOTH unregister. Defends against a peer that

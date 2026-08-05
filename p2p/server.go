@@ -1072,9 +1072,8 @@ func (srv *Server) setupDialScheduler() {
 	}
 	if srv.BanList != nil {
 		bl := srv.BanList
-		config.isBanned = func(ip net.IP) bool {
-			return bl.IsBanned(ip) || bl.IsDiscouraged(ip)
-		}
+		config.isBanned = bl.IsBanned
+		config.isDiscouraged = bl.IsDiscouraged
 	}
 	if srv.ntab != nil {
 		config.resolver = srv.ntab
@@ -2330,13 +2329,20 @@ running:
 			// consulted by postHandshakeChecks to reject the same
 			// source if it tries to reconnect into a saturated
 			// inbound pool. Bitcoin Core src/net_processing.cpp
-			// MaybeDiscourageAndDisconnect.
-			if srv.BanList != nil && pd.ShouldDiscourage() {
-				if remote, ok := pd.RemoteAddr().(*net.TCPAddr); ok {
-					srv.BanList.Discourage(remote.IP)
+			// MaybeDiscourageAndDisconnect — which never discourages
+			// NoBan (trusted), manual (static), or local peers:
+			// those exemptions matter here because the filter has no
+			// clearing RPC, so one bad message from a trusted or
+			// static peer would otherwise sever the peering until
+			// restart, and on a multi-node host one misbehaving
+			// loopback peer would sever every local peering sharing
+			// the address.
+			if srv.BanList != nil {
+				if ip, ok := discourageTarget(pd.Peer); ok {
+					srv.BanList.Discourage(ip)
 					srv.log.Debug("discouraging misbehaving peer",
 						"id", pd.ID(),
-						"addr", remote.IP,
+						"addr", ip,
 						"reason", pd.DiscourageReason())
 				}
 			}
@@ -2883,6 +2889,26 @@ func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 		return errServerStopped
 	}
 	return <-c.cont
+}
+
+// discourageTarget reports whether a disconnecting peer's misbehavior
+// flag should stamp its source IP into the discourage filter, and if
+// so which IP. Trusted (NoBan), static (manual), and loopback (local)
+// sessions are exempt, mirroring Bitcoin Core's
+// MaybeDiscourageAndDisconnect (src/net_processing.cpp). The
+// exemptions matter because the filter has no clearing RPC: one bad
+// message from a trusted or static peer would otherwise sever the
+// peering until restart, and on a multi-node host one misbehaving
+// loopback peer would sever every local peering sharing the address.
+func discourageTarget(pd *Peer) (net.IP, bool) {
+	if !pd.ShouldDiscourage() || pd.rw.is(trustedConn) || pd.rw.is(staticDialedConn) {
+		return nil, false
+	}
+	remote, ok := pd.RemoteAddr().(*net.TCPAddr)
+	if !ok || remote.IP.IsLoopback() {
+		return nil, false
+	}
+	return remote.IP, true
 }
 
 func (srv *Server) launchPeer(c *conn) *Peer {

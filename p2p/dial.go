@@ -88,7 +88,8 @@ var (
 	errNetRestrict           = errors.New("not contained in netrestrict list")
 	errNoPort                = errors.New("node does not provide TCP port")
 	errOutboundGroupOccupied = errors.New("outbound network group already occupied")
-	errBanned                = errors.New("address banned or discouraged")
+	errBanned                = errors.New("address banned")
+	errDiscouraged           = errors.New("address discouraged")
 )
 
 // dialer creates outbound connections and submits them into Server.
@@ -212,11 +213,19 @@ type dialConfig struct {
 	// consume from this bucket.
 	maxBlockRelay int
 
-	// isBanned reports whether an IP is banned or discouraged. When
+	// isBanned reports whether an IP is under an operator ban. When
 	// set, checkDial refuses to dial such nodes, mirroring Bitcoin
 	// Core's outbound ban gate (CConnman::OpenNetworkConnection).
 	// Nil disables the check (unit tests, no ban list configured).
 	isBanned func(net.IP) bool
+
+	// isDiscouraged reports whether an IP is in the automatic
+	// misbehavior discourage filter. Unlike a ban it does not block
+	// static dials: Core's manual connections bypass discouragement,
+	// and the filter has no clearing RPC, so honoring it on statics
+	// would strand an operator-chosen peering until restart. Nil
+	// disables the check.
+	isDiscouraged func(net.IP) bool
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -623,12 +632,20 @@ func (d *dialScheduler) checkDial(n *enode.Node, flags connFlag) error {
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNetRestrict
 	}
-	// Never dial a banned or discouraged address (Bitcoin Core
+	// Never dial a banned address (Bitcoin Core
 	// CConnman::OpenNetworkConnection). Applies to every scheduler
 	// dial including static ones — an operator ban must not be
 	// worked around by an addnode entry.
 	if d.isBanned != nil && n.IP() != nil && d.isBanned(n.IP()) {
 		return errBanned
+	}
+	// Discouragement is softer than an operator ban: it is stamped
+	// automatically on misbehavior and only clears on restart or
+	// filter rotation. Static dials ignore it, as Core's manual
+	// connections do — the operator explicitly chose the endpoint,
+	// and a shared-IP neighbor's misbehavior must not strand it.
+	if flags&staticDialedConn == 0 && d.isDiscouraged != nil && n.IP() != nil && d.isDiscouraged(n.IP()) {
+		return errDiscouraged
 	}
 	if d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed
