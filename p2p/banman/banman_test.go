@@ -470,3 +470,29 @@ func TestLoadCanonicalizesHandEditedEntries(t *testing.T) {
 		t.Fatal("subnet still banned after remove")
 	}
 }
+
+// TestListBannedDurationFields — listbanned carries Bitcoin Core's
+// derived ban_duration and time_remaining fields.
+func TestListBannedDurationFields(t *testing.T) {
+	bm, err := New("", logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bm.Ban(net.IPv4(10, 9, 8, 7), 2*time.Hour, ReasonManual); err != nil {
+		t.Fatal(err)
+	}
+	list := bm.ListBanned()
+	if len(list) != 1 {
+		t.Fatalf("listbanned len = %d, want 1", len(list))
+	}
+	e := list[0]
+	if e.BanDuration != e.BannedTill-e.BanCreated {
+		t.Fatalf("ban_duration = %d, want banned_until-ban_created = %d", e.BanDuration, e.BannedTill-e.BanCreated)
+	}
+	if e.BanDuration != int64((2 * time.Hour).Seconds()) {
+		t.Fatalf("ban_duration = %d, want 7200", e.BanDuration)
+	}
+	if e.TimeRemaining <= 0 || e.TimeRemaining > e.BanDuration {
+		t.Fatalf("time_remaining = %d, want in (0, %d]", e.TimeRemaining, e.BanDuration)
+	}
+}

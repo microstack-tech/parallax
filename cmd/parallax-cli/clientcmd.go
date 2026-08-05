@@ -1746,10 +1746,11 @@ func clientAddrbookResetKey(ctx *cli.Context) error {
 // import on p2p/banman (keeps the CLI binary slim, same pattern used
 // for addrbookStatus).
 type banInfo struct {
-	Subnet     string `json:"address"`
-	BanCreated int64  `json:"ban_created"`
-	BannedTill int64  `json:"banned_until"`
-	Reason     string `json:"reason,omitempty"`
+	Subnet        string `json:"address"`
+	BanCreated    int64  `json:"ban_created"`
+	BannedTill    int64  `json:"banned_until"`
+	BanDuration   int64  `json:"ban_duration"`
+	TimeRemaining int64  `json:"time_remaining"`
 }
 
 // clientSetban invokes admin_setban with the argument shape

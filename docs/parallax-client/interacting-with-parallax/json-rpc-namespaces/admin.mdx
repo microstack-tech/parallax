@@ -153,7 +153,7 @@ Imports an exported list of blocks from a local file. Importing involves process
 
 ### admin\_listbanned
 
-Returns the active (non-expired) entries from the persistent ban list as a JSON array. Each entry has the CIDR-formatted subnet, the Unix-second timestamps for `ban_created` and `banned_until`, and an optional free-form `reason` tag. Expired entries are pruned lazily on each call.
+Returns the active (non-expired) entries from the persistent ban list as a JSON array, matching Bitcoin Core's `listbanned` output shape. Each entry has the CIDR-formatted subnet, the Unix-second timestamps for `ban_created` and `banned_until`, plus the derived `ban_duration` and `time_remaining` in seconds. Expired entries are pruned lazily on each call.
 
 | CLIENT  | METHOD INVOCATION                       |
 | ------- | --------------------------------------- |
@@ -169,7 +169,8 @@ Returns the active (non-expired) entries from the persistent ban list as a JSON 
     address: "10.0.0.0/24",
     ban_created: 1730000000,
     banned_until: 1730086400,
-    reason: "manual"
+    ban_duration: 86400,
+    time_remaining: 82500
   }
 ]
 ```

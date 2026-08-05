@@ -279,12 +279,17 @@ func (b *BanMan) ClearBanned() error {
 }
 
 // BanInfo is the shape returned from ListBanned, suitable for RPC
-// JSON marshaling.
+// JSON marshaling. Field set matches Bitcoin Core's listbanned
+// output exactly (src/rpc/net.cpp): the derived ban_duration and
+// time_remaining fields are included, and there is no reason field
+// (Core removed it; the reason tag lives only in banlist.json for
+// operator forensics).
 type BanInfo struct {
-	Subnet     string `json:"address"`
-	BanCreated int64  `json:"ban_created"`
-	BannedTill int64  `json:"banned_until"`
-	Reason     string `json:"reason,omitempty"`
+	Subnet        string `json:"address"`
+	BanCreated    int64  `json:"ban_created"`
+	BannedTill    int64  `json:"banned_until"`
+	BanDuration   int64  `json:"ban_duration"`
+	TimeRemaining int64  `json:"time_remaining"`
 }
 
 // ListBanned returns a sorted snapshot of all currently-active
@@ -301,10 +306,11 @@ func (b *BanMan) ListBanned() []BanInfo {
 			continue
 		}
 		out = append(out, BanInfo{
-			Subnet:     key,
-			BanCreated: bn.entry.BanCreated,
-			BannedTill: bn.entry.BannedTill,
-			Reason:     bn.entry.Reason,
+			Subnet:        key,
+			BanCreated:    bn.entry.BanCreated,
+			BannedTill:    bn.entry.BannedTill,
+			BanDuration:   bn.entry.BannedTill - bn.entry.BanCreated,
+			TimeRemaining: bn.entry.BannedTill - now,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Subnet < out[j].Subnet })
