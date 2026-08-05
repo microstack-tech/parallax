@@ -294,8 +294,15 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 		// re-adding an active ban is an error and the operator must
 		// remove it first. BanSubnet's extend-only rule would keep
 		// the longer of the two expiries while reporting success, so
-		// a "shortened" ban would silently not apply.
-		if bm.IsBannedSubnet(netw) {
+		// a "shortened" ban would silently not apply. Core's check is
+		// form-sensitive: the subnet form looks up the exact banmap
+		// entry, while the plain-IP form checks containment in ANY
+		// active ban (isSubnet ? IsBanned(subNet) : IsBanned(netAddr)).
+		alreadyBanned := bm.IsBannedSubnet(netw)
+		if !strings.Contains(subnet, "/") {
+			alreadyBanned = bm.IsBanned(netw.IP)
+		}
+		if alreadyBanned {
 			return false, errors.New("IP/subnet already banned")
 		}
 		duration := time.Duration(0) // banman.New default
@@ -314,10 +321,7 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 				return false, errors.New("absolute bantime must be in the future")
 			}
 			duration = time.Until(until)
-		} else if bantime != nil && *bantime != 0 {
-			if *bantime < 0 {
-				return false, errors.New("bantime cannot be negative")
-			}
+		} else if bantime != nil && *bantime > 0 {
 			// time.Duration counts int64 nanoseconds, so seconds
 			// above ~292 years overflow the multiplication to a
 			// negative value — which BanSubnet would then silently
@@ -332,6 +336,10 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 			}
 			duration = time.Duration(secs) * time.Second
 		}
+		// A zero, omitted, or negative relative bantime leaves
+		// duration 0, which BanSubnet resolves to the 24h default —
+		// matching BanMan::Ban's ban_time_offset <= 0 normalization
+		// (src/banman.cpp).
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err
 		}

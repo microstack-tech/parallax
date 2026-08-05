@@ -84,9 +84,28 @@ func TestSetbanArgumentValidation(t *testing.T) {
 	if _, err := api.Setban("192.0.2.7", "frobnicate", nil, nil); err == nil {
 		t.Fatal("invalid command did not error")
 	}
+	// A negative relative bantime is normalized to the 24h default,
+	// matching BanMan::Ban's ban_time_offset <= 0 handling
+	// (src/banman.cpp) — Core's setban does not reject negatives.
 	neg := int64(-5)
-	if _, err := api.Setban("192.0.2.7", "add", &neg, nil); err == nil {
-		t.Fatal("negative relative bantime did not error")
+	if ok, err := api.Setban("198.51.100.40", "add", &neg, nil); err != nil || !ok {
+		t.Fatalf("negative relative bantime: ok=%v err=%v, want default-duration ban", ok, err)
+	}
+	list, err := api.Listbanned()
+	if err != nil {
+		t.Fatalf("listbanned: %v", err)
+	}
+	found := false
+	for _, e := range list {
+		if e.Subnet == "198.51.100.40/32" {
+			found = true
+			if d := e.BannedTill - e.BanCreated; d < 23*3600 || d > 25*3600 {
+				t.Fatalf("negative bantime ban lasts %d seconds, want ~24h default", d)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("negative-bantime ban missing from listbanned")
 	}
 	past := int64(1000)
 	abs := true
@@ -188,9 +207,11 @@ func TestClearbanned(t *testing.T) {
 // an error (Bitcoin parity: RPC_CLIENT_NODE_ALREADY_ADDED); the
 // operator must remove the ban first. Without the error, a
 // "shortening" re-ban would report success while the extend-only rule
-// silently kept the longer expiry. A wider covering ban does not
-// block an exact-subnet add (Core's check is an exact banmap lookup),
-// and remove-then-add works.
+// silently kept the longer expiry. Core's check is form-sensitive
+// (rpc/net.cpp: isSubnet ? IsBanned(subNet) : IsBanned(netAddr)): the
+// subnet form is an exact banmap lookup, so a covering wider ban does
+// not block it, while the plain-IP form checks containment in ANY
+// active ban.
 func TestSetbanAddAlreadyBanned(t *testing.T) {
 	api := startBanTestNode(t)
 
@@ -208,11 +229,20 @@ func TestSetbanAddAlreadyBanned(t *testing.T) {
 	if ok, err := api.Setban("192.0.2.0/24", "add", nil, nil); err != nil || !ok {
 		t.Fatalf("adding covering subnet: ok=%v err=%v", ok, err)
 	}
-	// Remove-then-add is the sanctioned way to change a ban's expiry.
+	// The plain-IP form checks containment: with the /24 active,
+	// re-adding a contained IP errors even after its exact /32 entry
+	// is removed (Core: IsBanned(netAddr) walks all banned subnets).
 	if ok, err := api.Setban("192.0.2.9", "remove", nil, nil); err != nil || !ok {
 		t.Fatalf("setban remove: ok=%v err=%v", ok, err)
 	}
+	if _, err := api.Setban("192.0.2.9", "add", &short, nil); err == nil {
+		t.Fatal("plain-IP add inside an active covering ban did not error")
+	}
+	// Once the covering ban is gone, the IP is addable again.
+	if ok, err := api.Setban("192.0.2.0/24", "remove", nil, nil); err != nil || !ok {
+		t.Fatalf("removing covering subnet: ok=%v err=%v", ok, err)
+	}
 	if ok, err := api.Setban("192.0.2.9", "add", &short, nil); err != nil || !ok {
-		t.Fatalf("re-add after remove: ok=%v err=%v", ok, err)
+		t.Fatalf("re-add after all bans removed: ok=%v err=%v", ok, err)
 	}
 }
