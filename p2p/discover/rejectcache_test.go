@@ -96,16 +96,28 @@ func TestRejectCacheReAddRefreshesTTL(t *testing.T) {
 func TestRejectCacheCapEviction(t *testing.T) {
 	const max = 8
 	c := newTestRejectCache(time.Hour, max)
-	// Insert max+5 distinct IDs. The cap should keep us at <= max.
+	// Insert max+5 distinct IDs. The cap should keep us at <= max,
+	// and it must do so by dropping newcomers, never by evicting live
+	// entries — an attacker with cheap failing keys could otherwise
+	// flush the legitimate suppressions out of the cache.
 	for i := 0; i < max+5; i++ {
 		c.Add(mkID(byte(i+1)), mkIP(1))
 	}
 	if c.Len() > max {
 		t.Fatalf("cache exceeded cap: len=%d, max=%d", c.Len(), max)
 	}
-	// The most recent insert must still be present.
-	if !c.Contains(mkID(byte(max+5)), mkIP(1)) {
-		t.Fatalf("most recent insert should be retained")
+	for i := 0; i < max; i++ {
+		if !c.Contains(mkID(byte(i+1)), mkIP(1)) {
+			t.Fatalf("live entry %d was evicted by a newcomer", i+1)
+		}
+	}
+	if c.Contains(mkID(byte(max+5)), mkIP(1)) {
+		t.Fatal("newcomer was admitted past a cache full of live entries")
+	}
+	// Refreshing an existing entry at cap must still work.
+	c.Add(mkID(1), mkIP(1))
+	if !c.Contains(mkID(1), mkIP(1)) {
+		t.Fatal("TTL refresh at cap failed")
 	}
 }
 

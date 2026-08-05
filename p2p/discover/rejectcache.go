@@ -66,8 +66,15 @@ func makeRejectKey(id enode.ID, ip net.IP) rejectKey {
 // suppressing the storm of repeat ENR fetches caused by non-Parallax peers
 // being returned on every neighbor's FINDNODE response.
 //
-// Best-effort: when over capacity, the entry with the soonest expiry is
-// evicted. The eviction scan is O(n) but only runs at the cap boundary.
+// Best-effort: at capacity, expired entries are swept and — if the cache
+// is still full of live entries — the NEWCOMER is dropped rather than a
+// live entry evicted. Evicting live entries would let an attacker with
+// cheaply-generated failing keys churn the cache and flush the
+// legitimate suppressions, restoring the very RequestENR storm the
+// cache exists to prevent; a full cache, by contrast, is already doing
+// suppression work, and the dropped newcomer costs at most one extra
+// round-trip per occurrence for the TTL window. The sweep is O(n) but
+// runs only at the cap boundary.
 type rejectCache struct {
 	mu      sync.Mutex
 	entries map[rejectKey]time.Time // value = absolute expiry
@@ -83,14 +90,21 @@ func newRejectCache() *rejectCache {
 	}
 }
 
-// Add records (id, ip) as recently rejected. Re-adding refreshes the TTL.
+// Add records (id, ip) as recently rejected. Re-adding refreshes the
+// TTL. When the cache is full of live entries, the newcomer is dropped
+// (see the type comment for why live entries are never evicted).
 func (c *rejectCache) Add(id enode.ID, ip net.IP) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[makeRejectKey(id, ip)] = time.Now().Add(c.ttl)
-	if len(c.entries) > c.max {
-		c.evictLocked()
+	now := time.Now()
+	key := makeRejectKey(id, ip)
+	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.max {
+		c.sweepExpiredLocked(now)
+		if len(c.entries) >= c.max {
+			return
+		}
 	}
+	c.entries[key] = now.Add(c.ttl)
 }
 
 // Contains reports whether (id, ip) is in the cache and not yet expired.
@@ -118,29 +132,12 @@ func (c *rejectCache) Len() int {
 	return len(c.entries)
 }
 
-// evictLocked drops expired entries first, then if still over cap removes the
-// entry with the soonest expiry. Called only when len exceeds max.
-func (c *rejectCache) evictLocked() {
-	now := time.Now()
+// sweepExpiredLocked drops expired entries. Called only at the cap
+// boundary, so the O(n) scan stays off the handlePing hot path.
+func (c *rejectCache) sweepExpiredLocked(now time.Time) {
 	for key, exp := range c.entries {
 		if now.After(exp) {
 			delete(c.entries, key)
 		}
-	}
-	if len(c.entries) <= c.max {
-		return
-	}
-	var oldestKey rejectKey
-	var oldestExp time.Time
-	first := true
-	for key, exp := range c.entries {
-		if first || exp.Before(oldestExp) {
-			oldestKey = key
-			oldestExp = exp
-			first = false
-		}
-	}
-	if !first {
-		delete(c.entries, oldestKey)
 	}
 }
