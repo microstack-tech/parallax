@@ -311,6 +311,12 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 			if err := rlp.DecodeBytes(data, &pkt); err != nil {
 				return nil, nil, fmt.Errorf("decode Peers: %w", err)
 			}
+			// Enforce the same shape limits the daemon handler
+			// applies: a hostile probed node must not feed an
+			// oversized or malformed fan-out into the crawl queue.
+			if err := pkt.Validate(); err != nil {
+				return nil, nil, fmt.Errorf("invalid Peers: %w", err)
+			}
 			return pkt.Entries, theirHello.Caps, nil
 		case code == disconnectCode:
 			return nil, nil, fmt.Errorf("peer disconnected during crawl")
