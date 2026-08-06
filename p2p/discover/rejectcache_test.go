@@ -344,6 +344,35 @@ func TestRejectCachePerIPCap(t *testing.T) {
 	}
 }
 
+// TestRejectCachePerIPCapBucketsIPv6BySlash64 — the per-source quota
+// treats a whole IPv6 /64 as one bucket: a single host routinely
+// controls an entire routed /64, so per-full-address quotas would
+// hand it unbounded distinct sources.
+func TestRejectCachePerIPCapBucketsIPv6BySlash64(t *testing.T) {
+	c := newTestRejectCache(time.Hour, 4096)
+	c.perIPCap = 8
+
+	v6 := func(prefixByte, host byte) net.IP {
+		ip := net.ParseIP("2001:db8::")
+		ip = append(net.IP(nil), ip...)
+		ip[7] = prefixByte // vary inside byte 8 of the prefix
+		ip[15] = host
+		return ip
+	}
+	// Distinct host addresses inside one /64 share a single quota.
+	for i := 0; i < c.perIPCap+5; i++ {
+		c.Add(mkID(byte(i+1)), v6(1, byte(i+1)))
+	}
+	if got := c.Len(); got != c.perIPCap {
+		t.Fatalf("one /64 holds %d entries, want per-source cap %d", got, c.perIPCap)
+	}
+	// A different /64 is its own bucket.
+	c.Add(mkID(200), v6(2, 1))
+	if !c.Contains(mkID(200), v6(2, 1)) {
+		t.Fatal("entry from a different /64 rejected while another /64 is saturated")
+	}
+}
+
 // TestRejectCachePerIPCapReleasesOnExpiry — expired entries release
 // their per-IP quota slot (via lazy Contains deletion and the cap-
 // boundary sweep), so a saturated IP can admit fresh entries again

@@ -618,12 +618,16 @@ func (tab *Table) addVerifiedNode(n *node) {
 //
 //  1. If we already have a verified ENR for n.ID() in the local nodedb
 //     that still describes the observed endpoint (and isn't outdated by
-//     the observed ENR sequence), reuse it. The nodedb only persists
-//     nodes that previously passed nodeFilter (see copyLiveNodes), so a
-//     hit means the ID is trusted. If it has gone offline since, the
-//     table revalidator will prune it. Checked first so that a
-//     transient RequestENR failure (one dropped UDP packet) cannot
-//     blacklist a known-good node for rejectCacheTTL.
+//     the observed ENR sequence), reuse it — but only after re-checking
+//     nodeFilter against the cached record, exactly as the lookup path
+//     does. The nodedb is not guaranteed to hold only filtered records
+//     (seed/bootnode entries bypass the filter, and pre-2.0 datadirs
+//     carry unfiltered history); without the re-check a stale filtered
+//     record would be handed to addVerifiedNode, silently dropped
+//     there, and this function would have already returned — never
+//     attempting the RequestENR that could repair the entry. Checked
+//     first so that a transient RequestENR failure (one dropped UDP
+//     packet) cannot blacklist a known-good node for rejectCacheTTL.
 //
 //  2. If (n.ID(), n.IP()) is in the negative cache (recent RequestENR error
 //     or filter rejection), drop immediately. Each non-Parallax / dead
@@ -640,7 +644,7 @@ func (tab *Table) verifyAndAdd(n *node, observedSeq uint64) {
 		return
 	}
 	id := n.ID()
-	if cached := tab.db.Node(id); cached != nil && cachedRecordUsable(cached, n, observedSeq) {
+	if cached := tab.db.Node(id); cached != nil && cachedRecordUsable(cached, n, observedSeq) && tab.nodeFilter(cached) {
 		tab.addVerifiedNode(wrapNode(cached))
 		return
 	}

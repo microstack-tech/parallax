@@ -38,15 +38,19 @@ const (
 	// than 2 hours of rejected-ID history.
 	rejectCacheMax = 4096
 
-	// rejectCachePerIPMax bounds how many live entries a single IP can
-	// hold. Node IDs are free to generate, so without this an attacker
-	// pinging from one address with a fresh key per ping fills the
-	// whole cache with (freshID, attackerIP) entries in minutes and
-	// starves the legitimate suppressions the cache exists for. Real
-	// endpoints produce at most a handful of distinct dead IDs per IP
-	// (a NAT fronting several nodes); 32 is generous for that while
-	// forcing an attacker to control ~128 distinct addresses to
-	// saturate the cache.
+	// rejectCachePerIPMax bounds how many live entries a single source
+	// bucket (IPv4 address, or IPv6 /64 — one host routinely controls
+	// a whole /64) can hold. Node IDs are free to generate, so without
+	// this a burst of (freshID, oneIP) entries fills the whole cache
+	// in minutes and starves the legitimate suppressions the cache
+	// exists for. Real endpoints produce at most a handful of distinct
+	// dead IDs per address (a NAT fronting several nodes); 32 is
+	// generous for that. Note the entry IPs come from untrusted
+	// FINDNODE advertisements, so the cap bounds damage per *named*
+	// source bucket, not per attacker — an attacker naming many
+	// distinct IPs is instead bounded by the global cap, where the
+	// worst case is dropped newcomers (lost suppression, never false
+	// rejection: Contains cannot false-positive).
 	rejectCachePerIPMax = 32
 )
 
@@ -89,10 +93,24 @@ func makeRejectKey(id enode.ID, ip net.IP) rejectKey {
 type rejectCache struct {
 	mu       sync.Mutex
 	entries  map[rejectKey]time.Time // value = absolute expiry
-	perIP    map[[16]byte]int        // live entries per IP (see rejectCachePerIPMax)
+	perIP    map[[16]byte]int        // live entries per source bucket (see rejectCachePerIPMax)
 	ttl      time.Duration
 	max      int
 	perIPCap int
+}
+
+// quotaKeyOf buckets an entry's IP for the per-source quota: the full
+// address for IPv4, the /64 prefix for IPv6. A single host routinely
+// holds an entire routed /64, so keying the quota by full IPv6
+// address would hand it unbounded distinct sources — Bitcoin Core
+// aggregates per-source limits by netgroup for the same reason.
+func quotaKeyOf(ip [16]byte) [16]byte {
+	if net.IP(ip[:]).To4() != nil {
+		return ip
+	}
+	var k [16]byte
+	copy(k[:8], ip[:8])
+	return k
 }
 
 func newRejectCache() *rejectCache {
@@ -115,13 +133,14 @@ func (c *rejectCache) Add(id enode.ID, ip net.IP) {
 	now := time.Now()
 	key := makeRejectKey(id, ip)
 	if _, exists := c.entries[key]; !exists {
-		if len(c.entries) >= c.max || c.perIP[key.ip] >= c.perIPCap {
+		qk := quotaKeyOf(key.ip)
+		if len(c.entries) >= c.max || c.perIP[qk] >= c.perIPCap {
 			c.sweepExpiredLocked(now)
-			if len(c.entries) >= c.max || c.perIP[key.ip] >= c.perIPCap {
+			if len(c.entries) >= c.max || c.perIP[qk] >= c.perIPCap {
 				return
 			}
 		}
-		c.perIP[key.ip]++
+		c.perIP[qk]++
 	}
 	c.entries[key] = now.Add(c.ttl)
 }
@@ -151,13 +170,14 @@ func (c *rejectCache) Len() int {
 	return len(c.entries)
 }
 
-// deleteLocked removes an entry and releases its per-IP quota slot.
+// deleteLocked removes an entry and releases its per-source quota slot.
 func (c *rejectCache) deleteLocked(key rejectKey) {
 	delete(c.entries, key)
-	if n := c.perIP[key.ip]; n <= 1 {
-		delete(c.perIP, key.ip)
+	qk := quotaKeyOf(key.ip)
+	if n := c.perIP[qk]; n <= 1 {
+		delete(c.perIP, qk)
 	} else {
-		c.perIP[key.ip] = n - 1
+		c.perIP[qk] = n - 1
 	}
 }
 

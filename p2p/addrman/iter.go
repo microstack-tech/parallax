@@ -202,7 +202,6 @@ type NodeIter struct {
 	closed     chan struct{}
 	closeOnce  sync.Once
 	maxBackoff time.Duration
-	clock      func() time.Time
 }
 
 // NewNodeIter builds a NodeIter. maxBackoff caps the sleep between empty
@@ -216,7 +215,6 @@ func NewNodeIter(m *AddrMan, maxBackoff time.Duration) *NodeIter {
 		m:          m,
 		closed:     make(chan struct{}),
 		maxBackoff: maxBackoff,
-		clock:      time.Now,
 	}
 }
 
