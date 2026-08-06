@@ -81,6 +81,21 @@ type Backend interface {
 	Handle(peer *Peer, packet Packet) error
 }
 
+// handleDiscard reads and discards every message until the connection
+// is torn down. Feeler sessions use this: nothing past capability
+// negotiation may be served to a probe.
+func handleDiscard(rw p2p.MsgReadWriter) error {
+	for {
+		msg, err := rw.ReadMsg()
+		if err != nil {
+			return err
+		}
+		if err := msg.Discard(); err != nil {
+			return err
+		}
+	}
+}
+
 // MakeProtocols constructs the P2P protocol definitions for `snap`.
 func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 	// Filter the discovery iterator for nodes advertising snap support.
@@ -96,6 +111,16 @@ func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 			Version: version,
 			Length:  protocolLengths[version],
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+				// Feeler probes exist only to confirm reachability at
+				// the prl status handshake; serving them snapshot data
+				// would do real work for a session that is torn down
+				// within seconds (Bitcoin Core feelers disconnect
+				// right after version/verack and are served nothing).
+				// Discard without registering the extension — the prl
+				// side skips its snap barrier for feelers to match.
+				if p.Feeler() {
+					return handleDiscard(rw)
+				}
 				return backend.RunPeer(NewPeer(version, p, rw), func(peer *Peer) error {
 					return Handle(backend, peer)
 				})
