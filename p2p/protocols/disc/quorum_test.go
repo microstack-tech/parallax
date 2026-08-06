@@ -91,6 +91,55 @@ func TestQuorumDistinctGroupMonotonic(t *testing.T) {
 	}
 }
 
+// TestQuorumAggregatesAcrossPorts — reports for one address aggregate
+// regardless of the port each reporter observed. Regression test: the
+// tally used to key on (net, addr, port), so reports arriving on
+// dialed sessions — each carrying our ephemeral source port — never
+// aggregated, and an outbound-only (NAT'd) node could not reach
+// quorum. The port is ranked separately by reporter plurality.
+func TestQuorumAggregatesAcrossPorts(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{203, 0, 113, 42}
+
+	// Three dialed-session reports (port zeroed by HandleYourAddr),
+	// three distinct groups: quorum must be reached.
+	q.Report("out-1", NetIPv4, addr, 0, []byte{NetIPv4, 1, 1})
+	q.Report("out-2", NetIPv4, addr, 0, []byte{NetIPv4, 2, 2})
+	q.Report("out-3", NetIPv4, addr, 0, []byte{NetIPv4, 3, 3})
+	net, a, p, ok := q.Winner()
+	if !ok {
+		t.Fatal("outbound-only reports did not aggregate to quorum")
+	}
+	if net != NetIPv4 || string(a) != string(addr) {
+		t.Errorf("wrong winner: (%d, %x)", net, a)
+	}
+	if p != 0 {
+		t.Errorf("port should be 0 with no port observations, got %d", p)
+	}
+
+	// Two inbound observations agree on 32110, one says 40000: the
+	// plurality port wins.
+	q.Report("in-1", NetIPv4, addr, 32110, []byte{NetIPv4, 4, 4})
+	q.Report("in-2", NetIPv4, addr, 32110, []byte{NetIPv4, 5, 5})
+	q.Report("in-3", NetIPv4, addr, 40000, []byte{NetIPv4, 6, 6})
+	if _, _, p, _ := q.Winner(); p != 32110 {
+		t.Errorf("plurality port = %d, want 32110", p)
+	}
+}
+
+// TestQuorumPortTieBreaksLow — equal reporter counts pick the lower
+// port so the winner never flaps with map iteration order.
+func TestQuorumPortTieBreaksLow(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 9}
+	q.Report("a", NetIPv4, addr, 40000, []byte{NetIPv4, 1, 1})
+	q.Report("b", NetIPv4, addr, 32110, []byte{NetIPv4, 2, 2})
+	q.Report("c", NetIPv4, addr, 0, []byte{NetIPv4, 3, 3})
+	if _, _, p, ok := q.Winner(); !ok || p != 32110 {
+		t.Errorf("tie-break port = %d (ok=%v), want 32110", p, ok)
+	}
+}
+
 // TestQuorumOverrideShortCircuits — SetOverride always wins.
 func TestQuorumOverrideShortCircuits(t *testing.T) {
 	q := NewQuorum()

@@ -135,6 +135,56 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 	}
 }
 
+// TestHandleYourAddrPortByDirection — reports arriving on sessions we
+// dialed carry our ephemeral source port and must be stored port-less
+// (they still count toward the address tally); inbound sessions dialed
+// the port we are reachable on, so their observation is kept and wins
+// the port ranking.
+func TestHandleYourAddrPortByDirection(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	makePeer := func(name string, inbound bool) *p2p.Peer {
+		a, d, err := pipes.TCPPipe()
+		if err != nil {
+			t.Fatalf("TCPPipe: %v", err)
+		}
+		t.Cleanup(func() { a.Close(); d.Close() })
+		var id enode.ID
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		if inbound {
+			return p2p.NewInboundPeerForTest(id, name, nil, a)
+		}
+		return p2p.NewPeerForTest(id, name, nil, a)
+	}
+
+	self := []byte{203, 0, 113, 42}
+	// Two dialed sessions report our address with distinct ephemeral
+	// ports. All test-pipe peers share one loopback group, so quorum
+	// isn't the point here — the port ranking is.
+	b.HandleYourAddr(makePeer("out-1", false), NetIPv4, self, 51001)
+	b.HandleYourAddr(makePeer("out-2", false), NetIPv4, self, 51002)
+	stats := b.Q.Stats()
+	if len(stats) != 1 {
+		t.Fatalf("stats rows = %d, want 1 (dialed-session reports must share one address key)", len(stats))
+	}
+	if stats[0].TCPPort != 0 {
+		t.Fatalf("port after dialed-only reports = %d, want 0", stats[0].TCPPort)
+	}
+
+	// One inbound observation supplies the authoritative port.
+	b.HandleYourAddr(makePeer("in-1", true), NetIPv4, self, 32110)
+	stats = b.Q.Stats()
+	if len(stats) != 1 || stats[0].TCPPort != 32110 {
+		t.Fatalf("stats after inbound report = %+v, want single row with port 32110", stats)
+	}
+}
+
 // TestLocalHelloDefaultWithNilProvider — when no helloProvider is
 // configured, LocalHello returns a zero-ish Hello with ProtoVersion
 // at the minimum so callers can still send a valid greeting.

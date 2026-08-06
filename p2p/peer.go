@@ -242,6 +242,15 @@ func NewPeerForTest(id enode.ID, name string, caps []Cap, fd net.Conn) *Peer {
 	return peer
 }
 
+// NewInboundPeerForTest is NewPeerForTest with the inbound flag set,
+// for tests outside this package that depend on session direction
+// (e.g. the disc protocol's quorum port handling).
+func NewInboundPeerForTest(id enode.ID, name string, caps []Cap, fd net.Conn) *Peer {
+	p := NewPeerForTest(id, name, caps, fd)
+	p.rw.set(inboundConn, true)
+	return p
+}
+
 // NewPeerPipe creates a peer for testing purposes.
 // The message pipe given as the last parameter is closed when
 // Disconnect is called on the peer.

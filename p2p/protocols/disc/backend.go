@@ -218,6 +218,14 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 	if len(group) == 0 {
 		return
 	}
+	// On sessions we dialed, the peer observed our ephemeral source
+	// port, not our listen port. Zero it so the report still counts
+	// toward the address tally (the quorum key ignores ports) without
+	// polluting the port ranking; inbound sessions dialed the port we
+	// are actually reachable on, so their observation is kept.
+	if !peer.Inbound() {
+		port = 0
+	}
 	b.Q.Report(peerKeyFor(peer), net, addr, port, group)
 }
 

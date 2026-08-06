@@ -55,31 +55,35 @@ const QuorumRefreshInterval = time.Hour
 // peer's reconnects. Replaced on reconnect either way.
 type PeerKey string
 
-// reportedAddr is a (NetID, Addr bytes, port) triple. Stored as the
+// reportedAddr is a (NetID, Addr bytes) pair. Stored as the
 // service-key byte form so it's usable as a map key.
+//
+// The port is deliberately NOT part of the key. Peers we dialed
+// observe our ephemeral source port, so their YourAddr reports would
+// each land under a distinct (addr, port) key and never aggregate —
+// an outbound-only (NAT'd) node could never reach quorum. Bitcoin
+// Core keys mapLocalHost on the CNetAddr alone for the same reason
+// (src/net.cpp SeenLocal); the port is a per-report property ranked
+// separately by portForLocked.
 type reportedAddr string
 
-// makeReportedAddr packs (net, addr, port) into the reportedAddr form.
-func makeReportedAddr(net uint8, addr []byte, port uint16) reportedAddr {
-	b := make([]byte, 0, 1+len(addr)+2)
+// makeReportedAddr packs (net, addr) into the reportedAddr form.
+func makeReportedAddr(net uint8, addr []byte) reportedAddr {
+	b := make([]byte, 0, 1+len(addr))
 	b = append(b, net)
 	b = append(b, addr...)
-	b = append(b, byte(port>>8), byte(port))
 	return reportedAddr(b)
 }
 
 // unpackReportedAddr returns the components of a reportedAddr key.
 // Length validation is done before packing so this cannot fail on a
-// key that round-tripped through addRule/remove.
-func unpackReportedAddr(r reportedAddr) (net uint8, addr []byte, port uint16) {
+// key that round-tripped through Report.
+func unpackReportedAddr(r reportedAddr) (net uint8, addr []byte) {
 	b := []byte(r)
-	if len(b) < 3 {
-		return 0, nil, 0
+	if len(b) < 2 {
+		return 0, nil
 	}
-	net = b[0]
-	addr = b[1 : len(b)-2]
-	port = uint16(b[len(b)-2])<<8 | uint16(b[len(b)-1])
-	return
+	return b[0], b[1:]
 }
 
 // Quorum tracks peer reports about our external address. Threadsafe.
@@ -108,15 +112,25 @@ type Quorum struct {
 	// out anyway.
 	connected map[PeerKey]struct{}
 
-	// overrideAddr is set when the operator configured --nat extip:<IP>
+	// override* are set when the operator configured --nat extip:<IP>
 	// or UPnP/PMP resolved one. Short-circuits quorum entirely.
-	overrideAddr    reportedAddr
+	overrideNet     uint8
+	overrideAddr    []byte
+	overridePort    uint16
 	overrideWinning bool
 }
 
 type reportEntry struct {
 	group      []byte
 	receivedAt time.Time
+
+	// port is the TCP port the reporter observed alongside the
+	// address, or 0 when the observation carries no usable port
+	// (reports arriving on sessions we dialed — the reporter saw our
+	// ephemeral source port). Ranked across reporters by
+	// portForLocked; a zero winner makes SelfEntry substitute the
+	// listen port.
+	port uint16
 }
 
 // NewQuorum returns an empty tally.
@@ -131,11 +145,13 @@ func (q *Quorum) SetOverride(net uint8, addr []byte, port uint16) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if net == 0 || len(addr) == 0 {
-		q.overrideAddr = ""
+		q.overrideNet, q.overrideAddr, q.overridePort = 0, nil, 0
 		q.overrideWinning = false
 		return
 	}
-	q.overrideAddr = makeReportedAddr(net, addr, port)
+	q.overrideNet = net
+	q.overrideAddr = append([]byte(nil), addr...)
+	q.overridePort = port
 	q.overrideWinning = true
 }
 
@@ -149,13 +165,13 @@ func (q *Quorum) Report(peerKey PeerKey, net uint8, addr []byte, port uint16, gr
 
 	q.evictStaleLocked(time.Now())
 
-	key := makeReportedAddr(net, addr, port)
+	key := makeReportedAddr(net, addr)
 	byPeer, exists := q.reports[key]
 	if !exists {
 		byPeer = make(map[PeerKey]reportEntry)
 		q.reports[key] = byPeer
 	}
-	byPeer[peerKey] = reportEntry{group: append([]byte(nil), group...), receivedAt: time.Now()}
+	byPeer[peerKey] = reportEntry{group: append([]byte(nil), group...), receivedAt: time.Now(), port: port}
 
 	return q.winnerLocked(key)
 }
@@ -182,8 +198,7 @@ func (q *Quorum) Winner() (net uint8, addr []byte, port uint16, ok bool) {
 	q.evictStaleLocked(time.Now())
 
 	if q.overrideWinning {
-		n, a, p := unpackReportedAddr(q.overrideAddr)
-		return n, append([]byte(nil), a...), p, true
+		return q.overrideNet, append([]byte(nil), q.overrideAddr...), q.overridePort, true
 	}
 
 	// Score every address at quorum and pick deterministically. A
@@ -228,15 +243,14 @@ func (q *Quorum) Winner() (net uint8, addr []byte, port uint16, ok bool) {
 	if !found {
 		return 0, nil, 0, false
 	}
-	n, a, p := unpackReportedAddr(bestKey)
-	return n, append([]byte(nil), a...), p, true
+	n, a := unpackReportedAddr(bestKey)
+	return n, append([]byte(nil), a...), q.portForLocked(bestKey), true
 }
 
 // winnerLocked checks whether the specified address has quorum.
 func (q *Quorum) winnerLocked(key reportedAddr) (uint8, []byte, uint16, bool) {
 	if q.overrideWinning {
-		n, a, p := unpackReportedAddr(q.overrideAddr)
-		return n, append([]byte(nil), a...), p, true
+		return q.overrideNet, append([]byte(nil), q.overrideAddr...), q.overridePort, true
 	}
 	byPeer, ok := q.reports[key]
 	if !ok {
@@ -245,8 +259,33 @@ func (q *Quorum) winnerLocked(key reportedAddr) (uint8, []byte, uint16, bool) {
 	if countDistinctGroups(byPeer, QuorumThreshold) < QuorumThreshold {
 		return 0, nil, 0, false
 	}
-	n, a, p := unpackReportedAddr(key)
-	return n, append([]byte(nil), a...), p, true
+	n, a := unpackReportedAddr(key)
+	return n, append([]byte(nil), a...), q.portForLocked(key), true
+}
+
+// portForLocked ranks the ports reported for an address and returns
+// the plurality winner among non-zero observations: most reporters
+// first, ties broken by the lower port for determinism. Returns 0
+// when no reporter carried a usable port (all reports arrived on
+// sessions we dialed) — SelfEntry then substitutes the listen port,
+// mirroring Bitcoin Core's GetListenPort() attachment.
+func (q *Quorum) portForLocked(key reportedAddr) uint16 {
+	counts := make(map[uint16]int)
+	for _, e := range q.reports[key] {
+		if e.port != 0 {
+			counts[e.port]++
+		}
+	}
+	var (
+		best  uint16
+		bestN int
+	)
+	for p, n := range counts {
+		if n > bestN || (n == bestN && p < best) {
+			best, bestN = p, n
+		}
+	}
+	return best
 }
 
 // countDistinctGroups counts the distinct non-empty network groups in
@@ -368,7 +407,7 @@ func (q *Quorum) Stats() []QuorumStat {
 
 	out := make([]QuorumStat, 0, len(q.reports))
 	for key, byPeer := range q.reports {
-		n, a, p := unpackReportedAddr(key)
+		n, a := unpackReportedAddr(key)
 		seen := make(map[string]struct{}, len(byPeer))
 		for _, entry := range byPeer {
 			seen[string(entry.group)] = struct{}{}
@@ -376,7 +415,7 @@ func (q *Quorum) Stats() []QuorumStat {
 		out = append(out, QuorumStat{
 			NetworkID:     n,
 			Addr:          append([]byte(nil), a...),
-			TCPPort:       p,
+			TCPPort:       q.portForLocked(key),
 			Reporters:     len(byPeer),
 			DistinctGroup: len(seen),
 		})
