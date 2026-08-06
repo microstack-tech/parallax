@@ -331,7 +331,7 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 			// their intent. Core adds the offset in whole seconds
 			// and is immune (src/banman.cpp BanMan::Ban).
 			secs := *bantime
-			if maxSecs := int64(math.MaxInt64 / int64(time.Second)); secs > maxSecs {
+			if maxSecs := math.MaxInt64 / int64(time.Second); secs > maxSecs {
 				secs = maxSecs
 			}
 			duration = time.Duration(secs) * time.Second
