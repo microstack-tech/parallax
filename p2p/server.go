@@ -1494,11 +1494,14 @@ func outboundGroupOccupiedIn(peers map[enode.ID]*Peer, group string) bool {
 	return false
 }
 
-// dialedOutboundCount returns the number of live dynamically-dialed
-// outbound peers, block-relay-only included, feeler probes excluded.
-// This is the count the v2 dial loop holds against maxDialedConns —
-// static and trusted connections don't consume the dynamic budget,
-// matching the dial scheduler's maxDialPeers accounting.
+// dialedOutboundCount returns the number of live dialed outbound
+// peers — dynamic and static alike, block-relay-only included, feeler
+// probes excluded. This is the count the v2 dial loop holds against
+// maxDialedConns. Statics count because the v1 scheduler's
+// maxDialPeers accounting counts them too (dial.go peerAdded:
+// dialPeers++ for dyn and static): two dialers filling one outbound
+// budget must agree on what consumes it, or the effective total
+// depends on which path fills first.
 func (srv *Server) dialedOutboundCount() int {
 	n := 0
 	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
@@ -1512,7 +1515,21 @@ func (srv *Server) dialedOutboundCount() int {
 func dialedOutboundCountIn(peers map[enode.ID]*Peer) int {
 	n := 0
 	for _, p := range peers {
-		if p.rw.is(dynDialedConn) && !p.rw.is(feelerConn) {
+		if (p.rw.is(dynDialedConn) || p.rw.is(staticDialedConn)) && !p.rw.is(feelerConn) {
+			n++
+		}
+	}
+	return n
+}
+
+// nonFeelerLen counts peers excluding live feeler probes. Core
+// excludes feelers from connection counts in both directions, so a
+// probe's short lifetime must not cause hard-rejects of real peers
+// arriving at saturation.
+func nonFeelerLen(peers map[enode.ID]*Peer) int {
+	n := 0
+	for _, p := range peers {
+		if !p.rw.is(feelerConn) {
 			n++
 		}
 	}
@@ -2479,7 +2496,13 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 	// once the peer's source is classifiable. Trusted peers bypass.
 	// Skipped when the addrbook holds no non-tcp_gossip alternatives —
 	// no point reserving slots that nothing can fill.
-	if floor := srv.minLegacyPeers(); floor > 0 && !c.is(trustedConn) {
+	// Static dials bypass like trusted: the operator chose the
+	// endpoint, and the floor exists to guard against a v2.0 gossip
+	// bug, not against explicit peering. Feelers bypass too — they
+	// probe addrman entries (mostly tcp_gossip-tagged) and never hold
+	// a slot, so rejecting them at the floor would silently stop
+	// tried-table maintenance.
+	if floor := srv.minLegacyPeers(); floor > 0 && !c.is(trustedConn) && !c.is(staticDialedConn) && !c.is(feelerConn) {
 		cap := srv.MaxPeers - floor
 		if cap < 0 {
 			cap = 0
@@ -2514,7 +2537,7 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 				}
 				c.evicted = true
 			}
-		} else if len(peers) >= srv.MaxPeers && !c.is(feelerConn) {
+		} else if nonFeelerLen(peers) >= srv.MaxPeers && !c.is(feelerConn) {
 			// Feelers are exempt from the MaxPeers ceiling: Core
 			// makes feeler connections regardless of its limits
 			// (they're never counted toward outbound totals). A

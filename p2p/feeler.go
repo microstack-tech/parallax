@@ -79,10 +79,26 @@ func (srv *Server) runFeeler() {
 		case <-srv.quit:
 			return
 		case <-timer.C:
-			srv.runOneFeeler()
+			// Core only makes feeler connections once the regular
+			// outbound targets are met (ThreadOpenConnections sets
+			// fFeeler only in the slots-full branch) — below target
+			// the effort goes to real connections, which test
+			// addresses just as well. The tick still fires so the
+			// cadence resumes as soon as the slots fill.
+			if srv.outboundTargetsMet() {
+				srv.runOneFeeler()
+			}
 			timer.Reset(feelerInterval + feelerJitter())
 		}
 	}
+}
+
+// outboundTargetsMet reports whether the full-relay and block-relay
+// outbound slots are both at target, i.e. the node is in the state
+// where Core would divert its connection effort to feeler probes.
+func (srv *Server) outboundTargetsMet() bool {
+	return srv.dialedOutboundCount() >= srv.maxDialedConns() &&
+		srv.blockRelayOutboundCount() >= srv.maxBlockRelayDial()
 }
 
 // runOneFeeler picks one address and dials it. Caller is the

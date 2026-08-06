@@ -553,6 +553,14 @@ loop:
 		}
 	}
 
+	// Mark teardown-in-flight for the eviction candidate filter: a
+	// peer that died on its own (read error, remote hangup) but whose
+	// delpeer hasn't been processed yet must not be picked as an
+	// eviction victim — Disconnect would return instantly on the
+	// closed session and the admission would be granted without any
+	// capacity actually freed. Core's fDisconnect covers every
+	// teardown path the same way.
+	p.discRequested.Store(true)
 	close(p.closed)
 	p.rw.close(reason)
 	p.wg.Wait()

@@ -57,9 +57,10 @@ func TestDialV2RejectsNetRestrict(t *testing.T) {
 }
 
 // TestDialedOutboundCountIn — the v2 dialer's budget counts live
-// dynamically-dialed peers (block-relay included) and excludes
-// feeler probes, inbound peers, and static dials, mirroring the dial
-// scheduler's maxDialPeers accounting.
+// dialed peers (block-relay and static included) and excludes feeler
+// probes and inbound peers, mirroring the dial scheduler's
+// maxDialPeers accounting (which counts statics too — two dialers
+// filling one budget must agree on what consumes it).
 func TestDialedOutboundCountIn(t *testing.T) {
 	dyn := newOutboundPeerAt(t, net.IPv4(1, 0, 0, 1), 32110)
 	br := newOutboundPeerAt(t, net.IPv4(2, 0, 0, 1), 32110)
@@ -73,8 +74,8 @@ func TestDialedOutboundCountIn(t *testing.T) {
 	static.rw.set(dynDialedConn, false)
 	static.rw.set(staticDialedConn, true)
 
-	if got := dialedOutboundCountIn(peerSet(dyn, br, feeler, inbound, static)); got != 2 {
-		t.Fatalf("dialedOutboundCountIn = %d, want 2 (dyn + block-relay)", got)
+	if got := dialedOutboundCountIn(peerSet(dyn, br, feeler, inbound, static)); got != 3 {
+		t.Fatalf("dialedOutboundCountIn = %d, want 3 (dyn + block-relay + static)", got)
 	}
 }
 
@@ -99,6 +100,24 @@ func TestPostHandshakeFeelerExemptFromMaxPeers(t *testing.T) {
 	probe := &conn{flags: dynDialedConn | v2DialedConn | feelerConn, node: node}
 	if err := srv.postHandshakeChecks(peers, 0, 0, probe); err != nil {
 		t.Fatalf("feeler at MaxPeers = %v, want nil (exempt)", err)
+	}
+}
+
+// TestFeelersDontCountTowardMaxPeers — a live feeler probe must not
+// inflate the peer count against everyone else's MaxPeers check: Core
+// excludes feelers from connection counts in both directions, so a
+// probe's short lifetime cannot cause a hard-reject of a real peer.
+func TestFeelersDontCountTowardMaxPeers(t *testing.T) {
+	srv := newSelfEndpointServer(t, net.ParseIP("1.2.3.4"), 30303) // MaxPeers: 1
+
+	feeler := newOutboundPeerAt(t, net.IPv4(9, 0, 0, 1), 32110)
+	feeler.rw.set(feelerConn, true)
+	peers := peerSet(feeler)
+
+	node := enode.SignNull(new(enr.Record), randomID())
+	dial := &conn{flags: dynDialedConn | v2DialedConn, node: node}
+	if err := srv.postHandshakeChecks(peers, 0, 0, dial); err != nil {
+		t.Fatalf("outbound dial with only a feeler connected = %v, want nil", err)
 	}
 }
 
