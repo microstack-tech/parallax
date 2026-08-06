@@ -6,11 +6,14 @@ sidebarTitle: 'PIP-0006 (TCP discovery)'
 PIP-0006 replaces Parallax's UDP-based `discv4` peer discovery with a
 Bitcoin-style TCP gossip model. Each node runs:
 
-- a **Bitcoin Core–style address manager** (`addrman`) that stores up
+- a **Bitcoin Core-style address manager** (`addrman`) that stores up
   to ~65k peer records in stochastic "new" and "tried" bucket tables,
   keyed by a per-node secret `nKey`;
-- the **`parallax-disc/1`** RLPx subprotocol, carrying `GetPeers` /
-  `Peers` / `YourAddr` gossip messages on top of existing TCP sessions;
+- the **`parallax-disc/1`** RLPx subprotocol, carrying a mandatory
+  session-opening `Hello` followed by `GetPeers` / `Peers` /
+  `YourAddr` gossip messages on top of existing TCP sessions —
+  `Hello` must be each side's first disc message, and anything else
+  first ends the session;
 - a **BIP324-style v2 handshake** that lets two nodes authenticate a
   TCP connection knowing only each other's `ip:port` — no persistent
   secp256k1 identity, no enode URL, no ENR.
@@ -74,11 +77,12 @@ downgrade-then-upgrade never loses the original file.
 
 ## Operator RPC
 
-Five admin RPCs manage the addrbook itself:
+The admin namespace exposes the addrbook and dial controls:
 
 - `admin_addnode <ip:port | enode://…>` — pin a peer as
-  `source=manual`; persists across restarts and is dialed before
-  any other source.
+  `source=manual`; persists across restarts and is heavily
+  weighted in dial selection (a 4x chance multiplier, not a strict
+  front-of-queue guarantee).
 - `admin_removenode <ip:port | enode://…>` — inverse of addnode.
 - `admin_addrbookStatus` — read-only addrbook snapshot
   (total/new/tried, per-source counts).
