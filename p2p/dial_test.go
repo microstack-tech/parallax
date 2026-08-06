@@ -634,6 +634,78 @@ func TestDialSchedGroupFreedAfterResolveMove(t *testing.T) {
 	})
 }
 
+// TestDialSchedV2HandoffAccounting — v2-ENR handoffs run as tracked
+// dial tasks: an in-flight v2 dial occupies its network group (so a
+// same-/16 candidate is not dialed concurrently) and frees it on
+// completion. Regression test: the handoff used to be a bare
+// goroutine with no d.dialing / dialingGroups registration, so
+// same-group v2 candidates dialed in parallel and shutdown never
+// waited for the goroutine.
+func TestDialSchedV2HandoffAccounting(t *testing.T) {
+	t.Parallel()
+
+	var (
+		started = make(chan string, 8)
+		release = make(chan error)
+	)
+	config := dialConfig{
+		self:           uintID(0xff),
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		log:            testlog.Logger(t, logging.LvlTrace),
+		clock:          new(mclock.Simulated),
+		rand:           rand.New(rand.NewSource(0x2222)),
+		dialer:         newDialTestDialer(),
+		v2Predicate:    func(*enode.Node) bool { return true },
+		v2Dial: func(addr *net.TCPAddr) error {
+			started <- addr.String()
+			return <-release
+		},
+	}
+	it := newDialTestIterator()
+	d := newDialScheduler(config, it, func(net.Conn, connFlag, *enode.Node) error { return nil })
+	defer d.stop()
+	// Unblock any still-parked v2Dial before stop() drains the task
+	// (a closed channel yields a nil error). Registered after stop's
+	// defer so it runs first.
+	defer close(release)
+
+	nodeA := newNode(uintID(0x80), "77.88.1.1:32110")
+	nodeB := newNode(uintID(0x81), "77.88.2.2:32110") // same /16 as A
+	it.addNodes([]*enode.Node{nodeA, nodeB})
+
+	if got := <-started; got != "77.88.1.1:32110" {
+		t.Fatalf("first v2 dial = %s, want 77.88.1.1:32110", got)
+	}
+	// B shares A's /16: no second dial while A is in flight.
+	select {
+	case got := <-started:
+		t.Fatalf("second same-group v2 dial launched concurrently: %s", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// A's dial fails; the group frees and the rediscovered B dials.
+	// Wait for the loop to process the task completion before
+	// rediscovering B, or B races the doneCh handling and is
+	// discarded against the still-charged group.
+	release <- errors.New("connection refused")
+	for i := 0; d.probeCheckDial(nodeB) != nil; i++ {
+		if i > 500 {
+			t.Fatal("group never freed after v2 dial completion")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	it.addNodes([]*enode.Node{nodeB})
+	select {
+	case got := <-started:
+		if got != "77.88.2.2:32110" {
+			t.Fatalf("post-release v2 dial = %s, want 77.88.2.2:32110", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("same-group v2 dial not launched after the group freed")
+	}
+}
+
 // TestDialSchedDiscouragedGate — discouragement blocks dynamic dials
 // but not static ones. A ban blocks both; discouragement is stamped
 // automatically on misbehavior and has no clearing RPC, so honoring

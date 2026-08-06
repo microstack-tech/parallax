@@ -412,18 +412,20 @@ loop:
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
 			} else if d.v2Predicate != nil && d.v2Dial != nil && d.v2Predicate(node) {
 				// Peer advertises v2-transport in its ENR — bypass
-				// v1 RLPx entirely and hand off to the v2 dial
-				// path. History is still recorded so v1 checkDial
-				// won't reattempt this node for a while.
-				hkey := string(node.ID().Bytes())
-				d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
-				tcp := &net.TCPAddr{IP: node.IP(), Port: node.TCP()}
-				v2Dial := d.v2Dial
-				go func() {
-					if err := v2Dial(tcp); err != nil {
-						d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
-					}
-				}()
+				// v1 RLPx entirely and hand off to the v2 dial path.
+				// The handoff runs as a regular dial task so it
+				// consumes a dial slot, charges dialingGroups, and is
+				// drained on shutdown like any v1 dial. Without that,
+				// a burst of v2-ENR candidates would fan out unbounded
+				// goroutines, two same-group candidates could both
+				// pass checkDial, and the dial goroutine could touch
+				// the addrbook after Stop's addrbook.Save. The task
+				// uses plain dynDialedConn: block-relay bucket choice
+				// for v2 dials is made inside dialV2WithFlags, not by
+				// the v1 scheduler's pick.
+				task := newDialTask(node, dynDialedConn)
+				task.v2 = true
+				d.startDial(task)
 			} else {
 				d.startDial(newDialTask(node, d.pickDynDialFlags()))
 			}
@@ -891,6 +893,12 @@ type dialTask struct {
 	// different group mid-flight.
 	dialGroup string
 
+	// v2 routes the task through the scheduler's v2Dial callback
+	// (BIP324 transport) instead of the v1 RLPx dial. v2 tasks never
+	// resolve or redial: the v2 path has its own cooldown and
+	// failure accounting.
+	v2 bool
+
 	// These fields are private to the task and should not be
 	// accessed by dialScheduler while the task is running.
 	dest         *enode.Node
@@ -907,6 +915,13 @@ type dialError struct {
 }
 
 func (t *dialTask) run(d *dialScheduler) {
+	if t.v2 {
+		tcp := &net.TCPAddr{IP: t.dest.IP(), Port: t.dest.TCP()}
+		if err := d.v2Dial(tcp); err != nil {
+			d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
+		}
+		return
+	}
 	if t.needResolve() && !t.resolve(d) {
 		return
 	}
