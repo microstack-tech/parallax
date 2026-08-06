@@ -2509,6 +2509,37 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 			return DiscTooManyPeers
 		}
 	}
+	// Outbound network-group diversity, same backstop rationale: the
+	// v1 scheduler, runV2Dialer, and the anchor replay each check the
+	// one-outbound-per-group rule before dialing, but none sees the
+	// others' in-flight dials, so a cross-path race can land two
+	// outbound peers in one /16 — and the excess would persist until
+	// a natural disconnect, quietly weakening the anti-eclipse
+	// property the rule exists for. Static and trusted dials are
+	// exempt from the check (the operator chose the endpoint) but
+	// still occupy groups against dynamic dials, matching checkDial.
+	// Feelers never hold a slot; loopback/link-local key to "".
+	if c.is(dynDialedConn) && !c.is(feelerConn) && !c.is(staticDialedConn) && !c.is(trustedConn) {
+		if g := outboundGroupKey(c); g != "" && outboundGroupOccupiedIn(peers, g) {
+			return DiscTooManyPeers
+		}
+	}
+	// Dynamic outbound budget backstop: the v1 scheduler and
+	// runV2Dialer each count live dialed peers before dialing but not
+	// each other's in-flight handshakes (and the scheduler
+	// deliberately over-dials up to 2x its remaining slots to absorb
+	// failures), so racing successes can overshoot maxDialedConns and
+	// squeeze inbound capacity until a natural disconnect. Bitcoin
+	// Core cannot overshoot — ThreadOpenConnections is serial.
+	// Static and trusted dials don't consume the dynamic budget.
+	// Skipped under NoDial: the automatic dialers this polices don't
+	// run, and the only dyn-flagged dials left are operator-initiated
+	// (admin.dialV2), which must not be budget-capped.
+	if !srv.NoDial && c.is(dynDialedConn) && !c.is(feelerConn) && !c.is(trustedConn) && !c.is(staticDialedConn) {
+		if dialedOutboundCountIn(peers) >= srv.maxDialedConns() {
+			return DiscTooManyPeers
+		}
+	}
 	// Phase 2b dedup: v2 sessions derive node.ID from ephemeral
 	// X25519 keys, so reconnecting to the same remote yields a
 	// fresh-looking ID that the map above can't flag. Fall back to

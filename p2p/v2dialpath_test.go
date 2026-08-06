@@ -117,6 +117,73 @@ func TestV2DialGroupLimitExemptions(t *testing.T) {
 	}
 }
 
+// TestPostHandshakeGroupBackstop — the outbound network-group rule is
+// re-checked at the run-loop checkpoint, where all dial paths
+// serialize: two racing dials into one /16 can each pass their own
+// pre-dial check, and without the backstop the excess outbound peer
+// would persist until a natural disconnect. Static dials are exempt
+// from the check; feelers never hold a slot.
+func TestPostHandshakeGroupBackstop(t *testing.T) {
+	srv := newSelfEndpointServer(t, net.ParseIP("1.2.3.4"), 30303)
+	srv.MaxPeers = 10
+
+	existing := newOutboundPeerAt(t, net.IPv4(44, 55, 1, 1), 32110)
+	peers := peerSet(existing)
+
+	connAt := func(flags connFlag, ip net.IP) *conn {
+		pipe, _ := net.Pipe()
+		fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: ip, Port: 32110}}
+		t.Cleanup(func() { _ = fake.Close() })
+		return &conn{flags: flags, node: enode.SignNull(new(enr.Record), randomID()), fd: fake}
+	}
+
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(dynDialedConn, net.IPv4(44, 55, 9, 9))); !errors.Is(err, DiscTooManyPeers) {
+		t.Fatalf("same-group dyn dial = %v, want DiscTooManyPeers", err)
+	}
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(dynDialedConn, net.IPv4(77, 88, 9, 9))); err != nil {
+		t.Fatalf("different-group dyn dial = %v, want nil", err)
+	}
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(staticDialedConn, net.IPv4(44, 55, 9, 9))); err != nil {
+		t.Fatalf("same-group static dial = %v, want nil (exempt)", err)
+	}
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(dynDialedConn|feelerConn, net.IPv4(44, 55, 9, 9))); err != nil {
+		t.Fatalf("same-group feeler = %v, want nil (exempt)", err)
+	}
+}
+
+// TestPostHandshakeDialBudgetBackstop — the dynamic outbound budget is
+// re-checked at the run-loop checkpoint: the scheduler deliberately
+// over-dials to absorb failures and runV2Dialer races it, so racing
+// successes can overshoot maxDialedConns. Static dials don't consume
+// the budget, and NoDial disables the check (only operator-initiated
+// dials exist then).
+func TestPostHandshakeDialBudgetBackstop(t *testing.T) {
+	srv := newSelfEndpointServer(t, net.ParseIP("1.2.3.4"), 30303)
+	srv.MaxPeers = 6 // maxDialedConns = 2
+
+	d1 := newOutboundPeerAt(t, net.IPv4(1, 0, 0, 1), 32110)
+	d2 := newOutboundPeerAt(t, net.IPv4(2, 0, 0, 1), 32110)
+	peers := peerSet(d1, d2)
+
+	connAt := func(flags connFlag, ip net.IP) *conn {
+		pipe, _ := net.Pipe()
+		fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: ip, Port: 32110}}
+		t.Cleanup(func() { _ = fake.Close() })
+		return &conn{flags: flags, node: enode.SignNull(new(enr.Record), randomID()), fd: fake}
+	}
+
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(dynDialedConn, net.IPv4(3, 0, 0, 1))); !errors.Is(err, DiscTooManyPeers) {
+		t.Fatalf("dyn dial at budget = %v, want DiscTooManyPeers", err)
+	}
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(staticDialedConn, net.IPv4(3, 0, 0, 1))); err != nil {
+		t.Fatalf("static dial at budget = %v, want nil (exempt)", err)
+	}
+	srv.NoDial = true
+	if err := srv.postHandshakeChecks(peers, 0, 0, connAt(dynDialedConn, net.IPv4(3, 0, 0, 1))); err != nil {
+		t.Fatalf("dyn dial with NoDial = %v, want nil (backstop disabled)", err)
+	}
+}
+
 // TestV2DialWantsBlockRelay — the addrman-driven v2 dialer fills
 // full-relay slots before the block-relay-only bucket, mirroring
 // pickDynDialFlags and Bitcoin Core's ThreadOpenConnections order.
