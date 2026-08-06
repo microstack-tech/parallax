@@ -135,6 +135,53 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 	}
 }
 
+// TestHandlePeersUnreachableNotStored — entries on networks this node
+// cannot dial (Tor v3, I2P, CJDNS) must not enter addrman: Core's ADDR
+// handling stores only reachable addresses ("Do not store addresses
+// outside our network"). Regression test: they used to be stored and
+// relayed at the full reachable fanout, letting an attacker stuff the
+// addrbook and GetPeers response slots with undialable entries.
+func TestHandlePeersUnreachableNotStored(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	fresh := uint64(time.Now().Unix())
+	torAddr := make([]byte, 32)
+	torAddr[0] = 0xAB
+	entries := []PeerEntry{
+		{NetworkID: NetTorV3, Addr: torAddr, TCPPort: 32110, KeyType: KeyTypeNone, LastSeen: fresh},
+		{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 32110, KeyType: KeyTypeNone, LastSeen: fresh},
+	}
+	b.HandlePeers(peer, entries)
+
+	if got := m.Size(nil, nil); got != 1 {
+		t.Fatalf("addrman size = %d, want 1 (only the IPv4 entry is reachable)", got)
+	}
+	torNetAddr, _ := addrman.NewNetAddr(addrman.NetTorV3, torAddr, 32110)
+	if info := m.Lookup(torNetAddr); info != nil {
+		t.Fatalf("unreachable TorV3 entry stored in addrman: %+v", info)
+	}
+	v4NetAddr, _ := addrman.NewNetAddr(addrman.NetIPv4, []byte{8, 8, 8, 8}, 32110)
+	if info := m.Lookup(v4NetAddr); info == nil {
+		t.Fatal("reachable IPv4 entry missing from addrman")
+	}
+}
+
 // TestHandleYourAddrPortByDirection — reports arriving on sessions we
 // dialed carry our ephemeral source port and must be stored port-less
 // (they still count toward the address tally); inbound sessions dialed

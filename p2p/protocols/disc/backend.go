@@ -336,8 +336,19 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 			claimed = now.Add(-5 * 24 * time.Hour)
 		}
 		e.LastSeen = uint64(claimed.Unix())
-		// Plus the 2-hour gossip penalty applied by the Add path.
-		b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		// This node dials IP networks only — there is no Tor/I2P/CJDNS
+		// transport. Core's ADDR handling ("Do not store addresses
+		// outside our network", net_processing.cpp) keeps such entries
+		// out of addrman — otherwise an attacker stuffs the addrbook
+		// and GetPeers response slots with undialable entries — while
+		// still relaying them (below, at the reduced unreachable
+		// fanout) so they propagate toward nodes that serve those
+		// networks.
+		reachable := e.NetworkID == NetIPv4 || e.NetworkID == NetIPv6
+		if reachable {
+			// Plus the 2-hour gossip penalty applied by the Add path.
+			b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		}
 		// Bitcoin's per-entry relay gates: only a fresh claim (under
 		// 10 minutes old) on a routable address is gossiped onward,
 		// and only from a message that passed the per-message gates
@@ -349,7 +360,7 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		// expiring 10 minutes after the original claim bounds any
 		// relay loop.
 		if mayRelay && naddr.Valid() && claimed.After(now.Add(-10*time.Minute)) {
-			b.RelayAddress(peer, e, true)
+			b.RelayAddress(peer, e, reachable)
 		}
 	}
 	if rateLimited > 0 {
