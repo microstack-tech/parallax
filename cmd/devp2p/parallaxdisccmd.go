@@ -23,8 +23,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,10 +302,33 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 		return nil, nil, fmt.Errorf("write GetPeers: %w", err)
 	}
 
+	// The daemon jitters its GetPeers response (Poisson mean 2s, cap
+	// 6s) and may push unsolicited single-entry relay messages in the
+	// meantime — taking the first Peers message as "the" answer would
+	// truncate the sample to one relayed address. Accumulate: any
+	// multi-entry message is the solicited response (relay pushes are
+	// always single-entry) and completes the probe; otherwise collect
+	// until the jitter window closes and return the union.
+	var (
+		collected []disc.PeerEntry
+		window    = time.Now().Add(8 * time.Second) // jitter cap 6s + margin
+	)
 	for {
+		if window.Before(deadline) {
+			_ = fd.SetReadDeadline(window)
+		}
 		code, data, err := wc.ReadMsg()
 		if err != nil {
+			if len(collected) > 0 && errors.Is(err, os.ErrDeadlineExceeded) {
+				return collected, theirHello.Caps, nil
+			}
 			return nil, nil, fmt.Errorf("read reply: %w", err)
+		}
+		// The daemon rejects messages over disc.MaxMessageSize before
+		// decoding; mirror it so a hostile node can't force outsized
+		// transient allocations (the frame caps alone allow ~48x more).
+		if len(data) > disc.MaxMessageSize {
+			return nil, nil, fmt.Errorf("oversized message: %d > %d", len(data), disc.MaxMessageSize)
 		}
 		switch {
 		case code == uint64(discOffset)+disc.PeersMsg:
@@ -317,7 +342,10 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 			if err := pkt.Validate(); err != nil {
 				return nil, nil, fmt.Errorf("invalid Peers: %w", err)
 			}
-			return pkt.Entries, theirHello.Caps, nil
+			if len(pkt.Entries) > 1 {
+				return append(collected, pkt.Entries...), theirHello.Caps, nil
+			}
+			collected = append(collected, pkt.Entries...)
 		case code == disconnectCode:
 			return nil, nil, fmt.Errorf("peer disconnected during crawl")
 		default:
@@ -378,8 +406,13 @@ func dialAndAuth(fd net.Conn, node *CrawlNode) (wireConn, []byte, error) {
 // Hello. computeDiscOffset negotiates against this same set — the two
 // must never diverge, or the crawler and the server compute different
 // message-code layouts.
+//
+// Deliberately parallax-disc only: the crawler never speaks the prl
+// block/tx protocol, and advertising parallax/66 without sending its
+// Status message armed the daemon's 5s prl handshake timeout — which
+// raced the disc response's 2-6s Poisson jitter and spuriously tore
+// down a measurable fraction of probes.
 var crawlerCaps = []p2p.Cap{
-	{Name: "parallax", Version: 66},
 	{Name: "parallax-disc", Version: 1},
 }
 
@@ -387,7 +420,6 @@ var crawlerCaps = []p2p.Cap{
 // its message-code Length. parallax-disc's Length comes from the
 // protocol package so a future bump can't leave this table stale.
 var crawlerCapLengths = map[p2p.Cap]uint64{
-	{Name: "parallax", Version: 66}:     17,
 	{Name: "parallax-disc", Version: 1}: disc.ProtocolLength,
 }
 
@@ -549,7 +581,9 @@ func randomDiscHelloNonce() uint64 {
 	}
 	n := binary.BigEndian.Uint64(b[:])
 	if n == 0 {
-		// 0 is a sentinel some implementations reserve. Bump it.
+		// The daemon compares nonces for equality only (self-connect
+		// check); avoid 0 anyway so the field never looks unset in
+		// captures or logs.
 		n = 1
 	}
 	return n
