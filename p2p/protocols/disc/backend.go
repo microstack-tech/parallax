@@ -484,11 +484,7 @@ func (b *AddrmanBackend) ingestBucketFor(peer *p2p.Peer) *tokenBucket {
 	if ok {
 		return bk
 	}
-	rate, burst := inboundRate, inboundBurst
-	if !peer.Inbound() {
-		rate, burst = outboundRate, outboundBurst
-	}
-	bk = newTokenBucket(rate, burst)
+	bk = newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
 	b.peerBuckets[key] = bk
 	return bk
 }

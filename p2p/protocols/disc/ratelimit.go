@@ -24,17 +24,24 @@ import (
 )
 
 // Token bucket constants — mirror Bitcoin Core's m_addr_token_bucket
-// semantics in src/net_processing.cpp.
+// semantics in src/net_processing.cpp exactly. One model for every
+// peer, inbound and outbound alike:
 //
-// Bitcoin's numbers: inbound 0.1 addr/s with burst 1, outbound 1.0
-// addr/s with burst 10. Addresses over the rate are dropped silently,
-// not disconnected — rate-exceed-as-disconnect is a DoS vector against
+//	MAX_ADDR_RATE_PER_SECOND         = 0.1 tokens/s
+//	MAX_ADDR_PROCESSING_TOKEN_BUCKET = 1000 (soft cap, = MAX_ADDR_TO_SEND)
+//	initial fill                     = 1.0
+//
+// The 1000-token soft cap is what lets an idle session absorb an
+// honest gossip burst: at 0.1/s the bucket accumulates ~360 tokens an
+// hour, so a peer that has been quiet all day can deliver a large
+// batch at once, while a peer streaming addresses is held to the
+// steady 0.1/s. Addresses over the rate are dropped silently, not
+// disconnected — rate-exceed-as-disconnect is a DoS vector against
 // honest peers under load.
 const (
-	inboundRate   = 0.1 // tokens per second
-	inboundBurst  = 1.0
-	outboundRate  = 1.0
-	outboundBurst = 10.0
+	addrRatePerSecond   = 0.1
+	addrTokenBucketCap  = 1000.0
+	addrTokenBucketInit = 1.0
 
 	// BloomSize / BloomHashes are the per-peer known-address filter
 	// sizing. 5000 elements at 0.001 false-positive rate → ~72k bits,
@@ -64,11 +71,15 @@ type tokenBucket struct {
 	lastFill time.Time
 }
 
-func newTokenBucket(rate, burst float64) *tokenBucket {
+// newTokenBucket returns a bucket with the given refill rate, soft
+// cap, and initial fill. The initial fill is 1.0 in production
+// (Core's m_addr_token_bucket{1.0}): a brand-new session gets one
+// address through immediately and earns the rest at the refill rate.
+func newTokenBucket(rate, burst, initial float64) *tokenBucket {
 	return &tokenBucket{
 		rate:     rate,
 		burst:    burst,
-		level:    burst,
+		level:    initial,
 		lastFill: time.Now(),
 	}
 }

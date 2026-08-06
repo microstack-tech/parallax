@@ -21,37 +21,18 @@ import (
 	"time"
 )
 
-func TestTokenBucketBurstThenRefill(t *testing.T) {
-	tb := newTokenBucket(outboundRate, outboundBurst)
-	start := time.Now()
-	// Should allow ~burst tokens instantly.
-	taken := 0
-	for range 20 {
-		if tb.Take(start) {
-			taken++
-		}
-	}
-	if float64(taken) < outboundBurst-0.5 || float64(taken) > outboundBurst+0.5 {
-		t.Errorf("burst: took %d, want ~%.0f", taken, outboundBurst)
-	}
-	// After 1 second, rate=1/s means exactly 1 additional token.
-	if !tb.Take(start.Add(time.Second)) {
-		t.Error("expected token after 1s refill")
-	}
-	if tb.Take(start.Add(time.Second)) {
-		t.Error("bucket drained but Take returned true")
-	}
-}
-
-func TestTokenBucketInboundSlow(t *testing.T) {
-	tb := newTokenBucket(inboundRate, inboundBurst)
+// TestTokenBucketCoreSemantics — Core's m_addr_token_bucket model:
+// initial fill 1.0, refill 0.1/s, soft cap 1000. A fresh session gets
+// exactly one address through and earns the rest at the refill rate.
+func TestTokenBucketCoreSemantics(t *testing.T) {
+	tb := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
 	now := time.Now()
-	// Burst=1 means exactly one token immediately.
+	// Initial fill 1.0 means exactly one token immediately.
 	if !tb.Take(now) {
-		t.Fatal("expected initial burst token")
+		t.Fatal("expected initial token")
 	}
 	if tb.Take(now) {
-		t.Fatal("second take on burst=1 at t=0 should fail")
+		t.Fatal("second take at t=0 should fail (initial fill is 1.0, not the cap)")
 	}
 	// After 9s, rate=0.1/s → still below the 1-token refill threshold.
 	if tb.Take(now.Add(9 * time.Second)) {
@@ -60,6 +41,37 @@ func TestTokenBucketInboundSlow(t *testing.T) {
 	// After 10s, exactly one token accumulated.
 	if !tb.Take(now.Add(10 * time.Second)) {
 		t.Error("10s at 0.1/s should yield one token")
+	}
+}
+
+// TestTokenBucketSoftCapAccumulation — an idle session accumulates
+// toward the 1000-token soft cap and can then absorb a large honest
+// burst; the cap bounds the accumulation.
+func TestTokenBucketSoftCapAccumulation(t *testing.T) {
+	tb := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
+	start := time.Now()
+	// 200s idle at 0.1/s → 1 + 20 = 21 tokens.
+	at := start.Add(200 * time.Second)
+	taken := 0
+	for range 40 {
+		if tb.Take(at) {
+			taken++
+		}
+	}
+	if taken != 21 {
+		t.Errorf("after 200s idle: took %d, want 21", taken)
+	}
+	// A very long idle period is bounded by the soft cap.
+	tb2 := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
+	at2 := start.Add(1000 * time.Hour)
+	taken = 0
+	for range 1500 {
+		if tb2.Take(at2) {
+			taken++
+		}
+	}
+	if taken != int(addrTokenBucketCap) {
+		t.Errorf("after long idle: took %d, want the %v cap", taken, addrTokenBucketCap)
 	}
 }
 

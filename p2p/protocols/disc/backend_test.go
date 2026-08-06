@@ -120,6 +120,9 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 		// Foreign entry — must reach addrman.
 		{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 32110, KeyType: KeyTypeNone},
 	}
+	// A fresh session's bucket holds one token (Core parity); the
+	// filtering under test needs both entries processed.
+	b.ingestBucketFor(peer).Credit(10)
 	b.HandlePeers(peer, entries)
 
 	if got := m.Size(nil, nil); got != 1 {
@@ -167,6 +170,9 @@ func TestHandlePeersUnreachableNotStored(t *testing.T) {
 		{NetworkID: NetTorV3, Addr: torAddr, TCPPort: 32110, KeyType: KeyTypeNone, LastSeen: fresh},
 		{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 32110, KeyType: KeyTypeNone, LastSeen: fresh},
 	}
+	// A fresh session's bucket holds one token (Core parity); the
+	// storage gating under test needs both entries processed.
+	b.ingestBucketFor(peer).Credit(10)
 	b.HandlePeers(peer, entries)
 
 	if got := m.Size(nil, nil); got != 1 {
@@ -917,6 +923,9 @@ func TestHandlePeersLastSeenSanitization(t *testing.T) {
 		{"ancient sentinel rewritten", 1, now.Add(-5 * 24 * time.Hour)},
 		{"future claim rewritten", uint64(now.Add(time.Hour).Unix()), now.Add(-5 * 24 * time.Hour)},
 	}
+	// A fresh session's bucket holds one token (Core parity); the
+	// sanitization under test needs every case processed.
+	b.ingestBucketFor(peer).Credit(10)
 	for i, tc := range cases {
 		addrBytes := []byte{51, 15, 0, byte(i + 1)}
 		b.HandlePeers(peer, []PeerEntry{{
@@ -1005,8 +1014,11 @@ func TestSolicitedPeersResponseBypassesRateLimit(t *testing.T) {
 		defer closeFn()
 
 		b.HandlePeers(peer, batch)
-		if got := m.Size(nil, nil); got > 2*int(outboundBurst) {
-			t.Fatalf("addrman size after unsolicited bulk push = %d, want <= burst %v", got, outboundBurst)
+		// A fresh session's bucket holds the 1.0 initial fill (Core's
+		// m_addr_token_bucket{1.0}), so an unsolicited bulk push gets
+		// roughly one entry through. Allow refill slack.
+		if got := m.Size(nil, nil); got > 2 {
+			t.Fatalf("addrman size after unsolicited bulk push = %d, want <= 2 (initial fill is 1 token)", got)
 		}
 	})
 }
