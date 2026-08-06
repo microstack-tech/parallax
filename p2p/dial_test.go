@@ -584,6 +584,56 @@ func TestDialSchedGroupLimitInFlight(t *testing.T) {
 	})
 }
 
+// TestDialSchedGroupFreedAfterResolveMove — a static task whose dial
+// fails and whose re-resolve lands in a different /16 must release the
+// group charged at launch, not the group of the resolved endpoint.
+// Regression test: the doneCh decrement used to read the resolved
+// dest, stranding the original group's in-flight count forever and
+// blacking out dynamic dials to that /16 for the process lifetime.
+func TestDialSchedGroupFreedAfterResolveMove(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	staticNode := newNode(uintID(0x70), "44.66.1.1:32110")
+	moved := newNode(uintID(0x70), "44.77.1.1:32110")
+	dynNode := newNode(uintID(0x71), "44.66.9.9:32110")
+	runDialTest(t, config, []dialTestRound{
+		// The static dial launches, charging group 44.66/16.
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+			wantNewDials: []*enode.Node{staticNode},
+		},
+		// The dial fails; the task re-resolves to 44.77/16 and
+		// redials in-run (no fresh startDial accounting).
+		{
+			failed: []enode.ID{uintID(0x70)},
+			wantResolves: map[enode.ID]*enode.Node{
+				uintID(0x70): moved,
+			},
+			wantNewDials: []*enode.Node{moved},
+		},
+		// The redial fails too; task completion must free 44.66/16,
+		// the group recorded at launch. Drop the static so history
+		// expiry doesn't relaunch it in the next round.
+		{
+			failed: []enode.ID{uintID(0x70)},
+			update: func(d *dialScheduler) {
+				d.removeStatic(staticNode)
+			},
+		},
+		// A dynamic candidate in 44.66/16 is dialable again.
+		{
+			discovered:   []*enode.Node{dynNode},
+			wantNewDials: []*enode.Node{dynNode},
+		},
+	})
+}
+
 // TestDialSchedDiscouragedGate — discouragement blocks dynamic dials
 // but not static ones. A ban blocks both; discouragement is stamped
 // automatically on misbehavior and has no clearing RPC, so honoring

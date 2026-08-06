@@ -434,7 +434,14 @@ loop:
 				if task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
 					d.dialingBlockRelay--
 				}
-				if g := nodeNetworkGroupKey(task.dest); g != "" {
+				// Decrement the group recorded at startDial time, not
+				// the group of the current task.dest: resolve() swaps
+				// t.dest mid-flight, and a static node that moved to a
+				// different /16 would otherwise strand the old group's
+				// count forever (permanently blacking out dynamic
+				// dials to that group) while decrementing a group that
+				// was never incremented.
+				if g := task.dialGroup; g != "" {
 					if d.dialingGroups[g] <= 1 {
 						delete(d.dialingGroups, g)
 					} else {
@@ -858,8 +865,12 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	if task.flags&blockRelayConn != 0 {
 		d.dialingBlockRelay++
 	}
-	if g := nodeNetworkGroupKey(task.dest); g != "" {
-		d.dialingGroups[g]++
+	// Record the group charged for this dial on the task itself so
+	// the doneCh decrement targets the same key even if resolve()
+	// replaces task.dest with an endpoint in a different group.
+	task.dialGroup = nodeNetworkGroupKey(task.dest)
+	if task.dialGroup != "" {
+		d.dialingGroups[task.dialGroup]++
 	}
 	go func() {
 		task.run(d)
@@ -871,6 +882,15 @@ func (d *dialScheduler) startDial(task *dialTask) {
 type dialTask struct {
 	staticPoolIndex int
 	flags           connFlag
+
+	// dialGroup is the network-group key charged to dialingGroups
+	// when the task launched. Written by startDial before the task
+	// goroutine starts and read by the doneCh handler after it
+	// finishes, so it needs no synchronization. Kept separate from
+	// dest because resolve() may replace dest with an endpoint in a
+	// different group mid-flight.
+	dialGroup string
+
 	// These fields are private to the task and should not be
 	// accessed by dialScheduler while the task is running.
 	dest         *enode.Node
