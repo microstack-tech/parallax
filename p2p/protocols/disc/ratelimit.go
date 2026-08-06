@@ -17,6 +17,7 @@
 package disc
 
 import (
+	crand "crypto/rand"
 	"encoding/binary"
 	"hash/fnv"
 	"sync"
@@ -133,16 +134,17 @@ func (b *tokenBucket) Level() float64 {
 
 // bloomFilter is a fixed-size counting-free bloom filter. NOT
 // thread-safe on its own — it is a generation inside rollingBloom,
-// which serializes access under its mutex.
+// which serializes access under its mutex. tweak is the per-instance
+// random salt supplied by the owning rollingBloom.
 type bloomFilter struct {
 	bits [bloomBytes]byte
 }
 
 // Contains checks whether key may have been seen. False positives are
 // possible; false negatives are not.
-func (f *bloomFilter) Contains(key []byte) bool {
+func (f *bloomFilter) Contains(key []byte, tweak uint32) bool {
 	for i := 0; i < bloomHashes; i++ {
-		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
+		pos := bloomHash(key, uint32(i), tweak) % uint32(bloomBits)
 		if f.bits[pos/8]&(1<<(pos%8)) == 0 {
 			return false
 		}
@@ -151,9 +153,9 @@ func (f *bloomFilter) Contains(key []byte) bool {
 }
 
 // Add marks key as seen.
-func (f *bloomFilter) Add(key []byte) {
+func (f *bloomFilter) Add(key []byte, tweak uint32) {
 	for i := 0; i < bloomHashes; i++ {
-		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
+		pos := bloomHash(key, uint32(i), tweak) % uint32(bloomBits)
 		f.bits[pos/8] |= 1 << (pos % 8)
 	}
 }
@@ -173,6 +175,26 @@ type rollingBloom struct {
 	// number of inserts it has absorbed.
 	cur      int
 	curCount int
+	// tweak is a per-instance random salt mixed into every hash,
+	// lazily drawn on first use. Bitcoin's CRollingBloomFilter uses a
+	// random nTweak for the same reason: with fixed seeds a peer can
+	// precompute cover-sets that force Contains(target)==true and
+	// suppress our relay of a chosen address to it.
+	tweak uint32
+}
+
+func (r *rollingBloom) tweakLocked() uint32 {
+	if r.tweak == 0 {
+		var b [4]byte
+		if _, err := crand.Read(b[:]); err == nil {
+			// |1 keeps a legitimately-drawn zero from re-rolling
+			// every call; the salt's exact value doesn't matter.
+			r.tweak = binary.LittleEndian.Uint32(b[:]) | 1
+		} else {
+			r.tweak = 1
+		}
+	}
+	return r.tweak
 }
 
 // Contains checks whether key may have been seen in any live
@@ -181,8 +203,9 @@ type rollingBloom struct {
 func (r *rollingBloom) Contains(key []byte) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	tweak := r.tweakLocked()
 	for i := range r.gens {
-		if r.gens[i].Contains(key) {
+		if r.gens[i].Contains(key, tweak) {
 			return true
 		}
 	}
@@ -194,7 +217,7 @@ func (r *rollingBloom) Contains(key []byte) bool {
 func (r *rollingBloom) Add(key []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.gens[r.cur].Add(key)
+	r.gens[r.cur].Add(key, r.tweakLocked())
 	r.curCount++
 	if r.curCount >= bloomGenerationCap {
 		r.cur = (r.cur + 1) % len(r.gens)
@@ -203,10 +226,11 @@ func (r *rollingBloom) Add(key []byte) {
 	}
 }
 
-func bloomHash(key []byte, seed uint32) uint32 {
+func bloomHash(key []byte, seed, tweak uint32) uint32 {
 	h := fnv.New32a()
-	var sbuf [4]byte
-	binary.LittleEndian.PutUint32(sbuf[:], seed)
+	var sbuf [8]byte
+	binary.LittleEndian.PutUint32(sbuf[:4], seed)
+	binary.LittleEndian.PutUint32(sbuf[4:], tweak)
 	_, _ = h.Write(sbuf[:])
 	_, _ = h.Write(key)
 	return h.Sum32()

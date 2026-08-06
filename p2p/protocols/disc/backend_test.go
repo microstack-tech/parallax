@@ -138,6 +138,43 @@ func TestAddrmanBackendHandlePeersFiltersSelf(t *testing.T) {
 	}
 }
 
+// TestEmptySolicitedResponseClearsPending — an empty Peers reply to
+// our GetPeers (a fresh node with a bare addrbook sends exactly that)
+// must clear the solicited flag like any sub-1000 reply (Core clears
+// m_getaddr_sent on every sub-MAX_ADDR_TO_SEND addr message).
+// Regression test: the flag used to survive, so everything the peer
+// relayed for the rest of the session was misclassified as solicited
+// and never re-gossiped.
+func TestEmptySolicitedResponseClearsPending(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+
+	a, d, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatalf("TCPPipe: %v", err)
+	}
+	defer a.Close()
+	defer d.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	peer := p2p.NewPeerForTest(id, "test", nil, a)
+
+	b.NoteGetPeersSent(peer)
+	b.HandlePeers(peer, nil)
+
+	b.mu.Lock()
+	_, pending := b.getPeersPending[peerKeyFor(peer)]
+	b.mu.Unlock()
+	if pending {
+		t.Fatal("getPeersPending still set after an empty solicited reply")
+	}
+}
+
 // TestHandlePeersUnreachableNotStored — entries on networks this node
 // cannot dial (Tor v3, I2P, CJDNS) must not enter addrman: Core's ADDR
 // handling stores only reachable addresses ("Do not store addresses

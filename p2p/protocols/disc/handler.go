@@ -46,8 +46,11 @@ type Backend interface {
 	HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, port uint16)
 
 	// HandlePeers ingests gossiped entries, applying any per-peer rate
-	// limits and the 2-hour gossip LastSeen penalty.
-	HandlePeers(peer *p2p.Peer, entries []PeerEntry)
+	// limits and the 2-hour gossip LastSeen penalty. Returns the
+	// entries that passed the rate limit so the caller can mark
+	// exactly those as known to the peer (Core: AddAddressKnown
+	// runs after the rate limit).
+	HandlePeers(peer *p2p.Peer, entries []PeerEntry) []PeerEntry
 
 	// SamplePeers returns up to max entries for a GetPeers response,
 	// subject to reachability filtering. May return nil; the handler
@@ -476,6 +479,16 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	}
 	st.peersReceived.Add(1)
 
+	// Block-relay-only links exist for block propagation alone: Core
+	// ignores addr messages on them outright (SetupAddressRelay is
+	// never set up for block-relay-only connections), so their Peers
+	// messages must feed neither addrman nor onward relay. Ignore
+	// without a misbehavior mark — sending one is legal, it just does
+	// nothing.
+	if peer.BlockRelayOnly() {
+		return nil
+	}
+
 	// Unsolicited Peers messages are expected on an ongoing basis:
 	// address relay (RelayAddress) pushes freshly-learned addresses to
 	// its fan-out targets as single-entry Peers messages throughout a
@@ -500,13 +513,16 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 		if skip {
 			continue
 		}
-		// The peer evidently knows this address — never relay it back
-		// (Bitcoin: AddAddressKnown on every received addr).
-		e := pkt.Entries[i]
-		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
-		kept = append(kept, e)
+		kept = append(kept, pkt.Entries[i])
 	}
-	backend.HandlePeers(peer, kept)
+	// Mark only the entries that passed the ingest rate limit as
+	// known to the peer (Bitcoin: AddAddressKnown after the token
+	// bucket). Marking pre-limit would let a peer churn our filter
+	// generations with unlimited rate-limited pushes and suppress
+	// our future relay of addresses it never actually processed.
+	for _, e := range backend.HandlePeers(peer, kept) {
+		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
+	}
 	return nil
 }
 

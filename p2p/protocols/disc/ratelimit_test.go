@@ -83,15 +83,15 @@ func TestBloomFilterBasic(t *testing.T) {
 		[]byte("addr-3"),
 	}
 	for _, k := range keys {
-		if f.Contains(k) {
+		if f.Contains(k, 0x1234) {
 			t.Errorf("unseen key reported present: %s", k)
 		}
 	}
 	for _, k := range keys {
-		f.Add(k)
+		f.Add(k, 0x1234)
 	}
 	for _, k := range keys {
-		if !f.Contains(k) {
+		if !f.Contains(k, 0x1234) {
 			t.Errorf("added key not found: %s", k)
 		}
 	}
@@ -103,12 +103,12 @@ func TestBloomFilterLowFalsePositiveRate(t *testing.T) {
 	// count false positives. We expect ~0.1% with bloomSize=72kbit
 	// and 10 hashes at 100-item load; allow 5% safety margin.
 	for i := range 100 {
-		f.Add([]byte{byte(i), byte(i >> 8), 0x01})
+		f.Add([]byte{byte(i), byte(i >> 8), 0x01}, 0x1234)
 	}
 	fps := 0
 	for i := range 10_000 {
 		key := []byte{byte(i), byte(i >> 8), 0x02}
-		if f.Contains(key) {
+		if f.Contains(key, 0x1234) {
 			fps++
 		}
 	}

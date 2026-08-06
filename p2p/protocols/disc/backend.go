@@ -262,32 +262,29 @@ func (b *AddrmanBackend) NoteGetPeersSent(peer *p2p.Peer) {
 // LastSeen (PIP-0006 Phase 2 rule: "Subtract a 2-hour penalty when the
 // source is gossip rather than direct observation") is applied here.
 // Rate limiting is enforced per-peer via the ingest bucket.
-func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
-	if b.m == nil || len(entries) == 0 {
-		return
+//
+// Returns the entries that made it past the token bucket, so the
+// handler can mark exactly those in the peer's known-address bloom —
+// Core calls AddAddressKnown after the rate limit, and marking
+// rate-limited entries would let a peer suppress our future relay of
+// addresses it never actually processed.
+func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) []PeerEntry {
+	if b.m == nil {
+		return nil
 	}
-	bucket := b.ingestBucketFor(peer)
-	sourceNet, sourceAddr, ok := peerNetworkGroup(peer)
-	if !ok {
-		// Can't bucket the source — addrman needs a CNetAddr for
-		// the source-group portion of newBucket. Drop the whole
-		// batch; per-peer loss is acceptable.
-		return
-	}
-	source, err := addrman.NewNetAddr(addrmanNetID(sourceNet), sourceAddr, 0)
-	if err != nil {
-		return
-	}
-
 	// Relay eligibility is per-message (Bitcoin's ADDR relay gates,
 	// net_processing.cpp): entries from a solicited GetPeers response
 	// are never re-gossiped, and only small unsolicited batches (the
 	// shape a genuine relay push has — RelayAddress sends 1-entry
 	// messages) qualify. Without the solicited-response gate, every
 	// 1000-entry GetPeers response would fan out again as up to 2000
-	// relayed messages. A batch smaller than a full response also
-	// completes any pending solicited exchange, mirroring Core's
+	// relayed messages. Any batch smaller than a full response also
+	// completes a pending solicited exchange — including an empty one
+	// from a fresh node with a bare addrbook — mirroring Core's
 	// clearing of m_getaddr_sent on any sub-1000-entry addr message.
+	// Leaving the flag set would misclassify everything that peer
+	// relays for the rest of the session as solicited (never
+	// re-gossiped).
 	key := peerKeyFor(peer)
 	b.mu.Lock()
 	solicited := b.getPeersPending[key]
@@ -295,10 +292,32 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		delete(b.getPeersPending, key)
 	}
 	b.mu.Unlock()
+	if len(entries) == 0 {
+		return nil
+	}
+	bucket := b.ingestBucketFor(peer)
+	sourceNet, sourceAddr, ok := peerNetworkGroup(peer)
+	if !ok {
+		// Can't bucket the source — addrman needs a CNetAddr for
+		// the source-group portion of newBucket. Drop the whole
+		// batch; per-peer loss is acceptable.
+		return nil
+	}
+	source, err := addrman.NewNetAddr(addrmanNetID(sourceNet), sourceAddr, 0)
+	if err != nil {
+		return nil
+	}
 	mayRelay := !solicited && len(entries) <= maxRelayBatch
+
+	// Shuffle before the rate-limited loop (Core: std::shuffle before
+	// processing) so token-bucket drops aren't a deterministic prefix
+	// of the sender's ordering — otherwise the tail of every large
+	// honest batch is systematically lost.
+	mrand.Shuffle(len(entries), func(i, j int) { entries[i], entries[j] = entries[j], entries[i] })
 
 	now := time.Now()
 	rateLimited := 0
+	accepted := make([]PeerEntry, 0, len(entries))
 	for _, e := range entries {
 		if !bucket.Take(now) {
 			// Rate-limit drop — no disconnect, no misbehavior mark
@@ -307,6 +326,7 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 			rateLimited++
 			continue
 		}
+		accepted = append(accepted, e)
 		net := addrmanNetID(e.NetworkID)
 		naddr, err := addrman.NewNetAddr(net, e.Addr, e.TCPPort)
 		if err != nil {
@@ -367,6 +387,7 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		b.log.Debug("parallax-disc/1: rate-limited address ingest",
 			"peer", peer.ID(), "dropped", rateLimited, "received", len(entries))
 	}
+	return accepted
 }
 
 // maxPctPeersToSend caps a GetPeers response at this percentage of

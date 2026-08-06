@@ -64,12 +64,13 @@ func (b *testBackend) HandleYourAddr(_ *p2p.Peer, net uint8, addr []byte, port u
 	b.gotAddrs = append(b.gotAddrs, YourAddr{NetworkID: net, Addr: append([]byte(nil), addr...), TCPPort: port})
 }
 
-func (b *testBackend) HandlePeers(_ *p2p.Peer, entries []PeerEntry) {
+func (b *testBackend) HandlePeers(_ *p2p.Peer, entries []PeerEntry) []PeerEntry {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	cp := make([]PeerEntry, len(entries))
 	copy(cp, entries)
 	b.gotPeers = append(b.gotPeers, cp)
+	return entries
 }
 
 func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
@@ -428,6 +429,42 @@ func TestHandlerRejectsMessageBeforeHello(t *testing.T) {
 				t.Fatalf("handler didn't exit after pre-Hello %s", tc.name)
 			}
 		})
+	}
+}
+
+// TestHandlerIgnoresPeersFromBlockRelayOnly — Core never sets up
+// address relay on block-relay-only connections, so an addr message on
+// one is ignored outright: it must feed neither addrman nor onward
+// relay, and it is not a misbehavior (the session stays up).
+func TestHandlerIgnoresPeersFromBlockRelayOnly(t *testing.T) {
+	b := &testBackend{obsOK: true}
+	app, done := runHandlerWithPeer(t, b, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+	// Block-relay-only greetings carry no GetPeers, so drain only
+	// Hello and YourAddr.
+	drainOne(t, app)
+	drainOne(t, app)
+
+	hello := Hello{ProtoVersion: HelloMinProtoVersion, Nonce: 0x33, ListenPort: 32110}
+	if err := p2p.Send(app, HelloMsg, hello); err != nil {
+		t.Fatalf("Hello send: %v", err)
+	}
+	entry := PeerEntry{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 30303, KeyType: KeyTypeNone}
+	if err := p2p.Send(app, PeersMsg, Peers{Entries: []PeerEntry{entry}}); err != nil {
+		t.Fatalf("Peers send: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited on block-relay-only Peers message: %v", err)
+	default:
+	}
+	b.mu.Lock()
+	got := len(b.gotPeers)
+	b.mu.Unlock()
+	if got != 0 {
+		t.Fatalf("HandlePeers called %d times for a block-relay-only peer, want 0", got)
 	}
 }
 
