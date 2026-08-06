@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"math"
+	"net"
 	"sort"
 
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
@@ -219,27 +220,55 @@ func lessBlockTime(a, b *Peer) bool {
 
 // protectByRatio mirrors Bitcoin Core's
 // ProtectEvictionCandidatesByRatio (src/node/eviction.cpp:105-176):
-// reserve ~50% of the candidate pool for protection by uptime,
-// with up to 25% set aside for under-represented privacy networks
-// (Tor / I2P / CJDNS / localhost — currently unused in Parallax;
-// the plumbing is here for future).
-//
-// Today's implementation: protect the oldest 50% by connection
-// age, dropping them from the candidate pool. The privacy-network
-// reservation is a no-op until Parallax speaks those networks; the
-// peers slice has no tag for them yet.
+// reserve ~50% of the candidate pool for protection by uptime, with
+// up to half of those slots (25% of candidates) set aside for
+// disadvantaged-network peers first. Localhost is the only
+// disadvantaged "network" Parallax accepts inbound (there is no
+// Tor/I2P/CJDNS transport), and it needs the reservation badly:
+// keyedNetGroup buckets every 127.x peer into one group, so without
+// it, co-hosted peers on a multi-node machine are *preferential*
+// victims of the largest-group round — the opposite of Core.
 func protectByRatio(candidates []*Peer) []*Peer {
-	half := len(candidates) / 2
-	if half <= 0 {
+	total := len(candidates) / 2
+	if total <= 0 {
 		return candidates
 	}
-	sorted := make([]*Peer, len(candidates))
-	copy(sorted, candidates)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Created() < sorted[j].Created()
-	})
-	// Drop the oldest `half` — they are protected.
-	return sorted[half:]
+	// Localhost reservation: protect up to total/2 longest-connected
+	// local peers. protectLastK's keep predicate skips non-local
+	// window members without extending the window — the same
+	// asymmetry as Core's EraseLastKElements.
+	before := len(candidates)
+	if maxByNetwork := total / 2; maxByNetwork > 0 {
+		candidates = protectLastK(candidates, maxByNetwork, lessLocalNetworkTime, isLocalPeer)
+	}
+	// Protect the remainder of the 50% budget by uptime.
+	remaining := total - (before - len(candidates))
+	return protectLastK(candidates, remaining, lessUptime, nil)
+}
+
+// isLocalPeer reports whether the peer connected from localhost —
+// Core's NodeEvictionCandidate.m_is_local (addr.IsLocal()).
+func isLocalPeer(p *Peer) bool {
+	ra, ok := p.RemoteAddr().(*net.TCPAddr)
+	return ok && ra.IP.IsLoopback()
+}
+
+// lessLocalNetworkTime — CompareNodeNetworkTime(is_local=true)
+// (eviction.cpp:39): localhost peers sort after everyone else, and
+// among themselves the longest-connected land at the end (most
+// protected).
+func lessLocalNetworkTime(a, b *Peer) bool {
+	al, bl := isLocalPeer(a), isLocalPeer(b)
+	if al != bl {
+		return !al
+	}
+	return a.Created() > b.Created()
+}
+
+// lessUptime — ReverseCompareNodeTimeConnected (eviction.cpp:26):
+// longest-connected peers land at the end (most protected).
+func lessUptime(a, b *Peer) bool {
+	return a.Created() > b.Created()
 }
 
 // preferEvict narrows the surviving candidates to peers flagged for

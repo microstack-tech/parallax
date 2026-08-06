@@ -355,6 +355,37 @@ func TestProtectByRatioProtectsHalfOldest(t *testing.T) {
 	}
 }
 
+// TestProtectByRatioReservesLocalhost — up to a quarter of the
+// candidates (half the protected slots) go to localhost peers first,
+// longest-connected local ahead, even when public peers have more
+// uptime. Regression test: the reservation used to be a no-op, and
+// since keyedNetGroup buckets all loopback peers into one group,
+// co-hosted peers were preferential victims of the largest-group
+// rule — the opposite of Core's ProtectEvictionCandidatesByRatio.
+func TestProtectByRatioReservesLocalhost(t *testing.T) {
+	local1 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 10 * time.Second, ip: net.IPv4(127, 0, 0, 1)})
+	local2 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 20 * time.Second, ip: net.IPv4(127, 0, 0, 2)})
+	pub1 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 100 * time.Second, ip: net.IPv4(30, 0, 0, 1)})
+	pub2 := makeEvictionPeer(t, evictionOpts{inbound: true, createdAge: 90 * time.Second, ip: net.IPv4(40, 0, 0, 1)})
+	candidates := []*Peer{local1, local2, pub1, pub2}
+
+	got := protectByRatio(candidates)
+	if len(got) != 2 {
+		t.Fatalf("survivors = %d, want 2 (half of 4 protected)", len(got))
+	}
+	// The network slot protects local2 (longest-connected local);
+	// the uptime slot protects pub1 (most uptime overall).
+	if contains(got, local2) {
+		t.Fatal("longest-connected localhost peer must be protected by the network reservation")
+	}
+	if contains(got, pub1) {
+		t.Fatal("highest-uptime public peer must be protected by the uptime slot")
+	}
+	if !contains(got, local1) || !contains(got, pub2) {
+		t.Fatalf("unexpected survivor set: %v", got)
+	}
+}
+
 // TestPickEvictionVictimYoungestInLargestGroup — final pick rule.
 func TestPickEvictionVictimYoungestInLargestGroup(t *testing.T) {
 	// Group A has 1 member; group B has 3 members. Victim must
