@@ -20,6 +20,7 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/banman"
+	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/support/event"
@@ -621,6 +623,20 @@ func (n *Node) setupAddrManAndDisc() error {
 		}
 	}
 	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint, helloProvider)
+	// An operator-pinned external IP (--nat extip:<IP>) short-circuits
+	// quorum: the address is an operator statement, not a guess to be
+	// voted on, so self-advertisement must work even with zero inbound
+	// peers. UPnP/PMP resolutions stay quorum-driven — router answers
+	// are best-effort. Port 0 lets SelfEntry attach the live listen
+	// port at advertise time.
+	if extip, ok := n.config.P2P.NAT.(nat.ExtIP); ok {
+		ip := net.IP(extip)
+		if v4 := ip.To4(); v4 != nil {
+			backend.Q.SetOverride(disc.NetIPv4, v4, 0)
+		} else if v6 := ip.To16(); v6 != nil {
+			backend.Q.SetOverride(disc.NetIPv6, v6, 0)
+		}
+	}
 	// Bidirectional wiring for cross-dial dedup:
 	//   Server → backend.PeerListenPort to resolve inbound peers'
 	//     listen ports in alreadyConnectedTo / peerListenAddr.
