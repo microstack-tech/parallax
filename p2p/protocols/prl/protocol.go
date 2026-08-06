@@ -75,6 +75,7 @@ var (
 	errNetworkIDMismatch       = errors.New("network ID mismatch")
 	errGenesisMismatch         = errors.New("genesis mismatch")
 	errForkIDRejected          = errors.New("fork ID rejected")
+	errTxFromBlockRelayPeer    = errors.New("transaction message on block-relay-only session")
 )
 
 // Packet represents a p2p message in the `parallax` protocol.

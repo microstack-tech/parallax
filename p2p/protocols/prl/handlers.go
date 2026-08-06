@@ -423,13 +423,18 @@ func handleReceipts66(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
-	// Block-relay-only peers and feelers MUST NOT relay tx in either
-	// direction
-	// (Bitcoin Core src/net_processing.cpp:3681 m_relay_txs gate).
-	// Silently drop to avoid leaking which of our outbound slots is
-	// the block-relay-only one.
-	if peer.BlockRelayOnly() || peer.Feeler() {
+	// Feelers never register into the peerset; this is a defensive
+	// backstop, drained silently.
+	if peer.Feeler() {
 		return nil
+	}
+	// A block-relay-only peer announcing transactions is a protocol
+	// violation: it saw our Hello with the relay bit cleared. Core
+	// disconnects ("transaction inv sent in violation of protocol",
+	// net_processing.cpp) — a silent drop would hand the violator a
+	// free slot to spam from.
+	if peer.BlockRelayOnly() {
+		return errTxFromBlockRelayPeer
 	}
 	// New transaction announcement arrived, make sure we have
 	// a valid and fresh chain to handle them
@@ -493,12 +498,16 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsPac
 }
 
 func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
-	// Block-relay-only peers and feelers MUST NOT push tx to us. Drop
-	// silently —
-	// stamping lastTxRx for them would also corrupt the eviction
-	// "newest tx among tx-relayers" round (eviction.cpp:194).
-	if peer.BlockRelayOnly() || peer.Feeler() {
+	// Feelers never register into the peerset; defensive backstop.
+	if peer.Feeler() {
 		return nil
+	}
+	// Block-relay-only peers MUST NOT push tx to us: Core disconnects
+	// ("transaction sent in violation of protocol"). Never stamping
+	// lastTxRx for them also keeps the eviction "newest tx among
+	// tx-relayers" round honest (eviction.cpp:194).
+	if peer.BlockRelayOnly() {
+		return errTxFromBlockRelayPeer
 	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
@@ -521,8 +530,11 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 
 func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error {
 	// Same block-relay-only rule as handleTransactions.
-	if peer.BlockRelayOnly() || peer.Feeler() {
+	if peer.Feeler() {
 		return nil
+	}
+	if peer.BlockRelayOnly() {
+		return errTxFromBlockRelayPeer
 	}
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {

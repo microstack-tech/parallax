@@ -248,6 +248,35 @@ func TestPeerDisconnectRace(t *testing.T) {
 	}
 }
 
+// TestSetRelayTxsStickyOff — the launch-time relay clamp on
+// block-relay-only and feeler sessions survives the remote's Hello:
+// the disc backend echoes the remote's relay-service bit into
+// SetRelayTxs unconditionally, and re-enabling it would hand any
+// future RelayTxs()-only consumer an open tx path on those links.
+func TestSetRelayTxsStickyOff(t *testing.T) {
+	br := NewPeer(randomID(), "br", nil)
+	br.SetBlockRelayOnly(true)
+	br.SetRelayTxs(false)
+	br.SetRelayTxs(true)
+	if br.RelayTxs() {
+		t.Fatal("SetRelayTxs(true) must be refused on a block-relay-only session")
+	}
+
+	feeler := NewPeer(randomID(), "feeler", nil)
+	feeler.MarkFeelerForTest()
+	feeler.SetRelayTxs(false)
+	feeler.SetRelayTxs(true)
+	if feeler.RelayTxs() {
+		t.Fatal("SetRelayTxs(true) must be refused on a feeler session")
+	}
+
+	normal := NewPeer(randomID(), "normal", nil)
+	normal.SetRelayTxs(true)
+	if !normal.RelayTxs() {
+		t.Fatal("SetRelayTxs(true) must work on a regular session")
+	}
+}
+
 func TestNewPeer(t *testing.T) {
 	name := "nodename"
 	caps := []Cap{{"foo", 2}, {"bar", 3}}

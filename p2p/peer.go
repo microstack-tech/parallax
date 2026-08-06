@@ -323,9 +323,20 @@ func (p *Peer) BytesTx() uint64 { return p.bytesTx.Load() }
 // false on Hello receipt for block-relay-only peers.
 func (p *Peer) RelayTxs() bool { return p.relayTxs.Load() }
 
+// SetRelayTxs is sticky-off on block-relay-only and feeler sessions:
+// the launch-time clamp must survive the remote's Hello (the disc
+// backend echoes the remote's relay-service bit unconditionally), and
+// any future consumer that checks only RelayTxs() must never reopen
+// tx traffic on those links.
+//
 // SetRelayTxs is called by the disc protocol on Hello receipt with
 // the peer's services flags. Concurrency-safe.
-func (p *Peer) SetRelayTxs(v bool) { p.relayTxs.Store(v) }
+func (p *Peer) SetRelayTxs(v bool) {
+	if v && (p.BlockRelayOnly() || p.Feeler()) {
+		return
+	}
+	p.relayTxs.Store(v)
+}
 
 // BlockRelayOnly reports whether this is a block-relay-only outbound
 // peer. Always false for inbound peers and full-relay outbound.

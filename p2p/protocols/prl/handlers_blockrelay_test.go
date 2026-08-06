@@ -53,10 +53,14 @@ func blockRelayPeer(t *testing.T) *Peer {
 }
 
 // TestBlockRelayOnlyDropsTxRelay covers the four tx-bearing message
-// handlers in handlers.go: each must return nil without invoking the
-// decoder when the peer is flagged block-relay-only. The decoder
-// tracks the call so a regression that re-orders the BR check below
-// the Decode line trips the test.
+// handlers in handlers.go: a block-relay-only peer pushing or
+// announcing transactions is disconnected with
+// errTxFromBlockRelayPeer (Core: "transaction sent in violation of
+// protocol", net_processing.cpp), while its GetPooledTransactions
+// request is silently ignored (Core answers a tx getdata from such a
+// peer with notfound, no disconnect). None of the handlers may invoke
+// the decoder — the tracking decoder trips if a regression re-orders
+// the gate below the Decode line.
 func TestBlockRelayOnlyDropsTxRelay(t *testing.T) {
 	t.Parallel()
 
@@ -67,13 +71,14 @@ func TestBlockRelayOnlyDropsTxRelay(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		fn   func(Backend, Decoder, *Peer) error
+		name    string
+		fn      func(Backend, Decoder, *Peer) error
+		wantErr error
 	}{
-		{"handleTransactions", handleTransactions},
-		{"handleNewPooledTransactionHashes", handleNewPooledTransactionHashes},
-		{"handlePooledTransactions66", handlePooledTransactions66},
-		{"handleGetPooledTransactions66", handleGetPooledTransactions66},
+		{"handleTransactions", handleTransactions, errTxFromBlockRelayPeer},
+		{"handleNewPooledTransactionHashes", handleNewPooledTransactionHashes, errTxFromBlockRelayPeer},
+		{"handlePooledTransactions66", handlePooledTransactions66, errTxFromBlockRelayPeer},
+		{"handleGetPooledTransactions66", handleGetPooledTransactions66, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,8 +86,8 @@ func TestBlockRelayOnlyDropsTxRelay(t *testing.T) {
 			// Backend is intentionally nil — a regression that passes
 			// the BR gate would also nil-deref on backend access,
 			// distinguishing the bug from a silent decode-then-drop.
-			if err := tc.fn(nil, d, peer); err != nil {
-				t.Fatalf("%s returned err: %v", tc.name, err)
+			if err := tc.fn(nil, d, peer); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("%s returned err %v, want %v", tc.name, err, tc.wantErr)
 			}
 			if d.called {
 				t.Fatalf("%s decoded a tx message from block-relay-only peer", tc.name)
