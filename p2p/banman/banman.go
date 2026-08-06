@@ -92,7 +92,18 @@ type BanMan struct {
 	file        string     // banlist.json path; empty disables persistence
 	dumpMu      sync.Mutex // serializes Dump's snapshot+write+rename
 	log         logging.Logger
+
+	// dirty marks in-memory state not yet persisted. dumpAndLog
+	// skips the disk write when clean — Core's DumpBanlist
+	// early-returns on !BannedSetIsDirty() the same way, so the
+	// 15-minute sweeper doesn't rewrite an unchanged banlist.json
+	// forever. Guarded by mu; cleared only after a successful Dump
+	// so a failed write is retried on the next tick.
+	dirty bool
 }
+
+// markDirtyLocked flags unpersisted state. Callers hold b.mu.
+func (b *BanMan) markDirtyLocked() { b.dirty = true }
 
 // bannedNet pairs a banlist row with its parsed subnet so the
 // accept/dial hot path (IsBanned) never re-parses CIDR strings.
@@ -175,6 +186,7 @@ func (b *BanMan) BanSubnet(subnet *net.IPNet, duration time.Duration, reason str
 		return nil
 	}
 	b.banned[key] = bannedNet{entry: entry, ipnet: parsed}
+	b.markDirtyLocked()
 	b.mu.Unlock()
 	// The in-memory ban is active regardless of persistence: a full
 	// disk must not make setban report failure for a ban that IS
@@ -204,6 +216,9 @@ func (b *BanMan) UnbanSubnet(subnet *net.IPNet) (bool, error) {
 	b.mu.Lock()
 	_, existed := b.banned[key]
 	delete(b.banned, key)
+	if existed {
+		b.markDirtyLocked()
+	}
 	b.mu.Unlock()
 	if !existed {
 		return false, nil
@@ -214,11 +229,24 @@ func (b *BanMan) UnbanSubnet(subnet *net.IPNet) (bool, error) {
 
 // dumpAndLog persists the banlist, logging rather than propagating
 // failures — callers have already mutated the in-memory state, which
-// is enforced regardless of persistence.
+// is enforced regardless of persistence. A clean state skips the
+// write entirely (Core: DumpBanlist early-returns when the banned
+// set isn't dirty); the flag clears only on success so a failed
+// write retries on the next tick or mutation.
 func (b *BanMan) dumpAndLog() {
+	b.mu.Lock()
+	dirty := b.dirty
+	b.mu.Unlock()
+	if !dirty {
+		return
+	}
 	if err := b.Dump(); err != nil {
 		b.log.Warn("banman: banlist dump failed", "file", b.file, "err", err)
+		return
 	}
+	b.mu.Lock()
+	b.dirty = false
+	b.mu.Unlock()
 }
 
 // IsBannedSubnet reports whether exactly this subnet has an active
@@ -250,6 +278,7 @@ func (b *BanMan) IsBanned(addr net.IP) bool {
 	for key, bn := range b.banned {
 		if bn.entry.BannedTill <= now {
 			delete(b.banned, key)
+			b.markDirtyLocked()
 			continue
 		}
 		if bn.ipnet.Contains(addr) {
@@ -317,6 +346,7 @@ func (b *BanMan) SweepBanned() {
 	for key, bn := range b.banned {
 		if bn.entry.BannedTill <= now {
 			delete(b.banned, key)
+			b.markDirtyLocked()
 		}
 	}
 	b.mu.Unlock()
@@ -328,6 +358,7 @@ func (b *BanMan) SweepBanned() {
 func (b *BanMan) ClearBanned() error {
 	b.mu.Lock()
 	b.banned = make(map[string]bannedNet)
+	b.markDirtyLocked()
 	b.mu.Unlock()
 	b.dumpAndLog()
 	return nil
@@ -358,6 +389,7 @@ func (b *BanMan) ListBanned() []BanInfo {
 	for key, bn := range b.banned {
 		if bn.entry.BannedTill <= now {
 			delete(b.banned, key)
+			b.markDirtyLocked()
 			continue
 		}
 		out = append(out, BanInfo{
@@ -453,6 +485,9 @@ func (b *BanMan) Load() error {
 		// empty banmap (src/banman.cpp). The next Dump rewrites the
 		// path; if that also fails it is logged there.
 		b.log.Warn("banman: banlist file unreadable, recreating", "file", b.file, "err", err)
+		b.mu.Lock()
+		b.markDirtyLocked() // Core parity: recreate on the next dump
+		b.mu.Unlock()
 		return nil
 	}
 	var body banlistFile
@@ -462,6 +497,9 @@ func (b *BanMan) Load() error {
 		// proceeds with an empty banmap (src/banman.cpp:41-45);
 		// the next Dump rewrites the file with valid content.
 		b.log.Warn("banman: banlist file corrupt, recreating", "file", b.file, "err", err)
+		b.mu.Lock()
+		b.markDirtyLocked() // Core parity: recreate on the next dump
+		b.mu.Unlock()
 		return nil
 	}
 	now := time.Now().Unix()

@@ -538,3 +538,42 @@ func TestSweepBannedPrunesExpired(t *testing.T) {
 		t.Fatalf("banned map has %d entries after sweep, want 1", n)
 	}
 }
+
+// TestDumpSkippedWhenClean — the periodic sweeper must not rewrite an
+// unchanged banlist.json (Core: DumpBanlist early-returns when the
+// banned set isn't dirty); a mutation re-dirties and rewrites.
+func TestDumpSkippedWhenClean(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "banlist.json")
+	bm, err := New(file, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bm.Ban(net.IPv4(9, 9, 9, 9), time.Hour, "seed"); err != nil {
+		t.Fatal(err)
+	}
+	// Stamp a known-old mtime; a clean dumpAndLog must not touch it.
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, past, past); err != nil {
+		t.Fatal(err)
+	}
+	bm.dumpAndLog()
+	fi, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.ModTime().Equal(past) {
+		t.Fatal("clean dumpAndLog rewrote an unchanged banlist")
+	}
+	// A mutation dirties the state and the next dump rewrites.
+	if err := bm.Ban(net.IPv4(10, 10, 10, 10), time.Hour, "second"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err = os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().Equal(past) {
+		t.Fatal("mutation did not rewrite the banlist")
+	}
+}
