@@ -20,8 +20,10 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
@@ -114,6 +116,68 @@ func TestV2DialGroupLimitExemptions(t *testing.T) {
 	}
 	if v2DialSubjectToGroupLimit(feelerConn) {
 		t.Error("feeler probe must be exempt from the group limit")
+	}
+	if v2DialSubjectToGroupLimit(staticDialedConn) {
+		t.Error("manual (static) dial must be exempt from the group limit")
+	}
+}
+
+// TestDialV2ManualSkipsDiscourage — operator-initiated v2 dials are
+// exempt from the discourage filter (a shared-IP neighbor's automatic
+// misbehavior stamp must not strand an explicit dial until restart)
+// but still honor an explicit setban. Mirrors the v1 static-dial
+// exemption and Core's manual connections.
+func TestDialV2ManualSkipsDiscourage(t *testing.T) {
+	t.Parallel()
+
+	// A freshly-closed loopback listener: the port is real but dials
+	// to it fail instantly with connection-refused, so the test never
+	// waits out a dial timeout when a gate is (correctly) passed.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := l.Addr().(*net.TCPAddr)
+	l.Close()
+
+	banlist, err := banman.New("", logging.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	banlist.Discourage(target.IP)
+	// A started (but non-listening, non-dialing) server: the manual
+	// path passes the ban gate and consults the live peer set, which
+	// needs the run loop.
+	srv := &Server{
+		Config: Config{
+			PrivateKey:  newkey(),
+			MaxPeers:    10,
+			NoDial:      true,
+			NoDiscovery: true,
+			Logger:      logging.Root(),
+			BanList:     banlist,
+		},
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	// Automatic dial: rejected by the discourage filter.
+	if err := srv.DialV2(target); !errors.Is(err, errV2DialBanned) {
+		t.Fatalf("automatic DialV2 to discouraged = %v, want errV2DialBanned", err)
+	}
+	// Manual dial: passes the filter (and then fails at TCP connect,
+	// which is fine — the gate under test is before the dial).
+	if err := srv.DialV2Manual(target); errors.Is(err, errV2DialBanned) {
+		t.Fatalf("manual DialV2 to discouraged = %v, want the ban gate skipped", err)
+	}
+	// An explicit ban still blocks the manual path.
+	if err := banlist.Ban(target.IP, time.Hour, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.DialV2Manual(target); !errors.Is(err, errV2DialBanned) {
+		t.Fatalf("manual DialV2 to banned = %v, want errV2DialBanned", err)
 	}
 }
 

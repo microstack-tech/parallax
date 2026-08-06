@@ -112,7 +112,7 @@ func (api *privateAdminAPI) AddPeer(url string) (bool, error) {
 		return false, err
 	}
 	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2(tcp); err != nil {
+	if err := server.DialV2Manual(tcp); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -253,7 +253,7 @@ func (api *privateAdminAPI) DialV2(address string) (bool, error) {
 		return false, err
 	}
 	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2(tcp); err != nil {
+	if err := server.DialV2Manual(tcp); err != nil {
 		return false, err
 	}
 	return true, nil

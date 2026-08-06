@@ -1286,6 +1286,21 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 	return srv.dialV2WithFlags(addr, 0)
 }
 
+// DialV2Manual is DialV2 for operator-initiated dials (admin_dialV2
+// and admin_addPeer's ip:port form). The resulting conn is tagged
+// staticDialedConn instead of dynDialedConn: the operator explicitly
+// chose the endpoint, so it gets the same treatment as a v1 static
+// dial — exempt from the discourage filter (a shared-IP neighbor's
+// misbehavior must not strand an explicit dial until restart; Core's
+// manual connections skip discouragement the same way), from the
+// network-group diversity rule, and from the dynamic dial budget.
+// The operator ban check still applies, the same documented
+// divergence from Core as the v1 static path: setban is an explicit
+// operator statement that outranks a dial request.
+func (srv *Server) DialV2Manual(addr *net.TCPAddr) error {
+	return srv.dialV2WithFlags(addr, staticDialedConn)
+}
+
 // DialV2BlockRelay opens a v2-handshake TCP connection like DialV2
 // but tags the resulting conn with the block-relay-only flag. Used
 // at startup to replay anchors.dat — anchor peers are persisted
@@ -1327,8 +1342,17 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	// inbound-only accept-time gate is trivially bypassed: a banned
 	// peer stays in the addrbook and the dial scheduler reconnects
 	// to it as an outbound peer within one cooldown.
+	//
+	// Manual dials (staticDialedConn) skip the discourage half:
+	// discouragement is stamped automatically and has no clearing
+	// RPC, so honoring it on an operator-chosen endpoint would
+	// strand the dial until restart — same exemption as the v1
+	// static path in checkDial. The ban check stays: setban is an
+	// explicit operator statement.
 	if srv.BanList != nil && addr.IP != nil {
-		if srv.BanList.IsBanned(addr.IP) || srv.BanList.IsDiscouraged(addr.IP) {
+		banned := srv.BanList.IsBanned(addr.IP) ||
+			(!extraHas(extra, staticDialedConn) && srv.BanList.IsDiscouraged(addr.IP))
+		if banned {
 			srv.addrmanAttemptByTCP(addr, false)
 			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)
 		}
@@ -1385,8 +1409,15 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
 	// extra carries blockRelayConn for anchor replays / block-relay
-	// bucket fills, or feelerConn for probes.
-	if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|extra, nil); err != nil {
+	// bucket fills, feelerConn for probes, or staticDialedConn for
+	// manual dials — which replaces dynDialedConn rather than
+	// combining with it, so downstream accounting sees exactly one
+	// dial class.
+	flags := dynDialedConn | v2DialedConn | extra
+	if extraHas(extra, staticDialedConn) {
+		flags &^= dynDialedConn
+	}
+	if err := srv.SetupConn(fd, flags, nil); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
 		// object was constructed, so the delpeer path never runs
 		// and addrman never learns the entry is unreachable. Record
@@ -1419,14 +1450,16 @@ func extraHas(extra, f connFlag) bool { return extra&f != 0 }
 
 // v2DialSubjectToGroupLimit reports whether a v2 dial carrying the
 // given extra flags is subject to the outbound network-group
-// diversity rule. Only feeler probes are exempt — full-relay,
-// block-relay-only and anchor dials are all group-limited, as in
-// Core's ThreadOpenConnections. Kept as a named predicate so the
-// exemption set is pinned by a unit test: an earlier version
-// exempted everything with a non-zero extra, quietly letting
-// block-relay and anchor fills cluster in one /16.
+// diversity rule. Feeler probes are exempt (transient, never hold a
+// slot) and so are manual dials (staticDialedConn: the operator chose
+// the endpoint, matching checkDial's static exemption and Core's
+// manual connections) — full-relay, block-relay-only and anchor dials
+// are all group-limited, as in Core's ThreadOpenConnections. Kept as
+// a named predicate so the exemption set is pinned by a unit test: an
+// earlier version exempted everything with a non-zero extra, quietly
+// letting block-relay and anchor fills cluster in one /16.
 func v2DialSubjectToGroupLimit(extra connFlag) bool {
-	return !extraHas(extra, feelerConn)
+	return !extraHas(extra, feelerConn) && !extraHas(extra, staticDialedConn)
 }
 
 // outboundGroupOccupied reports whether any current non-feeler
