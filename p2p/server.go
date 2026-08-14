@@ -1933,20 +1933,12 @@ func (srv *Server) DisconnectByAddr(addr *net.TCPAddr) bool {
 // p2p/protocols/disc.
 func (srv *Server) AddrBook() *addrman.AddrMan { return srv.addrbook }
 
-// addrmanGood marks the peer's address as verified in the addrman.
-// No-op when ExperimentalAddrMan is off. Called from the run-loop
-// right after a peer joins the peers map.
-//
-// Note on KeyType: we deliberately do NOT upgrade an existing entry's
-// KeyType on success. A remote that accepts a v1 RLPx handshake may
-// also accept v2 BIP324 on the same endpoint — v1-success does not
-// imply v2-failure. Changing 0x00 → 0x01 here would hide a legitimate
-// dual-stack peer from V2Iter. Short-circuit / dial noise on v2-only
-// entries that only speak v1 is instead handled via:
-//   - Attempt(countFailure=true) on real dial failures,
-//   - Attempt(countFailure=false) on alreadyConnectedTo short-circuit
-//     (refreshes LastTry, decays Select chance to ~1% for 10 min),
-//   - V2Iter skip on IsTerrible entries (closes the stale-entry loop).
+// addrmanGood marks the peer's address as verified in the addrman and
+// refreshes the entry's identity with what the session proved
+// first-hand. No-op when ExperimentalAddrMan is off. Called from the
+// run-loop right after an outbound peer joins the peers map — the
+// caller's !p.Inbound() guard is load-bearing for the identity update
+// below.
 func (srv *Server) addrmanGood(p *Peer) {
 	if srv.addrbook == nil {
 		return
@@ -1960,6 +1952,51 @@ func (srv *Server) addrmanGood(p *Peer) {
 		"isV2", p.UsingV2Handshake(),
 		"id", p.ID())
 	srv.addrbook.Good(addr, time.Now())
+	srv.upgradeAddrIdentity(p, addr)
+}
+
+// upgradeAddrIdentity overwrites the addrman entry's KeyType/NodeID
+// with what an outbound session proved first-hand — Bitcoin Core's
+// rule that direct connections overwrite while gossip only adds
+// (SetServices on an outbound peer's VERSION message,
+// src/net_processing.cpp:3606-3612, vs gossiped services OR-ed in
+// src/addrman.cpp:574; our gossip half already matches — addSingle
+// only sets identity on create). Without this, an entry gossiped with
+// a stale secp256k1 identity outlives the node's re-key or v2-only
+// switch forever: Good() keeps refreshing the entry on every v2
+// success while its identity never changes, so the network keeps
+// relaying a NodeID nobody can complete a legacy handshake against.
+//
+// Rules (outbound sessions only — inbound peers' advertised endpoints
+// are self-claimed, so they are not ground truth for the address):
+//
+//   - v2 session: set KeyType 0x00, clear NodeID. We dialed the
+//     address and completed the BIP324 handshake, so the endpoint is
+//     v2-dialable, and 0x00 is strictly more dialable in a network
+//     where the v2 handshake is always on.
+//   - legacy session: refresh NodeID only when the entry is already
+//     KeyType 0x01 (heals a stale key after a re-key — the RLPx
+//     handshake verified the key we dialed). Never downgrade
+//     0x00 → 0x01: v1-success does not imply v2-failure, and 0x01
+//     would hide a legitimate dual-stack peer from V2Iter.
+func (srv *Server) upgradeAddrIdentity(p *Peer, addr addrman.NetAddr) {
+	if p.UsingV2Handshake() {
+		if srv.addrbook.UpgradeIdentity(addr, 0x00, nil) {
+			srv.log.Debug("Addrman entry confirmed v2", "addr", addr.String())
+		}
+		return
+	}
+	info := srv.addrbook.Lookup(addr)
+	if info == nil || info.KeyType != 0x01 {
+		return
+	}
+	nodeID, err := addrman.PubkeyBytes(p.Node())
+	if err != nil {
+		return
+	}
+	if srv.addrbook.UpgradeIdentity(addr, 0x01, nodeID) {
+		srv.log.Debug("Addrman entry legacy key refreshed", "addr", addr.String())
+	}
 }
 
 // peerAdvertisedAddr returns the addrman.NetAddr form of a Peer's
