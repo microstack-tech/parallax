@@ -35,9 +35,11 @@ var MainnetBootnodes = []string{}
 // BIP324-style v2 handshake path (addrman KeyType=0x00); operators
 // who run a v2-native bootnode register its endpoint here.
 //
-// The Foundation bootnodes in MainnetBootnodes serve v1 RLPx only
-// and are intentionally omitted here — listing a v1-only endpoint
-// produces a TCP RST on every dial-scheduler tick.
+// The Foundation bootnodes below are the v2.0 flag-day endpoints:
+// they must be running the v2 transport before this release is
+// deployed, since a v1-only endpoint here answers every v2 dial
+// with a failed handshake and — with MainnetBootnodes empty — no
+// other cold-start bootstrap path exists besides the DNS seeds.
 var MainnetBootnodesV2 = []string{
 	"168.231.74.175:32110",
 	"72.61.186.233:32110",

@@ -167,9 +167,10 @@ type TxFetcher struct {
 	alternates map[util.Hash]map[string]struct{} // In-flight transaction alternate origins if retrieval fails
 
 	// Callbacks
-	hasTx    func(util.Hash) bool               // Retrieves a tx from the local txpool
-	addTxs   func([]*types.Transaction) []error // Insert a batch of transactions into local txpool
-	fetchTxs func(string, []util.Hash) error    // Retrieves a set of txs from a remote peer
+	hasTx      func(util.Hash) bool               // Retrieves a tx from the local txpool
+	addTxs     func([]*types.Transaction) []error // Insert a batch of transactions into local txpool
+	fetchTxs   func(string, []util.Hash) error    // Retrieves a set of txs from a remote peer
+	txAccepted func(peer string)                  // Called after a novel tx from peer enters the pool
 
 	step  chan struct{} // Notification channel when the fetcher loop iterates
 	clock mclock.Clock  // Time wrapper to simulate in tests
@@ -208,6 +209,15 @@ func NewTxFetcherForTests(
 		clock:       clock,
 		rand:        rand,
 	}
+}
+
+// SetTxAcceptedHook installs a callback invoked with the origin peer id
+// whenever a delivery from that peer contains at least one transaction that
+// is accepted into the pool. Duplicates, underpriced and otherwise rejected
+// transactions don't fire it — the peer must do useful work to be credited.
+// Must be set before the fetcher starts receiving deliveries.
+func (f *TxFetcher) SetTxAcceptedHook(fn func(peer string)) {
+	f.txAccepted = fn
 }
 
 // Notify announces the fetcher of the potential availability of a new batch of
@@ -271,6 +281,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 	// re-requesting them and dropping the peer in case of malicious transfers.
 	var (
 		added       = make([]util.Hash, 0, len(txs))
+		accepted    int64
 		duplicate   int64
 		underpriced int64
 		otherreject int64
@@ -288,7 +299,8 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 		}
 		// Track a few interesting failure types
 		switch {
-		case err == nil: // Noop, but need to handle to not count these
+		case err == nil:
+			accepted++
 
 		case errors.Is(err, validation.ErrAlreadyKnown):
 			duplicate++
@@ -309,6 +321,9 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 		txBroadcastKnownMeter.Mark(duplicate)
 		txBroadcastUnderpricedMeter.Mark(underpriced)
 		txBroadcastOtherRejectMeter.Mark(otherreject)
+	}
+	if accepted > 0 && f.txAccepted != nil {
+		f.txAccepted(peer)
 	}
 	select {
 	case f.cleanup <- &txDelivery{origin: peer, hashes: added, direct: direct}:

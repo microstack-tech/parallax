@@ -26,6 +26,18 @@ import (
 const ProtocolName = "parallax-disc"
 
 // ProtocolVersion is the only supported version of parallax-disc today.
+//
+// Flag-day constraint: ProtocolLength changed from 3 to 4 within this
+// same version 1 when HelloMsg was added (v2.0.0-rc1 shipped Length 3,
+// no Hello; rc2 onward ship Length 4). devp2p assumes (name, version)
+// uniquely determines Length — two peers advertising parallax-disc/1
+// with different Lengths compute different per-protocol code offsets and
+// silently misroute the message codes of every capability sorting after
+// "parallax-disc" (parallax-snap; the base "parallax" capability sorts
+// before it and is unaffected). This is therefore safe ONLY
+// under a coordinated flag-day upgrade in which no rc1 (Length 3) node
+// ever connects to an rc2+ (Length 4) node. If a mixed population is
+// ever possible, bump this to 2 instead of changing Length again.
 const ProtocolVersion uint = 1
 
 // ProtocolLength is the number of message codes in parallax-disc/1. Must
@@ -33,7 +45,8 @@ const ProtocolVersion uint = 1
 // so 4. p2p's protoRW.WriteMsg rejects msg.Code >= rw.Length with
 // "invalid message code: not handled" — a stale value here silently
 // drops outgoing Hello messages and partitions the network from
-// patched peers.
+// patched peers. See the flag-day note on ProtocolVersion before
+// changing this without a version bump.
 const ProtocolLength uint64 = 4
 
 // MaxMessageSize caps the size of a single inbound message. Chosen so

@@ -250,9 +250,14 @@ func TestComputeDiscOffsetCases(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			// The crawler no longer offers parallax/66 (it never spoke
+			// the prl Status handshake, and advertising it armed the
+			// daemon's 5s teardown timer), so the daemon's parallax
+			// advert is not mutual and allocates no codes on either
+			// side — disc sits at the base offset.
 			name:    "parallax + parallax-disc",
 			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 1}},
-			wantOff: 16 + 17, // base + parallax block
+			wantOff: 16,
 		},
 		{
 			name:    "only parallax-disc",
@@ -267,6 +272,27 @@ func TestComputeDiscOffsetCases(t *testing.T) {
 		{
 			name:    "no parallax-disc",
 			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "snap", Version: 1}},
+			wantErr: true,
+		},
+		{
+			// A parallax version we don't offer is not negotiated, so
+			// it must not shift the layout — name-only matching would
+			// count 17 codes the server never allocates.
+			name:    "unknown parallax version excluded",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 99}, {Name: "parallax-disc", Version: 1}},
+			wantOff: 16,
+		},
+		{
+			// Multiple non-mutual parallax versions still allocate
+			// nothing — the negotiated layout only counts caps both
+			// sides offer.
+			name:    "duplicate parallax versions counted once",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax", Version: 99}, {Name: "parallax-disc", Version: 1}},
+			wantOff: 16,
+		},
+		{
+			name:    "unsupported parallax-disc version",
+			caps:    []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 2}},
 			wantErr: true,
 		},
 	}

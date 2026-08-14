@@ -17,7 +17,9 @@
 package disc
 
 import (
+	"fmt"
 	"testing"
+	"time"
 )
 
 // TestQuorumReachedAtThreshold — three reports from distinct groups
@@ -89,6 +91,55 @@ func TestQuorumDistinctGroupMonotonic(t *testing.T) {
 	}
 }
 
+// TestQuorumAggregatesAcrossPorts — reports for one address aggregate
+// regardless of the port each reporter observed. Regression test: the
+// tally used to key on (net, addr, port), so reports arriving on
+// dialed sessions — each carrying our ephemeral source port — never
+// aggregated, and an outbound-only (NAT'd) node could not reach
+// quorum. The port is ranked separately by reporter plurality.
+func TestQuorumAggregatesAcrossPorts(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{203, 0, 113, 42}
+
+	// Three dialed-session reports (port zeroed by HandleYourAddr),
+	// three distinct groups: quorum must be reached.
+	q.Report("out-1", NetIPv4, addr, 0, []byte{NetIPv4, 1, 1})
+	q.Report("out-2", NetIPv4, addr, 0, []byte{NetIPv4, 2, 2})
+	q.Report("out-3", NetIPv4, addr, 0, []byte{NetIPv4, 3, 3})
+	net, a, p, ok := q.Winner()
+	if !ok {
+		t.Fatal("outbound-only reports did not aggregate to quorum")
+	}
+	if net != NetIPv4 || string(a) != string(addr) {
+		t.Errorf("wrong winner: (%d, %x)", net, a)
+	}
+	if p != 0 {
+		t.Errorf("port should be 0 with no port observations, got %d", p)
+	}
+
+	// Two inbound observations agree on 32110, one says 40000: the
+	// plurality port wins.
+	q.Report("in-1", NetIPv4, addr, 32110, []byte{NetIPv4, 4, 4})
+	q.Report("in-2", NetIPv4, addr, 32110, []byte{NetIPv4, 5, 5})
+	q.Report("in-3", NetIPv4, addr, 40000, []byte{NetIPv4, 6, 6})
+	if _, _, p, _ := q.Winner(); p != 32110 {
+		t.Errorf("plurality port = %d, want 32110", p)
+	}
+}
+
+// TestQuorumPortTieBreaksLow — equal reporter counts pick the lower
+// port so the winner never flaps with map iteration order.
+func TestQuorumPortTieBreaksLow(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 9}
+	q.Report("a", NetIPv4, addr, 40000, []byte{NetIPv4, 1, 1})
+	q.Report("b", NetIPv4, addr, 32110, []byte{NetIPv4, 2, 2})
+	q.Report("c", NetIPv4, addr, 0, []byte{NetIPv4, 3, 3})
+	if _, _, p, ok := q.Winner(); !ok || p != 32110 {
+		t.Errorf("tie-break port = %d (ok=%v), want 32110", p, ok)
+	}
+}
+
 // TestQuorumOverrideShortCircuits — SetOverride always wins.
 func TestQuorumOverrideShortCircuits(t *testing.T) {
 	q := NewQuorum()
@@ -127,6 +178,137 @@ func TestQuorumDisconnectRemovesVotes(t *testing.T) {
 	}
 }
 
+// TestQuorumRefreshDropsDisconnectedPeers — Refresh's
+// connected-peer reconciliation drops reports from peers absent
+// from the supplied connected set, even when their receivedAt is
+// fresh. The "and on peer churn" half of PIP-0006 §Phase 4's
+// quorum re-eval, here exercised as the periodic backstop in case
+// Disconnect() didn't fire.
+func TestQuorumRefreshDropsDisconnectedPeers(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 7}
+
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Fatal("quorum not reached initially")
+	}
+
+	// p3's session vanished (handler.Run returned without firing
+	// PeerDisconnected). Refresh with the truly-connected set must
+	// drop the orphaned report and quorum must follow.
+	connected := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	dropped := q.Refresh(time.Now(), func() map[PeerKey]struct{} { return connected })
+	if dropped != 1 {
+		t.Errorf("Refresh dropped %d, want 1", dropped)
+	}
+	if _, _, _, ok := q.Winner(); ok {
+		t.Error("quorum still ok after Refresh dropped a contributing peer")
+	}
+}
+
+// TestQuorumRefreshNilConnectedKeepsReports — passing nil for the
+// connected set is the "skip connected-set reconciliation" mode
+// (used by tests that exercise only the time-eviction path). Reports
+// must remain intact.
+func TestQuorumRefreshNilConnectedKeepsReports(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 8}
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+
+	if dropped := q.Refresh(time.Now(), nil); dropped != 0 {
+		t.Errorf("nil connected set dropped %d reports, want 0", dropped)
+	}
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Error("quorum lost after Refresh(nil)")
+	}
+}
+
+// TestQuorumAgedReportSurvivesWhileConnected — DEFECT 1 regression.
+// YourAddr is single-shot per session, so a long-lived peer's report
+// ages past QuorumEvictAfter while the peer is still connected. The age
+// sweep must NOT drop such a report (doing so silently collapses quorum
+// on a stable topology); it may only reap the stale report of a peer
+// that is genuinely gone from the connected set.
+func TestQuorumAgedReportSurvivesWhileConnected(t *testing.T) {
+	q := NewQuorum()
+	addr := []byte{198, 51, 100, 9}
+
+	q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+	q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+	q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+
+	// Age every report well past the cap — the steady state on a stable
+	// peer set, where no reconnect ever refreshes receivedAt.
+	q.mu.Lock()
+	for _, byPeer := range q.reports {
+		for pk, entry := range byPeer {
+			entry.receivedAt = time.Now().Add(-QuorumEvictAfter - time.Minute)
+			byPeer[pk] = entry
+		}
+	}
+	q.mu.Unlock()
+
+	// All three peers are still connected: their aged votes must survive.
+	all := map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
+	q.Refresh(time.Now(), func() map[PeerKey]struct{} { return all })
+	if _, _, _, ok := q.Winner(); !ok {
+		t.Fatal("aged reports from still-connected peers were wrongly evicted")
+	}
+
+	// p3's session vanished without firing Disconnect. Now the age sweep
+	// — driven by the reconciled connected set — reaps only that absent
+	// peer's stale vote, dropping quorum below threshold.
+	live := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	q.Refresh(time.Now(), func() map[PeerKey]struct{} { return live })
+	if _, _, _, ok := q.Winner(); ok {
+		t.Error("quorum still ok after the gone peer's stale vote was reaped")
+	}
+}
+
+// TestQuorumRefreshSnapshotLazyKeepsFreshVote — DEFECT 2 regression.
+// The connected snapshot must be evaluated lazily, under the report
+// lock, inside Refresh. A peer that completes Hello+YourAddr in the
+// window between an eager snapshot and the reconciliation is present in
+// the tally but absent from a stale eager snapshot, so it would be
+// deleted — and its single-shot vote lost for the whole session. This
+// test contrasts the two evaluation strategies over identical tallies.
+func TestQuorumRefreshSnapshotLazyKeepsFreshVote(t *testing.T) {
+	addr := []byte{198, 51, 100, 12}
+	build := func() *Quorum {
+		q := NewQuorum()
+		q.Report("p1", NetIPv4, addr, 30303, []byte{NetIPv4, 1, 1})
+		q.Report("p2", NetIPv4, addr, 30303, []byte{NetIPv4, 2, 2})
+		// p3 is the racing peer: its YourAddr has already committed.
+		q.Report("p3", NetIPv4, addr, 30303, []byte{NetIPv4, 3, 3})
+		return q
+	}
+
+	// Hazard: an eager snapshot captured before p3 connected omits p3;
+	// feeding it drops p3's committed vote and collapses quorum. This
+	// documents exactly the failure the lazy snapshot avoids.
+	qBug := build()
+	stale := map[PeerKey]struct{}{"p1": {}, "p2": {}}
+	qBug.Refresh(time.Now(), func() map[PeerKey]struct{} { return stale })
+	if _, _, _, ok := qBug.Winner(); ok {
+		t.Fatal("setup invariant: a stale snapshot missing p3 should drop its vote")
+	}
+
+	// Fixed: the snapshot is evaluated at reconciliation time, when p3's
+	// Report (and, in production, the Hello that precedes it) is already
+	// visible, so p3 is in the live set and its vote survives.
+	qFix := build()
+	qFix.Refresh(time.Now(), func() map[PeerKey]struct{} {
+		return map[PeerKey]struct{}{"p1": {}, "p2": {}, "p3": {}}
+	})
+	if _, _, _, ok := qFix.Winner(); !ok {
+		t.Fatal("fresh vote dropped despite the peer being present at reconcile time")
+	}
+}
+
 // FuzzQuorumReports streams arbitrary (peerKey, net, addr, port, group)
 // reports and asserts: no panic; distinct-group count is consistent
 // (all Winner-true addresses have ≥3 distinct non-empty groups); no
@@ -154,4 +336,54 @@ func FuzzQuorumReports(f *testing.F) {
 		}
 		q.SetOverride(0, nil, 0)
 	})
+}
+
+// TestWinnerDeterministicAcrossMultipleQuorums — when two addresses
+// hold quorum simultaneously, Winner must rank deterministically:
+// most distinct groups first, freshest backing report on ties. The
+// old first-map-hit pick flapped with iteration order, handing ~half
+// of all self-advertisements to an attacker who merely reached
+// threshold alongside the honest tally; it also let a dead address
+// linger as winner forever after an IP change.
+func TestWinnerDeterministicAcrossMultipleQuorums(t *testing.T) {
+	q := NewQuorum()
+	oldAddr := []byte{198, 51, 100, 1}
+	newAddr := []byte{203, 0, 113, 9}
+
+	group := func(b byte) []byte { return []byte{NetIPv4, b, 0} }
+
+	// Old address: quorum from 3 groups (reports land first, so they
+	// are older).
+	for i := 0; i < 3; i++ {
+		q.Report(PeerKey(fmt.Sprintf("old-%d", i)), NetIPv4, oldAddr, 32110, group(byte(10+i)))
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	// New address: quorum from 3 different groups, strictly fresher.
+	for i := 0; i < 3; i++ {
+		q.Report(PeerKey(fmt.Sprintf("new-%d", i)), NetIPv4, newAddr, 32110, group(byte(20+i)))
+	}
+
+	// Equal group counts: freshest tally wins, on every call.
+	for i := 0; i < 20; i++ {
+		_, addr, _, ok := q.Winner()
+		if !ok {
+			t.Fatal("no winner with two quorums present")
+		}
+		if !bytesEqual(addr, newAddr) {
+			t.Fatalf("call %d: winner = %v, want fresher %v", i, addr, newAddr)
+		}
+	}
+
+	// A fourth distinct group for the old address outranks freshness.
+	q.Report(PeerKey("o3"), NetIPv4, oldAddr, 32110, group(13))
+	for i := 0; i < 20; i++ {
+		_, addr, _, ok := q.Winner()
+		if !ok {
+			t.Fatal("no winner")
+		}
+		if !bytesEqual(addr, oldAddr) {
+			t.Fatalf("call %d: winner = %v, want higher-group-count %v", i, addr, oldAddr)
+		}
+	}
 }

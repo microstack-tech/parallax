@@ -397,9 +397,7 @@ scripts or in health probes.`,
 Adds an address to the addrman with source=manual. Manual entries persist
 across restarts, are exempt from source-aware bucket eviction, and are
 dialed before any other source. Accepts either plain ip:port (v2.0-native
-peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).
-
-Requires the node to be running with --experimental-addrman.`,
+peers) or the legacy enode://<hex>@ip:port URL (v1.x peers).`,
 	}
 
 	removenodeCommand = cli.Command{
@@ -468,7 +466,8 @@ Uses admin_setban.`,
 		Category: "CLIENT COMMANDS",
 		Description: `
 Returns the persistent ban list as JSON. Each entry has address (CIDR),
-ban_created and banned_until (Unix seconds), and an optional reason tag.
+ban_created and banned_until (Unix seconds), ban_duration and
+time_remaining (seconds). Matches Bitcoin Core's listbanned fields.
 Uses admin_listbanned.`,
 	}
 
@@ -1746,10 +1745,11 @@ func clientAddrbookResetKey(ctx *cli.Context) error {
 // import on p2p/banman (keeps the CLI binary slim, same pattern used
 // for addrbookStatus).
 type banInfo struct {
-	Subnet     string `json:"address"`
-	BanCreated int64  `json:"ban_created"`
-	BannedTill int64  `json:"banned_until"`
-	Reason     string `json:"reason,omitempty"`
+	Subnet        string `json:"address"`
+	BanCreated    int64  `json:"ban_created"`
+	BannedTill    int64  `json:"banned_until"`
+	BanDuration   int64  `json:"ban_duration"`
+	TimeRemaining int64  `json:"time_remaining"`
 }
 
 // clientSetban invokes admin_setban with the argument shape

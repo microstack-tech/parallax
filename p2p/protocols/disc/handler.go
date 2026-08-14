@@ -46,8 +46,11 @@ type Backend interface {
 	HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, port uint16)
 
 	// HandlePeers ingests gossiped entries, applying any per-peer rate
-	// limits and the 2-hour gossip LastSeen penalty.
-	HandlePeers(peer *p2p.Peer, entries []PeerEntry)
+	// limits and the 2-hour gossip LastSeen penalty. Returns the
+	// entries that passed the rate limit so the caller can mark
+	// exactly those as known to the peer (Core: AddAddressKnown
+	// runs after the rate limit).
+	HandlePeers(peer *p2p.Peer, entries []PeerEntry) []PeerEntry
 
 	// SamplePeers returns up to max entries for a GetPeers response,
 	// subject to reachability filtering. May return nil; the handler
@@ -103,15 +106,10 @@ type state struct {
 	gotYourAddr atomic.Bool
 
 	// peersReceived counts Peers messages received on this session.
-	// Bitcoin parity: >1 unsolicited Peers per 24h disconnects; we
-	// enforce the stricter in-session version (only one solicited
-	// response plus one self-advertise are ever expected on an
-	// outbound session).
+	// Retained for diagnostics; no longer gates disconnection, since
+	// address relay legitimately pushes unsolicited Peers messages
+	// throughout a session (see handlePeers).
 	peersReceived atomic.Uint32
-
-	// peersUnsolicited counts Peers messages that arrived without a
-	// matching GetPeers we sent. More than one is a disconnect.
-	peersUnsolicited atomic.Uint32
 
 	// getPeersSent counts GetPeers requests we've issued to this peer.
 	// One-request-per-session is the rule (Bitcoin parity).
@@ -121,10 +119,11 @@ type state struct {
 	// one response per session; further requests are silently ignored.
 	getPeersReceived atomic.Uint32
 
-	// knownAddr is the rolling bloom filter tracking addresses we've
-	// sent to this peer. Used to skip re-relaying addresses the peer
-	// already has (Phase 4 RelayAddress discipline).
-	knownAddr bloomFilter
+	// knownAddr is the rolling bloom filter tracking addresses the
+	// peer is known to have — both ones we sent it and ones it sent
+	// us. Used to skip re-relaying addresses the peer already has
+	// (Phase 4 RelayAddress discipline, Bitcoin's m_addr_known).
+	knownAddr rollingBloom
 }
 
 // Run is the per-peer entry point. Called by p2p.Server once the
@@ -168,15 +167,80 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 		if err := sendSelfAdvertise(backend, rw); err != nil {
 			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
 		}
-		if err := RequestPeers(st, rw); err != nil {
+		if err := RequestPeers(backend, peer, st, rw); err != nil {
 			log.Debug("parallax-disc/1: GetPeers send failed", "err", err)
 		}
 	}
+
+	// Per-peer relay outbox: RelayAddress fans newly-learned
+	// addresses into our outbox; the drain goroutine writes them on
+	// the wire (gated by the per-peer known-addr bloom so we don't
+	// repeat what the peer already told us). Buffer 16 means we drop
+	// at most a small burst if the underlying connection is slow —
+	// Bitcoin's behavior.
+	//
+	// Lifecycle: RegisterPeerOutbox returns a stop channel the drain
+	// selects on; UnregisterPeerOutbox closes it. The outbox itself is
+	// NEVER closed by either side — closing would race with concurrent
+	// in-flight RelayAddress sends that snapshotted the outbox pointer
+	// before we unregistered, and Go panics on send to a closed channel
+	// even inside a select-with-default (default fires only on full,
+	// not on closed). The drain exits on stop OR on a wire-write error.
+	type outboxRegistrar interface {
+		RegisterPeerOutbox(PeerKey, chan<- PeerEntry) <-chan struct{}
+		UnregisterPeerOutbox(PeerKey, <-chan struct{})
+	}
+	var (
+		outbox chan PeerEntry
+		stop   <-chan struct{}
+	)
+	// Block-relay-only peers are excluded from the relay fan-out for
+	// the same reason they get no self-advertise or GetPeers above:
+	// by spec they don't participate in address gossip. Registering
+	// their outbox would both leak addrbook entries to a peer that
+	// committed not to gossip and waste a fan-out slot per address.
+	if reg, ok := backend.(outboxRegistrar); ok && !peer.BlockRelayOnly() {
+		outbox = make(chan PeerEntry, relayOutboxBuffer)
+		stop = reg.RegisterPeerOutbox(peerKeyFor(peer), outbox)
+	}
+
+	relayDone := make(chan struct{})
+	if outbox != nil {
+		go func() {
+			defer close(relayDone)
+			runRelayDrain(peer, rw, st, outbox, stop, log)
+		}()
+	} else {
+		close(relayDone)
+	}
+
+	// A peer that completes capability negotiation but never sends
+	// its Hello would occupy a slot indefinitely with an undisclosed
+	// relay policy (RelayTxs defaults true pre-Hello). Disconnect if
+	// the Hello hasn't arrived within the deadline — Bitcoin's
+	// VERSION_HANDSHAKE_TIMEOUT (60s).
+	helloTimer := time.AfterFunc(getHelloDeadline(), func() {
+		if !st.gotHello.Load() {
+			log.Debug("parallax-disc/1: no Hello within deadline, disconnecting")
+			peer.Disconnect(p2p.DiscUselessPeer)
+		}
+	})
+	defer helloTimer.Stop()
 
 	defer func() {
 		// Release per-peer state from the backend's maps on session
 		// close. AddrmanBackend exposes PeerDisconnected; other
 		// backends may not, so check via type assertion.
+		// UnregisterPeerOutbox closes the stop channel, which the
+		// drain selects on; we then wait for the drain to exit. We do
+		// NOT close the outbox — see the lifecycle comment above.
+		// Passing our stop token scopes the cleanup to THIS session's
+		// registration: if a re-register replaced it, the replacement
+		// stays untouched.
+		if reg, ok := backend.(outboxRegistrar); ok {
+			reg.UnregisterPeerOutbox(peerKeyFor(peer), stop)
+		}
+		<-relayDone
 		if cleaner, ok := backend.(interface{ PeerDisconnected(*p2p.Peer) }); ok {
 			cleaner.PeerDisconnected(peer)
 		}
@@ -190,12 +254,55 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	}
 }
 
+// relayOutboxBuffer is the per-peer relay outbox depth. Sized so a
+// small burst of new addresses doesn't drop while the drain
+// goroutine is mid-WriteMsg, but kept tight enough that a peer with
+// a slow underlying TCP connection doesn't pile up megabytes of
+// queued entries. Bitcoin's outbound rate of 1.0 addr/s + burst 10
+// means 16 covers ~16s of worst-case backlog before drops.
+const relayOutboxBuffer = 16
+
+// runRelayDrain is the per-peer goroutine that pulls entries from
+// the relay outbox and writes them to the wire. Skips entries the
+// peer already knows about (per the rolling known-addr bloom in
+// st.knownAddr), which is the m_addr_known dedup half of Bitcoin's
+// RelayAddress contract.
+//
+// Returns when stop fires (UnregisterPeerOutbox closed it on session
+// teardown) or when a wire write fails. The outbox is never closed,
+// so the drain cannot rely on a range-loop termination; the explicit
+// stop-channel select is what unwinds the goroutine.
+func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-chan PeerEntry, stop <-chan struct{}, log logging.Logger) {
+	for {
+		var entry PeerEntry
+		select {
+		case <-stop:
+			return
+		case entry = <-outbox:
+		}
+		key := addressKey(entry.NetworkID, entry.Addr, entry.TCPPort)
+		if st.knownAddr.Contains(key) {
+			// Peer already knows. Bitcoin: m_addr_known dedup.
+			continue
+		}
+		st.knownAddr.Add(key)
+		if err := p2p.Send(rw, PeersMsg, Peers{Entries: []PeerEntry{entry}}); err != nil {
+			log.Trace("parallax-disc/1: relay write failed; ending drain", "peer", peer.ID(), "err", err)
+			return
+		}
+	}
+}
+
 // sendSelfAdvertise writes a 1-entry Peers message containing our
 // current self-address claim to an outbound peer. Mirrors Bitcoin's
 // addr(self) sequence on outbound-full-relay peers. Skipped silently
-// if no self-address is available (no quorum, no override).
+// if no self-address is available (no quorum, no override). The local
+// listen port is passed so SelfEntry can complete a port-less quorum
+// winner (e.g. a --nat extip override without a port): advertising
+// TCPPort 0 would fail Validate() on every receiver and get this
+// node discouraged on sight.
 func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
-	self, ok := backend.SelfEntry(0)
+	self, ok := backend.SelfEntry(backend.LocalHello().ListenPort)
 	if !ok {
 		return nil
 	}
@@ -223,11 +330,16 @@ func handleOne(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *state)
 
 	// Enforce the protocol's first-message ordering: Hello must be
 	// the first message on every session. Anything else before Hello
-	// is a violation. Once gotHello is true, the rule is satisfied.
-	// The Hello message itself bypasses the gate (it's allowed to
-	// be the first thing we see).
+	// ends the session — but with a plain disconnect, NOT a
+	// discourage stamp. A pre-flag-day node (protocol Length 3, no
+	// HelloMsg) leads every session with GetPeers or YourAddr;
+	// stamping it would ban the address across reconnects, including
+	// after that node upgrades, turning a brief mixed-population
+	// rollout window into a longer-lived partition. A malicious peer
+	// skipping Hello costs us one accepted connection, which the
+	// disconnect already answers. Once gotHello is true, the rule is
+	// satisfied; the Hello message itself bypasses the gate.
 	if msg.Code != HelloMsg && !st.gotHello.Load() {
-		peer.MisbehavingFor("disc-pre-hello-msg")
 		return fmt.Errorf("disc: msg 0x%02x before Hello", msg.Code)
 	}
 
@@ -258,6 +370,16 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	if peer.BlockRelayOnly() {
 		return nil
 	}
+	// Only answer peers that connected to us. We chose our outbound
+	// peers; a node we dialed asking for our addrbook is the shape of
+	// an addrman-poisoning probe, and Bitcoin ignores getaddr on
+	// outbound connections for the same cache-leak reason
+	// (net_processing.cpp "Ignore getaddr message on outbound
+	// connections").
+	if !peer.Inbound() {
+		backend.Log().Trace("parallax-disc/1: ignoring GetPeers on outbound connection", "peer", peer.ID())
+		return nil
+	}
 	count := st.getPeersReceived.Add(1)
 	if count > 1 {
 		// Bitcoin parity: repeat GetPeers in the same session is a
@@ -265,22 +387,6 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 		// under adversarial probing.
 		backend.Log().Trace("parallax-disc/1: ignoring repeat GetPeers", "peer", peer.ID())
 		return nil
-	}
-	// Apply Poisson jitter so the response doesn't arrive on a
-	// predictable cadence — matches Bitcoin's PoissonNextSend
-	// scheduling on address trickle. Mean is tunable so tests can
-	// drop it to zero; production keeps the 2s mean. The max-delay
-	// cap is a practical truncation against Poisson's long tail (a
-	// natural draw can exceed 10× mean; we cap at 3× to bound worst
-	// case).
-	if mean := peersResponseJitterMean; mean > 0 {
-		delay := poissonDelay(mean)
-		if delay > 3*mean {
-			delay = 3 * mean
-		}
-		if delay > 0 {
-			time.Sleep(delay)
-		}
 	}
 	sample := backend.SamplePeers(peer, MaxPeersPerMessage)
 	if sample == nil {
@@ -294,18 +400,64 @@ func handleGetPeers(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *s
 	for _, e := range sample {
 		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
 	}
+	// Apply Poisson jitter so the response doesn't arrive on a
+	// predictable cadence — matches Bitcoin's PoissonNextSend
+	// scheduling on address trickle. Bitcoin schedules the response
+	// asynchronously, and so do we: sleeping in the read loop would
+	// stall every subsequent message from this peer for up to the
+	// jitter cap. The max-delay cap is a practical truncation against
+	// Poisson's long tail (a natural draw can exceed 10x mean; we cap
+	// at 3x to bound the worst case). A send after session teardown
+	// fails with ErrShuttingDown and is dropped silently.
+	if mean := getPeersResponseJitterMean(); mean > 0 {
+		delay := poissonDelay(mean)
+		if delay > 3*mean {
+			delay = 3 * mean
+		}
+		go func() {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			<-timer.C
+			if err := p2p.Send(rw, PeersMsg, Peers{Entries: sample}); err != nil {
+				backend.Log().Trace("parallax-disc/1: delayed Peers response dropped", "peer", peer.ID(), "err", err)
+			}
+		}()
+		return nil
+	}
 	return p2p.Send(rw, PeersMsg, Peers{Entries: sample})
 }
 
-// peersResponseJitterMean is the mean Poisson delay applied to
-// GetPeers responses. Tests override via the SetPeersResponseJitter
-// helper; production value matches Bitcoin's 2-second address-trickle
-// cadence.
-var peersResponseJitterMean = 2 * time.Second
+// helloDeadline is the time (in nanoseconds) a session may run
+// without the peer's Hello before we disconnect it. Atomic so tests
+// can shorten it. Production value mirrors Bitcoin's
+// VERSION_HANDSHAKE_TIMEOUT.
+var helloDeadline atomic.Int64
+
+func init() { helloDeadline.Store(int64(60 * time.Second)) }
+
+func getHelloDeadline() time.Duration {
+	return time.Duration(helloDeadline.Load())
+}
+
+// SetHelloDeadline overrides the no-Hello disconnect deadline.
+// Exposed for tests.
+func SetHelloDeadline(d time.Duration) { helloDeadline.Store(int64(d)) }
+
+// peersResponseJitterMean is the mean Poisson delay (in nanoseconds)
+// applied to GetPeers responses. Atomic because tests mutate it while
+// handler goroutines read it. Production value matches Bitcoin's
+// 2-second address-trickle cadence.
+var peersResponseJitterMean atomic.Int64
+
+func init() { peersResponseJitterMean.Store(int64(2 * time.Second)) }
+
+func getPeersResponseJitterMean() time.Duration {
+	return time.Duration(peersResponseJitterMean.Load())
+}
 
 // SetPeersResponseJitterMean overrides the Poisson mean used in the
 // response delay. Exposed for tests; pass 0 to disable jitter.
-func SetPeersResponseJitterMean(d time.Duration) { peersResponseJitterMean = d }
+func SetPeersResponseJitterMean(d time.Duration) { peersResponseJitterMean.Store(int64(d)) }
 
 // poissonDelay returns a Poisson-distributed delay with the given mean.
 // Follows Bitcoin's PoissonNextSend(mean) helper: draw U∈(0,1],
@@ -327,19 +479,28 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 	}
 	st.peersReceived.Add(1)
 
-	// Unsolicited-rate enforcement: every Peers message past the first
-	// (which answers our GetPeers) is unsolicited. The initial
-	// 1-entry self-advertise from an outbound peer's greeting is
-	// allowed — detected by size==1 and peersReceived==1 AND no
-	// GetPeers has been sent yet.
-	solicited := st.getPeersSent.Load() >= 1 && st.peersReceived.Load() == 1
-	selfAdvertise := len(pkt.Entries) == 1 && st.peersReceived.Load() == 1
-	if !solicited && !selfAdvertise {
-		if st.peersUnsolicited.Add(1) > 1 {
-			peer.MisbehavingFor("disc-unsolicited-peers")
-			return errors.New("disc: too many unsolicited Peers messages")
-		}
+	// Block-relay-only links exist for block propagation alone: Core
+	// ignores addr messages on them outright (SetupAddressRelay is
+	// never set up for block-relay-only connections), so their Peers
+	// messages must feed neither addrman nor onward relay. Ignore
+	// without a misbehavior mark — sending one is legal, it just does
+	// nothing.
+	if peer.BlockRelayOnly() {
+		return nil
 	}
+
+	// Unsolicited Peers messages are expected on an ongoing basis:
+	// address relay (RelayAddress) pushes freshly-learned addresses to
+	// its fan-out targets as single-entry Peers messages throughout a
+	// session, exactly like Bitcoin Core's unsolicited ADDR pushes.
+	// We therefore do NOT disconnect a peer for sending more than one
+	// unsolicited Peers message. DoS is bounded the way Bitcoin Core
+	// bounds it: MaxPeersPerMessage caps entries per message (oversize
+	// is a disconnect via Validate above), and the per-peer ingest
+	// token bucket in HandlePeers drops entries that exceed the addr
+	// ingest rate. An earlier revision capped unsolicited messages at
+	// one, which made honest relaying peers disconnect and discourage
+	// each other and broke gossip between upgraded nodes.
 
 	// Filter out skippable entries; disconnect on any shape violation.
 	kept := pkt.Entries[:0]
@@ -354,7 +515,14 @@ func handlePeers(backend Backend, peer *p2p.Peer, st *state, msg p2p.Msg) error 
 		}
 		kept = append(kept, pkt.Entries[i])
 	}
-	backend.HandlePeers(peer, kept)
+	// Mark only the entries that passed the ingest rate limit as
+	// known to the peer (Bitcoin: AddAddressKnown after the token
+	// bucket). Marking pre-limit would let a peer churn our filter
+	// generations with unlimited rate-limited pushes and suppress
+	// our future relay of addresses it never actually processed.
+	for _, e := range backend.HandlePeers(peer, kept) {
+		st.knownAddr.Add(addressKey(e.NetworkID, e.Addr, e.TCPPort))
+	}
 	return nil
 }
 
@@ -448,11 +616,16 @@ func sendYourAddr(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter, st *sta
 
 // RequestPeers sends a GetPeers on the session. Callers (the dialer in
 // Phase 4) invoke this once per outbound session. Repeated calls are
-// dropped silently.
-func RequestPeers(st *state, rw p2p.MsgReadWriter) error {
-	if st.getPeersSent.Load() >= 1 {
+// dropped silently. Backends that track solicited responses (the
+// production AddrmanBackend) are notified so the response bypasses
+// the ingest rate limit and its entries are excluded from onward
+// relay — Bitcoin's m_getaddr_sent + getaddr bucket-credit pattern.
+func RequestPeers(backend Backend, peer *p2p.Peer, st *state, rw p2p.MsgReadWriter) error {
+	if !st.getPeersSent.CompareAndSwap(0, 1) {
 		return nil
 	}
-	st.getPeersSent.Add(1)
+	if noter, ok := backend.(interface{ NoteGetPeersSent(*p2p.Peer) }); ok {
+		noter.NoteGetPeersSent(peer)
+	}
 	return p2p.Send(rw, GetPeersMsg, GetPeers{})
 }

@@ -21,10 +21,23 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 )
+
+// TestMaxMessageFitsV2Frame pins maxMessageSize to the v2 transport's
+// frame cap. The v2 transport writes each message as a single AEAD
+// frame (no fragmentation), so any message the protocol permits must
+// fit in one frame or WriteMsg fails and the connection is torn down.
+// The 16-byte allowance covers the RLP-encoded message code prefix.
+func TestMaxMessageFitsV2Frame(t *testing.T) {
+	if maxMessageSize+16 > bip324handshake.MaxFrameLen {
+		t.Fatalf("maxMessageSize %d does not fit v2 MaxFrameLen %d",
+			maxMessageSize, bip324handshake.MaxFrameLen)
+	}
+}
 
 // Tests that the custom union field encoder and decoder works correctly.
 func TestGetBlockHeadersDataEncodeDecode(t *testing.T) {

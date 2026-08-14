@@ -188,6 +188,7 @@ type BlockFetcher struct {
 	insertHeaders  headersInsertFn    // Injects a batch of headers into the chain
 	insertChain    chainInsertFn      // Injects a batch of blocks into the chain
 	dropPeer       peerDropFn         // Drops a peer for misbehaving
+	blockAccepted  func(peer string)  // Called after a novel propagated block from peer is imported
 
 	// Testing hooks
 	announceChangeHook func(util.Hash, bool)             // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -224,6 +225,20 @@ func NewBlockFetcher(light bool, getHeader HeaderRetrievalFn, getBlock blockRetr
 		insertChain:    insertChain,
 		dropPeer:       dropPeer,
 	}
+}
+
+// SetBlockAcceptedHook installs a callback invoked with the origin peer id
+// after a propagated block from that peer passes verification and the
+// insert callback returns success. Known blocks are filtered before
+// import, so the callback fires only for novel valid blocks — the peer
+// did useful work. Caveat: while the node is below its checkpoint or
+// still snap-syncing, the handler's inserter discards propagated blocks
+// yet reports success, so the hook fires for blocks that were never
+// imported; forging one still requires novel valid PoW on a known
+// parent, so the eviction credit it grants is paid for. Must be set
+// before Start.
+func (f *BlockFetcher) SetBlockAcceptedHook(fn func(peer string)) {
+	f.blockAccepted = fn
 }
 
 // Start boots up the announcement based synchroniser, accepting and processing
@@ -867,6 +882,11 @@ func (f *BlockFetcher) importBlocks(peer string, block *types.Block) {
 		// If import succeeded, broadcast the block
 		blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
 		go f.broadcastBlock(block, false)
+
+		// Credit the origin peer with a novel accepted block
+		if f.blockAccepted != nil {
+			f.blockAccepted(peer)
+		}
 
 		// Invoke the testing hook if needed
 		if f.importedHook != nil {

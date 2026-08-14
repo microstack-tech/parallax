@@ -938,3 +938,46 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	}
 	verifyImportDone(t, imported)
 }
+
+// Tests that the block-accepted hook fires only when a propagated block is
+// actually imported — never for duplicates or blocks failing verification —
+// since eviction protection (p2p.Peer.MarkBlockRx) hangs off it.
+func TestBlockAcceptedHook(t *testing.T) {
+	hashes, blocks := makeChain(2, 0, genesis)
+
+	tester := newTester(false)
+	accepted := make(chan string, 4)
+	tester.fetcher.SetBlockAcceptedHook(func(peer string) { accepted <- peer })
+
+	imported := make(chan any, 4)
+	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) { imported <- block }
+
+	// A novel valid block credits its origin peer
+	tester.fetcher.Enqueue("valid", blocks[hashes[1]])
+	verifyImportEvent(t, imported, true)
+	select {
+	case peer := <-accepted:
+		if peer != "valid" {
+			t.Fatalf("accepted hook peer mismatch: have %s, want valid", peer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("accepted hook did not fire for novel imported block")
+	}
+	// Re-propagating the already-imported block credits nobody
+	tester.fetcher.Enqueue("copycat", blocks[hashes[1]])
+	verifyImportEvent(t, imported, false)
+	select {
+	case peer := <-accepted:
+		t.Fatalf("accepted hook fired for duplicate block from %s", peer)
+	default:
+	}
+	// A block failing header verification credits nobody either
+	tester.fetcher.verifyHeader = func(*types.Header) error { return errors.New("invalid") }
+	tester.fetcher.Enqueue("attacker", blocks[hashes[0]])
+	verifyImportEvent(t, imported, false)
+	select {
+	case peer := <-accepted:
+		t.Fatalf("accepted hook fired for invalid block from %s", peer)
+	default:
+	}
+}

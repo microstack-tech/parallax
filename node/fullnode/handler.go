@@ -233,6 +233,22 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return p.RequestTxs(hashes)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, h.txpool.AddRemotes, fetchTx)
+
+	// Eviction-protection telemetry. Bitcoin Core stamps m_last_block_time /
+	// m_last_tx_time only when a peer's block is accepted as new or its tx
+	// enters the mempool (net_processing.cpp), so an attacker can't earn
+	// eviction protection without doing useful work. Stamp at the same
+	// acceptance points here rather than on message receipt.
+	h.blockFetcher.SetBlockAcceptedHook(func(id string) {
+		if p := h.peers.peer(id); p != nil {
+			p.MarkBlockRx()
+		}
+	})
+	h.txFetcher.SetTxAcceptedHook(func(id string) {
+		if p := h.peers.peer(id); p != nil {
+			p.MarkTxRx()
+		}
+	})
 	h.chainSync = newChainSyncer(h)
 	return h, nil
 }
@@ -240,19 +256,33 @@ func newHandler(config *handlerConfig) (*handler, error) {
 // runParallaxPeer registers a parallax peer into the joint parallax/snap peerset, adds it to
 // various subsistems and starts handling messages.
 func (h *handler) runParallaxPeer(peer *prl.Peer, handler prl.Handler) error {
-	// If the peer has a `snap` extension, wait for it to connect so we can have
-	// a uniform initialization/teardown mechanism
-	snap, err := h.peers.waitSnapExtension(peer)
-	if err != nil {
-		peer.Log().Error("Snapshot extension barrier failed", "err", err)
-		return err
-	}
-	// TODO(karalabe): Not sure why this is needed
-	if !h.chainSync.handlePeerEvent(peer) {
-		return p2p.DiscQuitting
+	// Feelers never get a snap extension (the snap run loop discards
+	// for them without registering, so the barrier would wait for an
+	// arrival that cannot happen), and they are not sync candidates,
+	// so the syncer isn't notified of them either.
+	feeler := peer.Peer.Feeler()
+	var snap *snap.Peer
+	if !feeler {
+		// If the peer has a `snap` extension, wait for it to connect so we can have
+		// a uniform initialization/teardown mechanism
+		var err error
+		snap, err = h.peers.waitSnapExtension(peer)
+		if err != nil {
+			peer.Log().Error("Snapshot extension barrier failed", "err", err)
+			return err
+		}
+		// TODO(karalabe): Not sure why this is needed
+		if !h.chainSync.handlePeerEvent(peer) {
+			return p2p.DiscQuitting
+		}
 	}
 	h.peerWG.Add(1)
-	defer h.peerWG.Done()
+	wgDone := h.peerWG.Done
+	defer func() {
+		if wgDone != nil {
+			wgDone()
+		}
+	}()
 
 	// Execute the Parallax handshake
 	var (
@@ -266,6 +296,26 @@ func (h *handler) runParallaxPeer(peer *prl.Peer, handler prl.Handler) error {
 	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
 		peer.Log().Debug("Parallax handshake failed", "err", err)
 		return err
+	}
+	// Feelers stop here: the completed handshake is the reachability
+	// proof the probe exists for, and the p2p layer disconnects the
+	// session on its own schedule (disconnectFeelerAfter). They must
+	// never register into the peerset — that would count them toward
+	// maxPeers admission and minSyncPeers, and on a sparse peer set
+	// let a 10-30s probe become the sync master, aborting the sync
+	// round when it disconnects. Drain the session until teardown so
+	// the disc protocol sharing the connection can finish its work.
+	//
+	// Release the wait group before parking: the discard loop touches
+	// no handler or chain state, and node teardown stops lifecycles
+	// before p2p.Server.Stop, so holding the WG would stall
+	// handler.Stop for the probe's remaining lifetime (up to 30s for
+	// the startup addrfetch sweep) with nothing able to cut it short.
+	if feeler {
+		peer.Log().Debug("Parallax feeler handshake complete, holding unregistered")
+		wgDone()
+		wgDone = nil
+		return prl.HandleDiscard(peer)
 	}
 	reject := false // reserved peer slots
 	if atomic.LoadUint32(&h.snapSync) == 1 {
