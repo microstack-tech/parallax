@@ -43,6 +43,11 @@ import (
 // every Peers reply back into the queue, and saves state every
 // --save-interval (and at exit). Designed to be run as a long-lived
 // service writing to the same JSON file across restarts.
+//
+// The walker probes the v2 (BIP324) transport exclusively — entries
+// gossiped with a legacy secp256k1 identity are still dialed as v2,
+// with the gossiped identity kept in state as data. Crawling the
+// legacy v1.x network is the discv4 crawler's job.
 var parallaxDiscCrawlerCommand = cli.Command{
 	Name: "crawl",
 	Usage: "Multi-hop crawl of the parallax-disc/1 network. Loads state from --state, " +
@@ -354,11 +359,21 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	cur.LastAttempt = now
 	w.stMu.Unlock()
 
+	// The walker measures the v2 disc network only — legacy RLPx
+	// crawling is a separate tool (discv4). Gossiped KeyType/NodeID
+	// stay in state as observed data, but every dial goes through the
+	// v2 handshake, which needs no prior identity. Dialing legacy here
+	// also breaks on stale gossip: relayed secp256k1 entries outlive a
+	// node's re-key or v2-only switch, and the RLPx handshake then
+	// fails forever with EOF against a perfectly reachable node.
+	target := *n
+	target.KeyType = disc.KeyTypeNone
+	target.NodeID = ""
 	logging.Info("parallax-disc probe",
 		"addr", n.tcpAddr(),
-		"keyType", n.KeyType,
+		"gossipKeyType", n.KeyType,
 		"id", n.NodeID)
-	peers, caps, err := probeOne(ctx, n)
+	peers, caps, err := probeOne(ctx, &target)
 
 	w.stMu.Lock()
 	cur = w.state.Nodes[nodeKey(n)]

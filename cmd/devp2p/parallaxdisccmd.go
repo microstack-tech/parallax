@@ -87,11 +87,13 @@ type crawlEntry struct {
 }
 
 // CrawlNode identifies one peer the crawler probes and carries the
-// per-node statistics tracked across runs. The identity fields
-// (NetworkID, IP, TCPPort, KeyType, NodeID) are enough to dispatch the
-// right handshake variant: KeyType=0x00 → v2 (BIP324), KeyType=0x01 →
-// legacy RLPx with NodeID-derived pubkey. The stats are only populated
-// by the walker; single-shot probes leave them zero.
+// per-node statistics tracked across runs. KeyType/NodeID record the
+// identity as gossiped (or as given in an enode:// seed); only the
+// single-shot probe command dispatches the handshake variant on them
+// (KeyType=0x00 → v2 BIP324, KeyType=0x01 → legacy RLPx with the
+// NodeID-derived pubkey). The walker ignores them for dialing and
+// always probes v2 — legacy crawling is a separate tool. The stats are
+// only populated by the walker; single-shot probes leave them zero.
 type CrawlNode struct {
 	NetworkID uint8  `json:"network"` // BIP155 tag (only IPv4/IPv6 are dialable)
 	IP        string `json:"ip"`      // text form ("1.2.3.4" / "2001:db8::1")
