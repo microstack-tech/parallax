@@ -207,6 +207,67 @@ func TestRegisterAndEnqueueNeverDowngradesIdentity(t *testing.T) {
 	}
 }
 
+// TestIsTerribleClauses walks each clause of the Bitcoin Core
+// AddrInfo::IsTerrible port.
+func TestIsTerribleClauses(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name string
+		node CrawlNode
+		want bool
+	}{
+		{"tried-last-minute-protected", CrawlNode{LastAttempt: now.Add(-30 * time.Second), FailStreak: 100}, false},
+		{"never-succeeded-3-attempts", CrawlNode{LastAttempt: now.Add(-2 * time.Hour), FailStreak: 3}, true},
+		{"never-succeeded-2-attempts", CrawlNode{LastAttempt: now.Add(-2 * time.Hour), FailStreak: 2}, false},
+		{"week-dead-10-failures", CrawlNode{LastAttempt: now.Add(-2 * time.Hour), LastSuccess: now.Add(-8 * 24 * time.Hour), FailStreak: 10}, true},
+		{"week-dead-9-failures", CrawlNode{LastAttempt: now.Add(-2 * time.Hour), LastSuccess: now.Add(-8 * 24 * time.Hour), FailStreak: 9}, false},
+		{"recent-success-10-failures", CrawlNode{LastAttempt: now.Add(-2 * time.Hour), LastSuccess: now.Add(-time.Hour), FailStreak: 10}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.node.isTerrible(now); got != tc.want {
+				t.Errorf("isTerrible() = %v, want %v (node %+v)", got, tc.want, tc.node)
+			}
+		})
+	}
+}
+
+func TestRequeueAllEvictsTerrible(t *testing.T) {
+	now := time.Now()
+	terrible := &CrawlNode{
+		NetworkID:   disc.NetIPv4,
+		IP:          "9.9.9.9",
+		TCPPort:     32110,
+		LastAttempt: now.Add(-15 * time.Minute),
+		FailStreak:  5,
+	}
+	healthy := &CrawlNode{
+		NetworkID:   disc.NetIPv4,
+		IP:          "1.2.3.4",
+		TCPPort:     32110,
+		LastAttempt: now.Add(-15 * time.Minute),
+		LastSuccess: now.Add(-15 * time.Minute),
+	}
+	w := &walker{
+		state: &CrawlState{Nodes: map[string]*CrawlNode{
+			nodeKey(terrible): terrible,
+			nodeKey(healthy):  healthy,
+		}},
+		todoCh: make(chan *CrawlNode, 8),
+	}
+	w.requeueAll(context.Background())
+
+	if _, ok := w.state.Nodes[nodeKey(terrible)]; ok {
+		t.Error("terrible node not evicted from state")
+	}
+	if _, ok := w.state.Nodes[nodeKey(healthy)]; !ok {
+		t.Error("healthy node evicted from state")
+	}
+	if got := len(w.todoCh); got != 1 {
+		t.Errorf("queue depth = %d, want 1 (only the healthy node requeued)", got)
+	}
+}
+
 // writeFile is a tiny helper to keep test imports lean.
 func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)

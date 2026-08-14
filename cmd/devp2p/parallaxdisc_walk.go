@@ -337,7 +337,37 @@ func (w *walker) run(ctx context.Context) error {
 // requeueAll clears the per-run dedup set and re-enqueues every node
 // in state. Used by the run loop's drain path when reprobeInterval > 0
 // — keeps the walker probing until the timeout fires.
+// evictTerrible removes nodes the addrman give-up policy has written
+// off. Runs at the start of each reprobe cycle — after the reprobe
+// sleep, so LastAttempt is stale enough to clear isTerrible's
+// tried-in-the-last-minute guard (at queue drain the probes are
+// seconds old and nothing could ever be evicted). Evicted nodes are
+// re-learnable at any time via gossip or --bootnodes.
+func (w *walker) evictTerrible() {
+	now := time.Now()
+	w.stMu.Lock()
+	var evicted []*CrawlNode
+	for key, n := range w.state.Nodes {
+		if n.isTerrible(now) {
+			delete(w.state.Nodes, key)
+			evicted = append(evicted, n)
+		}
+	}
+	remaining := len(w.state.Nodes)
+	w.stMu.Unlock()
+	for _, n := range evicted {
+		logging.Info("parallax-disc evicting unreachable node",
+			"addr", n.tcpAddr(), "failStreak", n.FailStreak,
+			"lastError", n.LastError)
+	}
+	if len(evicted) > 0 {
+		logging.Info("parallax-disc eviction sweep done",
+			"evicted", len(evicted), "remaining", remaining)
+	}
+}
+
 func (w *walker) requeueAll(ctx context.Context) {
+	w.evictTerrible()
 	w.seen = sync.Map{}
 	w.passStart = time.Now()
 	atomic.StoreInt64(&w.passProbes, 0)
@@ -424,6 +454,7 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	cur = w.state.Nodes[nodeKey(n)]
 	if err != nil {
 		cur.FailCount++
+		cur.FailStreak++
 		cur.updateStats(false, now, prevAttempt)
 		cur.LastError = err.Error()
 		rel2h := cur.Stat2H.Reliability
@@ -434,6 +465,7 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 		return
 	}
 	cur.SuccessCount++
+	cur.FailStreak = 0
 	cur.updateStats(true, now, prevAttempt)
 	cur.LastSuccess = time.Now()
 	cur.LastError = ""

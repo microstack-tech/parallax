@@ -107,6 +107,7 @@ type CrawlNode struct {
 	LastAttempt  time.Time `json:"lastAttempt,omitempty"`
 	SuccessCount uint64    `json:"successCount,omitempty"`
 	FailCount    uint64    `json:"failCount,omitempty"`
+	FailStreak   uint64    `json:"failStreak,omitempty"` // consecutive failures since the last success (addrman nAttempts)
 	LastError    string    `json:"lastError,omitempty"`
 	Capabilities []string  `json:"capabilities,omitempty"`
 
@@ -169,6 +170,37 @@ func (n *CrawlNode) updateStats(good bool, now, prevAttempt time.Time) {
 	n.Stat1D.Update(good, age, 24*3600)
 	n.Stat1W.Update(good, age, 7*24*3600)
 	n.Stat1M.Update(good, age, 30*24*3600)
+}
+
+// Eviction thresholds ported from Bitcoin Core's addrman
+// (src/addrman.cpp): how many failed attempts before giving up on an
+// address, depending on whether it ever succeeded.
+const (
+	addrmanRetries     = 3                  // ADDRMAN_RETRIES: attempts on a never-successful address
+	addrmanMaxFailures = 10                 // ADDRMAN_MAX_FAILURES: successive failures on a known address
+	addrmanMinFail     = 7 * 24 * time.Hour // ADDRMAN_MIN_FAIL: how long a known address keeps failing before eviction
+)
+
+// isTerrible ports AddrInfo::IsTerrible from Bitcoin Core's addrman:
+// the policy for giving up on an address entirely. Core's nTime
+// horizon clauses (address not *heard about* from third parties in 30
+// days) are omitted — the walker doesn't record third-party freshness,
+// and every entry here is probed first-hand each pass, so the failure
+// clauses subsume the horizon.
+func (n *CrawlNode) isTerrible(now time.Time) bool {
+	// Never remove things tried in the last minute.
+	if now.Sub(n.LastAttempt) <= time.Minute {
+		return false
+	}
+	// Tried N times and never a success.
+	if n.LastSuccess.IsZero() && n.FailStreak >= addrmanRetries {
+		return true
+	}
+	// N successive failures in the last week.
+	if now.Sub(n.LastSuccess) > addrmanMinFail && n.FailStreak >= addrmanMaxFailures {
+		return true
+	}
+	return false
 }
 
 // isGood ports the reliability clauses of CAddrInfo::IsGood()
