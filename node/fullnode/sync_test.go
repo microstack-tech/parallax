@@ -147,9 +147,13 @@ func testSyncTransactionsRelayGate(t *testing.T, protocol uint, blockRelay bool)
 	if err := src.Handshake(1, td, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
 		t.Fatalf("failed to run protocol handshake: %v", err)
 	}
-	msgs := make(chan p2p.Msg, 1)
+	msgs := make(chan p2p.Msg, 16)
 	go func() {
-		if msg, err := p2pSrc.ReadMsg(); err == nil {
+		for {
+			msg, err := p2pSrc.ReadMsg()
+			if err != nil {
+				return
+			}
 			msgs <- msg
 		}
 	}()
@@ -160,13 +164,24 @@ func testSyncTransactionsRelayGate(t *testing.T, protocol uint, blockRelay bool)
 		case <-time.After(250 * time.Millisecond):
 		}
 	} else {
-		select {
-		case msg := <-msgs:
-			if msg.Code != prl.NewPooledTransactionHashesMsg {
-				t.Fatalf("unexpected message %#x, want NewPooledTransactionHashes", msg.Code)
+		timeout := time.After(time.Second)
+		for {
+			select {
+			case msg := <-msgs:
+				switch msg.Code {
+				case prl.NewPooledTransactionHashesMsg:
+					return
+				case prl.TransactionsMsg:
+					// Seeding the pool also fires a NewTxsEvent; if the
+					// handler's broadcast loop consumes it after the peer
+					// registered, the peer legitimately receives the full
+					// transaction too. Only the announcement is under test.
+				default:
+					t.Fatalf("unexpected message %#x, want NewPooledTransactionHashes", msg.Code)
+				}
+			case <-timeout:
+				t.Fatal("full-relay peer received no pool announcement")
 			}
-		case <-time.After(time.Second):
-			t.Fatal("full-relay peer received no pool announcement")
 		}
 	}
 }
