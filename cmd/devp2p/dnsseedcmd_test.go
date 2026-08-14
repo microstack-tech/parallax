@@ -17,6 +17,7 @@
 package main
 
 import (
+	"math"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -26,6 +27,21 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 )
+
+// reliableWindows is the shape a healthy node's stats reach within one
+// crawl pass: the 2h window satisfied (reliability > 0.85, count > 2).
+func reliableWindows(n *CrawlNode) *CrawlNode {
+	n.Stat2H = AddrStat{Weight: 0.9, Count: 3, Reliability: 0.95}
+	return n
+}
+
+// decayedWindows is a node whose reliability has decayed below every
+// IsGood clause despite plenty of attempts in each window.
+func decayedWindows(n *CrawlNode) *CrawlNode {
+	bad := AddrStat{Weight: 0.9, Count: 40, Reliability: 0.2}
+	n.Stat2H, n.Stat8H, n.Stat1D, n.Stat1W, n.Stat1M = bad, bad, bad, bad, bad
+	return n
+}
 
 // fixtureCrawlState builds a CrawlState covering every filter axis the
 // compile step has to deal with.
@@ -45,36 +61,36 @@ func fixtureCrawlState(now time.Time) *CrawlState {
 	st := &CrawlState{Nodes: map[string]*CrawlNode{}}
 	add := func(n *CrawlNode) { st.Nodes[nodeKey(n)] = n }
 
-	// Pass: v2, default port, fresh, healthy.
-	add(mk(disc.NetIPv4, "1.2.3.4", 32110, disc.KeyTypeNone, now, 10, 1))
-	add(mk(disc.NetIPv4, "5.6.7.8", 32110, disc.KeyTypeNone, now, 5, 0))
-	add(mk(disc.NetIPv6, "2001:db8::1", 32110, disc.KeyTypeNone, now, 4, 0))
+	// Pass: v2, default port, fresh, reliable windows.
+	add(reliableWindows(mk(disc.NetIPv4, "1.2.3.4", 32110, disc.KeyTypeNone, now, 10, 1)))
+	add(reliableWindows(mk(disc.NetIPv4, "5.6.7.8", 32110, disc.KeyTypeNone, now, 5, 0)))
+	add(reliableWindows(mk(disc.NetIPv6, "2001:db8::1", 32110, disc.KeyTypeNone, now, 4, 0)))
 
 	// Drop: legacy KeyType.
-	add(mk(disc.NetIPv4, "9.9.9.9", 32110, disc.KeyTypeSecp256k1, now, 5, 0))
+	add(reliableWindows(mk(disc.NetIPv4, "9.9.9.9", 32110, disc.KeyTypeSecp256k1, now, 5, 0)))
 	// Drop: non-default port.
-	add(mk(disc.NetIPv4, "4.4.4.4", 12345, disc.KeyTypeNone, now, 5, 0))
-	// Drop: too few successes.
-	add(mk(disc.NetIPv4, "7.7.7.7", 32110, disc.KeyTypeNone, now, 1, 0))
+	add(reliableWindows(mk(disc.NetIPv4, "4.4.4.4", 12345, disc.KeyTypeNone, now, 5, 0)))
+	// Drop: long history but no window stats yet (pre-migration state
+	// file, or a node whose windows never accumulated) — the bootstrap
+	// clause only covers total <= 3.
+	add(mk(disc.NetIPv4, "7.7.7.7", 32110, disc.KeyTypeNone, now, 6000, 6000))
 	// Drop: stale.
-	add(mk(disc.NetIPv4, "3.3.3.3", 32110, disc.KeyTypeNone, now.Add(-48*time.Hour), 5, 0))
-	// Drop: success rate below threshold.
-	add(mk(disc.NetIPv4, "2.2.2.2", 32110, disc.KeyTypeNone, now, 3, 7))
+	add(reliableWindows(mk(disc.NetIPv4, "3.3.3.3", 32110, disc.KeyTypeNone, now.Add(-48*time.Hour), 5, 0)))
+	// Drop: reliability decayed below every window clause.
+	add(decayedWindows(mk(disc.NetIPv4, "2.2.2.2", 32110, disc.KeyTypeNone, now, 30, 70)))
 	// Drop: loopback (defense-in-depth — should never reach this stage,
 	// but isDialableIP skips it on the consume side too).
-	add(mk(disc.NetIPv4, "127.0.0.1", 32110, disc.KeyTypeNone, now, 5, 0))
+	add(reliableWindows(mk(disc.NetIPv4, "127.0.0.1", 32110, disc.KeyTypeNone, now, 5, 0)))
 
 	return st
 }
 
 func defaultFilters() compileFilters {
 	return compileFilters{
-		Name:           "seed.example.test",
-		DefaultPort:    32110,
-		MaxAge:         24 * time.Hour,
-		MinSuccesses:   3,
-		MinSuccessRate: 0.5,
-		MinRecords:     3,
+		Name:        "seed.example.test",
+		DefaultPort: 32110,
+		MaxAge:      24 * time.Hour,
+		MinRecords:  3,
 	}
 }
 
@@ -131,13 +147,14 @@ func TestCompileEachFilterAxis(t *testing.T) {
 		node *CrawlNode
 		want bool
 	}{
-		{"v2-fresh-healthy", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}, true},
-		{"legacy-keytype-rejected", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeSecp256k1, LastSuccess: now, SuccessCount: 5}, false},
-		{"wrong-port-rejected", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 22, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}, false},
-		{"stale-rejected", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now.Add(-25 * time.Hour), SuccessCount: 5}, false},
-		{"too-few-successes", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 2}, false},
-		{"low-success-rate", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 3, FailCount: 100}, false},
-		{"undialable-loopback", &CrawlNode{NetworkID: disc.NetIPv4, IP: "127.0.0.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}, false},
+		{"v2-fresh-reliable", reliableWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}), true},
+		{"bootstrap-short-history", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 2, FailCount: 1}, true},
+		{"legacy-keytype-rejected", reliableWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeSecp256k1, LastSuccess: now, SuccessCount: 5}), false},
+		{"wrong-port-rejected", reliableWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 22, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}), false},
+		{"stale-rejected", reliableWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now.Add(-25 * time.Hour), SuccessCount: 5}), false},
+		{"windowless-long-history", &CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5000, FailCount: 5000}, false},
+		{"decayed-reliability", decayedWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "1.1.1.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 30, FailCount: 100}), false},
+		{"undialable-loopback", reliableWindows(&CrawlNode{NetworkID: disc.NetIPv4, IP: "127.0.0.1", TCPPort: 32110, KeyType: disc.KeyTypeNone, LastSuccess: now, SuccessCount: 5}), false},
 	}
 
 	f := defaultFilters()
@@ -152,6 +169,87 @@ func TestCompileEachFilterAxis(t *testing.T) {
 			passed := len(z.Records) == 1
 			if passed != tc.want {
 				t.Errorf("passes=%v, want %v (records: %+v)", passed, tc.want, z.Records)
+			}
+		})
+	}
+}
+
+// TestAddrStatUpdate pins the EWMA behavior ported from bitcoin-seeder's
+// CAddrStat: sustained success converges reliability toward 1, sustained
+// failure decays it toward 0, and a long gap between attempts mostly
+// forgets the window.
+func TestAddrStatUpdate(t *testing.T) {
+	const tau = 2 * 3600.0
+
+	// First-ever update (age = minRetryAge) on success.
+	var s AddrStat
+	s.Update(true, minRetryAge, tau)
+	f := math.Exp(-minRetryAge / tau)
+	if got, want := s.Reliability, 1.0-f; math.Abs(got-want) > 1e-12 {
+		t.Errorf("first update reliability = %v, want %v", got, want)
+	}
+	if got := s.Count; got != 1 {
+		t.Errorf("first update count = %v, want 1", got)
+	}
+
+	// Sustained success at a 15-minute cadence: reliability climbs above
+	// the 2h clause threshold once ~2*tau of history has accumulated
+	// (rel after n all-success updates is 1 - exp(-sum(ages)/tau)).
+	s = AddrStat{}
+	for i := 0; i < 20; i++ {
+		s.Update(true, 900, tau)
+	}
+	if s.Reliability <= 0.85 {
+		t.Errorf("sustained success reliability = %v, want > 0.85", s.Reliability)
+	}
+	if s.Count <= 2 {
+		t.Errorf("sustained success count = %v, want > 2", s.Count)
+	}
+
+	// Sustained failure decays reliability toward 0 while count keeps
+	// registering the attempts.
+	for i := 0; i < 20; i++ {
+		s.Update(false, 900, tau)
+	}
+	if s.Reliability >= 0.1 {
+		t.Errorf("post-outage reliability = %v, want < 0.1", s.Reliability)
+	}
+
+	// A gap much longer than tau forgets the window: one success after
+	// a 10*tau silence dominates what came before.
+	s.Update(true, 10*tau, tau)
+	if s.Reliability <= 0.85 {
+		t.Errorf("post-gap reliability = %v, want > 0.85 (window should have decayed)", s.Reliability)
+	}
+}
+
+// TestIsGoodClauses walks each clause of the bitcoin-seeder IsGood()
+// port. Thresholds are strict (>): sitting exactly on one must fail.
+func TestIsGoodClauses(t *testing.T) {
+	// Skip the bootstrap clause in window cases via a long history.
+	base := CrawlNode{SuccessCount: 50, FailCount: 50}
+	cases := []struct {
+		name string
+		mod  func(n *CrawlNode)
+		want bool
+	}{
+		{"bootstrap-2of3", func(n *CrawlNode) { n.SuccessCount, n.FailCount = 2, 1 }, true},
+		{"bootstrap-1of3", func(n *CrawlNode) { n.SuccessCount, n.FailCount = 1, 2 }, false},
+		{"2h-clause", func(n *CrawlNode) { n.Stat2H = AddrStat{Reliability: 0.86, Count: 2.1} }, true},
+		{"2h-reliability-on-threshold", func(n *CrawlNode) { n.Stat2H = AddrStat{Reliability: 0.85, Count: 3} }, false},
+		{"2h-count-on-threshold", func(n *CrawlNode) { n.Stat2H = AddrStat{Reliability: 0.99, Count: 2} }, false},
+		{"8h-clause", func(n *CrawlNode) { n.Stat8H = AddrStat{Reliability: 0.71, Count: 4.1} }, true},
+		{"1d-clause", func(n *CrawlNode) { n.Stat1D = AddrStat{Reliability: 0.56, Count: 8.1} }, true},
+		{"1w-clause", func(n *CrawlNode) { n.Stat1W = AddrStat{Reliability: 0.46, Count: 16.1} }, true},
+		{"1m-clause", func(n *CrawlNode) { n.Stat1M = AddrStat{Reliability: 0.36, Count: 32.1} }, true},
+		{"no-clause", func(n *CrawlNode) {}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := base
+			tc.mod(&n)
+			if got := n.isGood(); got != tc.want {
+				t.Errorf("isGood() = %v, want %v (node %+v)", got, tc.want, n)
 			}
 		})
 	}

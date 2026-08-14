@@ -356,6 +356,9 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	if cur.FirstSeen.IsZero() {
 		cur.FirstSeen = now
 	}
+	// The reliability windows age on the gap between attempts, so the
+	// previous attempt time must be captured before this one stamps it.
+	prevAttempt := cur.LastAttempt
 	cur.LastAttempt = now
 	w.stMu.Unlock()
 
@@ -379,6 +382,7 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	cur = w.state.Nodes[nodeKey(n)]
 	if err != nil {
 		cur.FailCount++
+		cur.updateStats(false, now, prevAttempt)
 		cur.LastError = err.Error()
 		failCount := cur.FailCount
 		w.stMu.Unlock()
@@ -388,8 +392,15 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 		return
 	}
 	cur.SuccessCount++
+	cur.updateStats(true, now, prevAttempt)
 	cur.LastSuccess = time.Now()
 	cur.LastError = ""
+	// The probe just completed a v2 (BIP324) handshake first-hand, so
+	// record the identity as v2-native regardless of how the entry was
+	// gossiped. Stale secp256k1 gossip otherwise pins a dual-stack node
+	// to KeyType=0x01 and keeps it out of the v2 DNS seed zone forever.
+	cur.KeyType = disc.KeyTypeNone
+	cur.NodeID = ""
 	if len(caps) > 0 {
 		cs := make([]string, 0, len(caps))
 		for _, c := range caps {
@@ -435,12 +446,20 @@ func (w *walker) registerAndEnqueue(ctx context.Context, cn *CrawlNode) {
 	if existing, ok := w.state.Nodes[key]; ok {
 		// Already known across a prior run — keep its stats, but
 		// refresh identity fields in case (KeyType, NodeID) have
-		// drifted (e.g. node migrated from v1.x to v2.x).
+		// drifted (e.g. node migrated from v1.x to v2.x). One-way
+		// only: never downgrade a v2-native entry back to legacy on
+		// gossip's say-so. v2 capability was asserted by the operator
+		// (ip:port seed) or verified first-hand by a successful probe,
+		// while relayed secp256k1 entries outlive a node's v2 switch —
+		// dual-stack nodes are permanently gossiped as legacy by their
+		// v1.x peers.
 		existing.NetworkID = cn.NetworkID
 		existing.IP = cn.IP
 		existing.TCPPort = cn.TCPPort
-		existing.KeyType = cn.KeyType
-		existing.NodeID = cn.NodeID
+		if existing.KeyType != disc.KeyTypeNone {
+			existing.KeyType = cn.KeyType
+			existing.NodeID = cn.NodeID
+		}
 		cn = existing
 	} else {
 		w.state.Nodes[key] = cn

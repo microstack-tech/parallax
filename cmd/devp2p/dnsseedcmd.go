@@ -47,9 +47,7 @@ import (
 
 const (
 	defaultParallaxTCPPort = 32110
-	defaultMinSuccesses    = 3
 	defaultMaxAge          = 24 * time.Hour
-	defaultMinSuccessRate  = 0.5
 	defaultMinRecords      = 5
 )
 
@@ -85,16 +83,6 @@ var (
 				Name:  "max-age",
 				Usage: "Drop entries whose LastSuccess is older than this.",
 				Value: defaultMaxAge,
-			},
-			cli.UintFlag{
-				Name:  "min-successes",
-				Usage: "Drop entries with fewer than this many successful probes.",
-				Value: defaultMinSuccesses,
-			},
-			cli.Float64Flag{
-				Name:  "min-success-rate",
-				Usage: "Drop entries with success/(success+fail) below this ratio.",
-				Value: defaultMinSuccessRate,
 			},
 			cli.IntFlag{
 				Name:  "min-records",
@@ -219,17 +207,19 @@ func saveSeedZone(path string, z *SeedZone) error {
 // out so compileSeedZone is callable from tests without going through
 // urfave/cli's Context.
 type compileFilters struct {
-	Name           string
-	DefaultPort    uint16
-	MaxAge         time.Duration
-	MinSuccesses   uint64
-	MinSuccessRate float64
-	MinRecords     int
+	Name        string
+	DefaultPort uint16
+	MaxAge      time.Duration
+	MinRecords  int
 }
 
 // compileSeedZone applies the four filters described on dnsSeedCompile
 // to st and returns the resulting SeedZone, or an error if the result
-// has fewer than f.MinRecords entries.
+// has fewer than f.MinRecords entries. The reliability decision is
+// CrawlNode.isGood — bitcoin-seeder's windowed IsGood() gate — plus
+// the LastSuccess freshness cutoff (compile reads a static state file,
+// so a wedged crawler must not keep serving window stats that stopped
+// decaying).
 func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
 	now := time.Now()
 	cutoff := now.Add(-f.MaxAge)
@@ -251,11 +241,7 @@ func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
 		if n.LastSuccess.Before(cutoff) {
 			continue
 		}
-		if n.SuccessCount < f.MinSuccesses {
-			continue
-		}
-		total := n.SuccessCount + n.FailCount
-		if total == 0 || float64(n.SuccessCount)/float64(total) < f.MinSuccessRate {
+		if !n.isGood() {
 			continue
 		}
 		ip := net.ParseIP(n.IP)
@@ -289,8 +275,8 @@ func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
 //     bootstrap path; legacy enode entries reach v1.x peers via enrtree)
 //  2. TCPPort == --default-port (Bitcoin parity)
 //  3. NetworkID ∈ {IPv4, IPv6} (DNS can't resolve Tor/I2P/CJDNS)
-//  4. LastSuccess within --max-age, SuccessCount ≥ --min-successes,
-//     success rate ≥ --min-success-rate
+//  4. LastSuccess within --max-age, and the bitcoin-seeder IsGood()
+//     gate over the exponentially-decayed reliability windows
 //
 // If the result has fewer than --min-records entries, exit non-zero
 // without writing — protects against publishing an empty zone after a
@@ -307,19 +293,17 @@ func dnsSeedCompile(ctx *cli.Context) error {
 		return err
 	}
 	f := compileFilters{
-		Name:           ctx.String("name"),
-		DefaultPort:    uint16(ctx.Int("default-port")),
-		MaxAge:         ctx.Duration("max-age"),
-		MinSuccesses:   uint64(ctx.Uint("min-successes")),
-		MinSuccessRate: ctx.Float64("min-success-rate"),
-		MinRecords:     ctx.Int("min-records"),
+		Name:        ctx.String("name"),
+		DefaultPort: uint16(ctx.Int("default-port")),
+		MaxAge:      ctx.Duration("max-age"),
+		MinRecords:  ctx.Int("min-records"),
 	}
 	zone, err := compileSeedZone(state, f)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "compiled %d records (filter: keyType=0, port=%d, age<=%s, successCount>=%d, rate>=%.2f)\n",
-		len(zone.Records), f.DefaultPort, f.MaxAge, f.MinSuccesses, f.MinSuccessRate)
+	fmt.Fprintf(os.Stderr, "compiled %d records (filter: keyType=0, port=%d, age<=%s, seeder IsGood windows)\n",
+		len(zone.Records), f.DefaultPort, f.MaxAge)
 	return saveSeedZone(outFile, zone)
 }
 

@@ -43,6 +43,8 @@ func TestCrawlStateRoundTrip(t *testing.T) {
 				SuccessCount: 5,
 				FailCount:    1,
 				Capabilities: []string{"parallax/66", "parallax-disc/1"},
+				Stat2H:       AddrStat{Weight: 0.9, Count: 3.2, Reliability: 0.97},
+				Stat1W:       AddrStat{Weight: 0.5, Count: 12, Reliability: 0.48},
 			},
 			"2/2001:db8::1/32110": {
 				NetworkID: disc.NetIPv6,
@@ -167,6 +169,41 @@ func TestRegisterAndEnqueueRefreshesIdentity(t *testing.T) {
 	}
 	if got.SuccessCount != 42 {
 		t.Errorf("SuccessCount lost on identity refresh: got %d, want 42", got.SuccessCount)
+	}
+}
+
+func TestRegisterAndEnqueueNeverDowngradesIdentity(t *testing.T) {
+	// A v2-native entry (operator-seeded or probe-verified) re-learned
+	// via gossip carrying a stale legacy identity must stay v2 — v1.x
+	// peers gossip dual-stack nodes as secp256k1 indefinitely.
+	w := &walker{
+		state: &CrawlState{Nodes: map[string]*CrawlNode{
+			"1/1.2.3.4/32110": {
+				NetworkID:    disc.NetIPv4,
+				IP:           "1.2.3.4",
+				TCPPort:      32110,
+				KeyType:      disc.KeyTypeNone,
+				SuccessCount: 42,
+			},
+		}},
+		todoCh: make(chan *CrawlNode, 8),
+	}
+	ctx := context.Background()
+	gossiped := &CrawlNode{
+		NetworkID: disc.NetIPv4,
+		IP:        "1.2.3.4",
+		TCPPort:   32110,
+		KeyType:   disc.KeyTypeSecp256k1,
+		NodeID:    "deadbeef",
+	}
+	w.registerAndEnqueue(ctx, gossiped)
+
+	got := w.state.Nodes["1/1.2.3.4/32110"]
+	if got.KeyType != disc.KeyTypeNone {
+		t.Errorf("v2 entry downgraded to KeyType %d by gossip", got.KeyType)
+	}
+	if got.NodeID != "" {
+		t.Errorf("v2 entry picked up gossiped NodeID %q", got.NodeID)
 	}
 }
 

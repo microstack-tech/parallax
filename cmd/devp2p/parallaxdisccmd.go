@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"sort"
@@ -108,6 +109,95 @@ type CrawlNode struct {
 	FailCount    uint64    `json:"failCount,omitempty"`
 	LastError    string    `json:"lastError,omitempty"`
 	Capabilities []string  `json:"capabilities,omitempty"`
+
+	// Exponentially-decayed reliability windows, one per bitcoin-seeder
+	// horizon. Unlike the lifetime SuccessCount/FailCount pair, these
+	// forgive (and notice) outages on the window's own timescale — a
+	// node with years of dead history re-qualifies after a healthy
+	// crawl pass, and a freshly dead node decays out instead of
+	// coasting on its lifetime ratio.
+	Stat2H AddrStat `json:"stat2h,omitzero"`
+	Stat8H AddrStat `json:"stat8h,omitzero"`
+	Stat1D AddrStat `json:"stat1d,omitzero"`
+	Stat1W AddrStat `json:"stat1w,omitzero"`
+	Stat1M AddrStat `json:"stat1m,omitzero"`
+}
+
+// AddrStat is one exponentially-decayed reliability window, ported from
+// bitcoin-seeder's CAddrStat (db.h). Each probe outcome is folded in
+// with weight (1-f) where f = exp(-age/tau): Reliability approaches 1
+// under sustained success and 0 under sustained failure, Count tracks
+// the effective number of recent attempts, and Weight is the
+// normalization mass (how much of the window has been observed).
+type AddrStat struct {
+	Weight      float64 `json:"weight"`
+	Count       float64 `json:"count"`
+	Reliability float64 `json:"reliability"`
+}
+
+// Update folds one probe outcome into the window. age is the seconds
+// since the previous attempt, tau the window's decay constant. Ported
+// verbatim from CAddrStat::Update.
+func (s *AddrStat) Update(good bool, age, tau float64) {
+	f := math.Exp(-age / tau)
+	s.Reliability = s.Reliability * f
+	if good {
+		s.Reliability += 1.0 - f
+	}
+	s.Count = s.Count*f + 1
+	s.Weight = s.Weight*f + (1.0 - f)
+}
+
+// minRetryAge seeds the very first stat update for a node, standing in
+// for the unknown gap before its first attempt — bitcoin-seeder's
+// MIN_RETRY (db.h), used the same way when ourLastTry==0.
+const minRetryAge = 1000 // seconds
+
+// updateStats ports the reliability-window half of CAddrInfo::Update
+// (bitcoin-seeder db.cpp): one decayed update per probe attempt across
+// all five horizons, aged by the gap since the previous attempt. The
+// counter/timestamp half (SuccessCount/FailCount/LastSuccess/
+// LastAttempt) stays at the call site in the walker, which already
+// maintains those fields.
+func (n *CrawlNode) updateStats(good bool, now, prevAttempt time.Time) {
+	age := float64(minRetryAge)
+	if !prevAttempt.IsZero() {
+		age = now.Sub(prevAttempt).Seconds()
+	}
+	n.Stat2H.Update(good, age, 2*3600)
+	n.Stat8H.Update(good, age, 8*3600)
+	n.Stat1D.Update(good, age, 24*3600)
+	n.Stat1W.Update(good, age, 7*24*3600)
+	n.Stat1M.Update(good, age, 30*24*3600)
+}
+
+// isGood ports the reliability clauses of CAddrInfo::IsGood()
+// (bitcoin-seeder db.h): a short-history bootstrap clause, then five
+// windows each pairing a reliability floor with a minimum effective
+// attempt count. The seeder's address-shape clauses (port, services,
+// routability) live in compileSeedZone as filters 1-3 instead — this
+// method judges reliability only.
+func (n *CrawlNode) isGood() bool {
+	total := n.SuccessCount + n.FailCount
+	if total <= 3 && n.SuccessCount*2 >= total {
+		return true
+	}
+	if n.Stat2H.Reliability > 0.85 && n.Stat2H.Count > 2 {
+		return true
+	}
+	if n.Stat8H.Reliability > 0.70 && n.Stat8H.Count > 4 {
+		return true
+	}
+	if n.Stat1D.Reliability > 0.55 && n.Stat1D.Count > 8 {
+		return true
+	}
+	if n.Stat1W.Reliability > 0.45 && n.Stat1W.Count > 16 {
+		return true
+	}
+	if n.Stat1M.Reliability > 0.35 && n.Stat1M.Count > 32 {
+		return true
+	}
+	return false
 }
 
 func (n *CrawlNode) tcpAddr() string {
