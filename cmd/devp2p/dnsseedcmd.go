@@ -213,14 +213,33 @@ type compileFilters struct {
 	MinRecords  int
 }
 
+// compileTally counts, per filter, how many state entries each one
+// dropped — a node is tallied against the first filter it fails, in
+// the order compileSeedZone applies them. Printed by dnsSeedCompile so
+// "why is my node not in the zone" is answerable from the logs.
+type compileTally struct {
+	Legacy     int // KeyType != KeyTypeNone
+	WrongPort  int // TCPPort != --default-port
+	BadNetwork int // not IPv4/IPv6
+	Stale      int // LastSuccess older than --max-age
+	Unreliable int // seeder IsGood() gate not met
+	Undialable int // loopback/link-local/etc
+}
+
+func (t compileTally) String() string {
+	return fmt.Sprintf("legacy=%d wrong-port=%d non-ip=%d stale=%d unreliable=%d undialable=%d",
+		t.Legacy, t.WrongPort, t.BadNetwork, t.Stale, t.Unreliable, t.Undialable)
+}
+
 // compileSeedZone applies the four filters described on dnsSeedCompile
-// to st and returns the resulting SeedZone, or an error if the result
-// has fewer than f.MinRecords entries. The reliability decision is
+// to st and returns the resulting SeedZone plus a per-filter drop
+// tally, or an error if the result has fewer than f.MinRecords entries
+// (the tally is valid even then). The reliability decision is
 // CrawlNode.isGood — bitcoin-seeder's windowed IsGood() gate — plus
 // the LastSuccess freshness cutoff (compile reads a static state file,
 // so a wedged crawler must not keep serving window stats that stopped
 // decaying).
-func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
+func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, compileTally, error) {
 	now := time.Now()
 	cutoff := now.Add(-f.MaxAge)
 	zone := &SeedZone{
@@ -228,24 +247,31 @@ func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
 		UpdatedAt: now,
 		Seq:       uint64(now.Unix()),
 	}
+	var tally compileTally
 	for _, n := range st.Nodes {
 		if n.KeyType != disc.KeyTypeNone {
+			tally.Legacy++
 			continue
 		}
 		if n.TCPPort != f.DefaultPort {
+			tally.WrongPort++
 			continue
 		}
 		if n.NetworkID != disc.NetIPv4 && n.NetworkID != disc.NetIPv6 {
+			tally.BadNetwork++
 			continue
 		}
 		if n.LastSuccess.Before(cutoff) {
+			tally.Stale++
 			continue
 		}
 		if !n.isGood() {
+			tally.Unreliable++
 			continue
 		}
 		ip := net.ParseIP(n.IP)
 		if !isDialableIP(ip) {
+			tally.Undialable++
 			continue
 		}
 		family := "A"
@@ -262,10 +288,10 @@ func compileSeedZone(st *CrawlState, f compileFilters) (*SeedZone, error) {
 		return zone.Records[i].IP < zone.Records[j].IP
 	})
 	if len(zone.Records) < f.MinRecords {
-		return nil, fmt.Errorf("compiled zone has %d records, below --min-records=%d threshold (refusing to publish a near-empty zone — likely a crawler outage)",
+		return nil, tally, fmt.Errorf("compiled zone has %d records, below --min-records=%d threshold (refusing to publish a near-empty zone — likely a crawler outage)",
 			len(zone.Records), f.MinRecords)
 	}
-	return zone, nil
+	return zone, tally, nil
 }
 
 // dnsSeedCompile reads a CrawlState, applies four filters, and writes a
@@ -298,7 +324,11 @@ func dnsSeedCompile(ctx *cli.Context) error {
 		MaxAge:      ctx.Duration("max-age"),
 		MinRecords:  ctx.Int("min-records"),
 	}
-	zone, err := compileSeedZone(state, f)
+	zone, tally, err := compileSeedZone(state, f)
+	// The tally is most valuable exactly when compile refuses (zone
+	// under --min-records): print it before bailing so the logs say
+	// which filter ate the nodes.
+	fmt.Fprintf(os.Stderr, "state: %d nodes; dropped: %s\n", len(state.Nodes), tally)
 	if err != nil {
 		return err
 	}

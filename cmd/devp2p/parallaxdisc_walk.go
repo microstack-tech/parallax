@@ -221,10 +221,42 @@ type walker struct {
 
 	outstanding int64 // atomic — pending probes (queued + in-flight)
 
+	// Per-pass counters, reset by requeueAll. Atomics — bumped from
+	// worker goroutines outside stMu.
+	passStart  time.Time
+	passProbes int64
+	passOK     int64
+	passFail   int64
+	passNew    int64
+
 	parallelism     int
 	saveInterval    time.Duration
 	reprobeInterval time.Duration // 0 = one-shot, exit on first drain
 	stateFile       string
+}
+
+// logPassSummary emits the one-line operator view of a completed pass:
+// probe outcomes, queue growth, and how much of the state currently
+// clears the seeder reliability gate (the number dns-seed compile will
+// see, before its address-shape filters).
+func (w *walker) logPassSummary() {
+	w.stMu.Lock()
+	total := len(w.state.Nodes)
+	good := 0
+	for _, n := range w.state.Nodes {
+		if n.isGood() {
+			good++
+		}
+	}
+	w.stMu.Unlock()
+	logging.Info("parallax-disc pass complete",
+		"probed", atomic.LoadInt64(&w.passProbes),
+		"ok", atomic.LoadInt64(&w.passOK),
+		"failed", atomic.LoadInt64(&w.passFail),
+		"new", atomic.LoadInt64(&w.passNew),
+		"nodes", total,
+		"good", good,
+		"elapsed", time.Since(w.passStart).Round(time.Second))
 }
 
 // run executes the crawl. Returns when ctx is cancelled, the timeout
@@ -253,6 +285,7 @@ func (w *walker) run(ctx context.Context) error {
 		case <-ctx.Done():
 			workersWG.Wait()
 			_ = w.flush()
+			w.logPassSummary()
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil // soft exit on timeout
 			}
@@ -280,12 +313,15 @@ func (w *walker) run(ctx context.Context) error {
 			// exit now. Otherwise sleep for reprobeInterval, then
 			// re-seen-clear and re-enqueue every known node so the
 			// walker keeps probing for the full --timeout window.
+			w.logPassSummary()
 			if w.reprobeInterval <= 0 {
 				close(w.todoCh)
 				workersWG.Wait()
 				return w.flush()
 			}
 			_ = w.flush() // flush before the sleep so on-disk state is fresh
+			logging.Debug("parallax-disc queue drained",
+				"reprobeIn", w.reprobeInterval)
 			select {
 			case <-ctx.Done():
 				workersWG.Wait()
@@ -303,12 +339,18 @@ func (w *walker) run(ctx context.Context) error {
 // — keeps the walker probing until the timeout fires.
 func (w *walker) requeueAll(ctx context.Context) {
 	w.seen = sync.Map{}
+	w.passStart = time.Now()
+	atomic.StoreInt64(&w.passProbes, 0)
+	atomic.StoreInt64(&w.passOK, 0)
+	atomic.StoreInt64(&w.passFail, 0)
+	atomic.StoreInt64(&w.passNew, 0)
 	w.stMu.Lock()
 	nodes := make([]*CrawlNode, 0, len(w.state.Nodes))
 	for _, n := range w.state.Nodes {
 		nodes = append(nodes, n)
 	}
 	w.stMu.Unlock()
+	logging.Info("parallax-disc reprobing all known nodes", "nodes", len(nodes))
 	for _, n := range nodes {
 		w.registerAndEnqueue(ctx, n)
 	}
@@ -372,10 +414,10 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	target := *n
 	target.KeyType = disc.KeyTypeNone
 	target.NodeID = ""
-	logging.Info("parallax-disc probe",
+	logging.Debug("parallax-disc probing",
 		"addr", n.tcpAddr(),
-		"gossipKeyType", n.KeyType,
-		"id", n.NodeID)
+		"gossipKeyType", n.KeyType)
+	atomic.AddInt64(&w.passProbes, 1)
 	peers, caps, err := probeOne(ctx, &target)
 
 	w.stMu.Lock()
@@ -384,11 +426,11 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 		cur.FailCount++
 		cur.updateStats(false, now, prevAttempt)
 		cur.LastError = err.Error()
-		failCount := cur.FailCount
+		rel2h := cur.Stat2H.Reliability
 		w.stMu.Unlock()
+		atomic.AddInt64(&w.passFail, 1)
 		logging.Info("parallax-disc probe failed",
-			"addr", n.tcpAddr(), "id", n.NodeID,
-			"failCount", failCount, "err", err)
+			"addr", n.tcpAddr(), "rel2h", rel2h, "err", err)
 		return
 	}
 	cur.SuccessCount++
@@ -408,10 +450,12 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 		}
 		cur.Capabilities = cs
 	}
+	rel2h := cur.Stat2H.Reliability
 	w.stMu.Unlock()
+	atomic.AddInt64(&w.passOK, 1)
 
 	logging.Info("parallax-disc probe ok",
-		"addr", n.tcpAddr(), "id", n.NodeID,
+		"addr", n.tcpAddr(), "rel2h", rel2h,
 		"peers", len(peers), "caps", len(caps))
 
 	enqueued, skipped := 0, 0
@@ -429,7 +473,7 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 		enqueued++
 	}
 	if enqueued+skipped > 0 {
-		logging.Info("parallax-disc fanout",
+		logging.Debug("parallax-disc fanout",
 			"from", n.tcpAddr(),
 			"enqueued", enqueued, "skipped", skipped)
 	}
@@ -463,6 +507,9 @@ func (w *walker) registerAndEnqueue(ctx context.Context, cn *CrawlNode) {
 		cn = existing
 	} else {
 		w.state.Nodes[key] = cn
+		atomic.AddInt64(&w.passNew, 1)
+		logging.Debug("parallax-disc new node", "addr", cn.tcpAddr(),
+			"gossipKeyType", cn.KeyType)
 	}
 	w.stMu.Unlock()
 
@@ -475,6 +522,8 @@ func (w *walker) registerAndEnqueue(ctx context.Context, cn *CrawlNode) {
 		// Queue overflow — drop. The node is already in state; a
 		// future run will re-probe it.
 		atomic.AddInt64(&w.outstanding, -1)
+		logging.Warn("parallax-disc queue full, dropping",
+			"addr", cn.tcpAddr(), "depth", len(w.todoCh))
 	}
 }
 
@@ -483,7 +532,16 @@ func (w *walker) registerAndEnqueue(ctx context.Context, cn *CrawlNode) {
 func (w *walker) flush() error {
 	w.stMu.Lock()
 	defer w.stMu.Unlock()
-	return saveState(w.stateFile, w.state)
+	if err := saveState(w.stateFile, w.state); err != nil {
+		logging.Error("parallax-disc state save failed",
+			"path", w.stateFile, "err", err)
+		return err
+	}
+	if w.stateFile != "" && w.stateFile != "-" {
+		logging.Info("parallax-disc state saved",
+			"path", w.stateFile, "nodes", len(w.state.Nodes))
+	}
+	return nil
 }
 
 // peerEntryToCrawlNode converts a gossiped PeerEntry to a CrawlNode the
@@ -547,6 +605,15 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	if w.parallelism < 1 {
 		w.parallelism = 1
 	}
+	w.passStart = time.Now()
+
+	logging.Info("parallax-disc crawl starting",
+		"state", stateFile,
+		"known", len(state.Nodes),
+		"parallelism", w.parallelism,
+		"timeout", ctx.Duration("timeout"),
+		"reprobe", w.reprobeInterval,
+		"save", w.saveInterval)
 
 	parentCtx, cancel := context.WithTimeout(context.Background(), ctx.Duration("timeout"))
 	defer cancel()
@@ -563,7 +630,8 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	bootList := strings.Split(bootRaw, ",")
 	if strings.TrimSpace(bootRaw) == "" && len(state.Nodes) == 0 {
 		bootList = netparams.MainnetBootnodesV2
-		fmt.Fprintf(os.Stderr, "no --bootnodes and empty state: defaulting to MainnetBootnodesV2 (%d entries)\n", len(bootList))
+		logging.Info("parallax-disc using default bootnodes",
+			"source", "MainnetBootnodesV2", "count", len(bootList))
 	}
 	for _, raw := range bootList {
 		raw = strings.TrimSpace(raw)
@@ -572,7 +640,8 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 		}
 		seed, err := parseSeed(raw)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "skip bootnode %q: %v\n", raw, err)
+			logging.Warn("parallax-disc skipping invalid bootnode",
+				"bootnode", raw, "err", err)
 			continue
 		}
 		w.registerAndEnqueue(parentCtx, seed)
@@ -585,6 +654,6 @@ func parallaxDiscWalk(ctx *cli.Context) error {
 	if err := w.run(parentCtx); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "crawl finished: %d nodes in state\n", len(state.Nodes))
+	logging.Info("parallax-disc crawl finished", "nodes", len(state.Nodes))
 	return nil
 }

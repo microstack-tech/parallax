@@ -98,9 +98,13 @@ func TestCompileFiltersAndSorts(t *testing.T) {
 	now := time.Now()
 	st := fixtureCrawlState(now)
 
-	z, err := compileSeedZone(st, defaultFilters())
+	z, tally, err := compileSeedZone(st, defaultFilters())
 	if err != nil {
 		t.Fatalf("compileSeedZone: %v", err)
+	}
+	wantTally := compileTally{Legacy: 1, WrongPort: 1, Stale: 1, Unreliable: 2, Undialable: 1}
+	if tally != wantTally {
+		t.Errorf("drop tally = %+v, want %+v", tally, wantTally)
 	}
 
 	wantIPs := []string{"1.2.3.4", "5.6.7.8", "2001:db8::1"}
@@ -135,7 +139,7 @@ func TestCompileRefusesNearEmpty(t *testing.T) {
 	st := fixtureCrawlState(now)
 	f := defaultFilters()
 	f.MinRecords = 100 // higher than what fixture can satisfy
-	if _, err := compileSeedZone(st, f); err == nil {
+	if _, _, err := compileSeedZone(st, f); err == nil {
 		t.Fatal("expected error on near-empty compile, got nil")
 	}
 }
@@ -162,7 +166,7 @@ func TestCompileEachFilterAxis(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &CrawlState{Nodes: map[string]*CrawlNode{nodeKey(tc.node): tc.node}}
-			z, err := compileSeedZone(st, f)
+			z, _, err := compileSeedZone(st, f)
 			if err != nil {
 				t.Fatalf("compileSeedZone: %v", err)
 			}
