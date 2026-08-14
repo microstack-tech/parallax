@@ -46,6 +46,13 @@ const (
 	// Endpoint resolution is throttled with bounded backoff.
 	initialResolveDelay = 60 * time.Second
 	maxResolveDelay     = time.Hour
+
+	// staticPoolResweepInterval bounds how long a static dial task can
+	// stay stranded outside the pool when its checkDial rejection
+	// clears without an event keyed to the task's ID — most notably a
+	// ban or discouragement that expires silently. Every interval, all
+	// out-of-pool static tasks are re-checked.
+	staticPoolResweepInterval = time.Minute
 )
 
 // NodeDialer is used to connect to nodes in the network, typically by using
@@ -76,10 +83,13 @@ var (
 	errSelf                  = errors.New("is self")
 	errAlreadyDialing        = errors.New("already dialing")
 	errAlreadyConnected      = errors.New("already connected")
+	errInboundProgress       = errors.New("inbound handshake in progress")
 	errRecentlyDialed        = errors.New("recently dialed")
 	errNetRestrict           = errors.New("not contained in netrestrict list")
 	errNoPort                = errors.New("node does not provide TCP port")
 	errOutboundGroupOccupied = errors.New("outbound network group already occupied")
+	errBanned                = errors.New("address banned")
+	errDiscouraged           = errors.New("address discouraged")
 )
 
 // dialer creates outbound connections and submits them into Server.
@@ -104,11 +114,38 @@ type dialScheduler struct {
 	addPeerCh   chan *conn
 	remPeerCh   chan *conn
 
+	// addInProgressCh / remInProgressCh signal that an inbound conn
+	// is between encryption-handshake-done and addPeer (the protocol-
+	// handshake window). The dialer rejects outbound dials to those
+	// IDs to avoid the symmetric-handshake race that ends with one
+	// side eating a DiscAlreadyConnected after wasting a handshake.
+	// PIP-0006 §Phase 6 / server.go's "track in-progress inbound node
+	// IDs (pre-Peer)" TODO.
+	addInProgressCh chan enode.ID
+	remInProgressCh chan enode.ID
+
+	// probeCh is a test-only synchronous probe of inboundProgress
+	// state. The loop handles it inline, so the result reflects the
+	// state at the moment the request was processed and the read of
+	// d.inboundProgress is loop-local (no race).
+	probeCh chan probeCheckDialReq
+
 	// Everything below here belongs to loop and
 	// should only be accessed by code on the loop goroutine.
 	dialing   map[enode.ID]*dialTask // active tasks
 	peers     map[enode.ID]struct{}  // all connected peers
 	dialPeers int                    // current number of dialed peers
+
+	// inboundProgress is the run-loop's view of inbound conns
+	// currently between checkpointPostHandshake and the moment they
+	// either land in d.peers (success) or are dropped (failure).
+	// Refcounted: a malicious peer that opens two inbound TCP sockets
+	// claiming the same NodeID would otherwise underflow the count
+	// when the first finishes. Bitcoin's net.cpp doesn't see this
+	// because IDs are tied to TLS-handshake outcome and a given peer
+	// can't easily duplicate; v2-handshake's ephemeral-key derived ID
+	// is harder to duplicate but the refcount is cheap insurance.
+	inboundProgress map[enode.ID]int
 
 	// blockRelayDialed counts the subset of dialPeers that occupy
 	// block-relay-only slots (Bitcoin Core's
@@ -130,6 +167,19 @@ type dialScheduler struct {
 	// (mirrors src/net.cpp:2647-2688). Keyed by string(NetworkGroup).
 	// Updated at peerAdded / peerRemoved time alongside dialPeers.
 	outboundGroups map[string]int
+
+	// dialingGroups counts the network groups of in-flight dials
+	// (d.dialing), mirroring dialingBlockRelay: outboundGroups only
+	// updates when a peer attaches, so without this a burst of
+	// same-group candidates discovered in one round would all pass
+	// checkDial before any of them connects — defeating the
+	// one-per-group rule exactly in the startup window it exists
+	// for. Bitcoin Core is immune structurally because
+	// ThreadOpenConnections dials one candidate at a time. Static
+	// dials are counted too: they are exempt from the check but
+	// occupy groups against dynamic dials, same as attached static
+	// peers in outboundGroups.
+	dialingGroups map[string]int
 
 	// The static map tracks all static dial tasks. The subset of usable static dial tasks
 	// (i.e. those passing checkDial) is kept in staticPool. The scheduler prefers
@@ -175,6 +225,20 @@ type dialConfig struct {
 	// full-relay regardless of slot pressure. Static dials never
 	// consume from this bucket.
 	maxBlockRelay int
+
+	// isBanned reports whether an IP is under an operator ban. When
+	// set, checkDial refuses to dial such nodes, mirroring Bitcoin
+	// Core's outbound ban gate (CConnman::OpenNetworkConnection).
+	// Nil disables the check (unit tests, no ban list configured).
+	isBanned func(net.IP) bool
+
+	// isDiscouraged reports whether an IP is in the automatic
+	// misbehavior discourage filter. Unlike a ban it does not block
+	// static dials: Core's manual connections bypass discouragement,
+	// and the filter has no clearing RPC, so honoring it on statics
+	// would strand an operator-chosen peering until restart. Nil
+	// disables the check.
+	isDiscouraged func(net.IP) bool
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -198,18 +262,23 @@ func (cfg dialConfig) withDefaults() dialConfig {
 
 func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupFunc) *dialScheduler {
 	d := &dialScheduler{
-		dialConfig:     config.withDefaults(),
-		setupFunc:      setupFunc,
-		dialing:        make(map[enode.ID]*dialTask),
-		outboundGroups: make(map[string]int),
-		static:         make(map[enode.ID]*dialTask),
-		peers:          make(map[enode.ID]struct{}),
-		doneCh:         make(chan *dialTask),
-		nodesIn:        make(chan *enode.Node),
-		addStaticCh:    make(chan *enode.Node),
-		remStaticCh:    make(chan *enode.Node),
-		addPeerCh:      make(chan *conn),
-		remPeerCh:      make(chan *conn),
+		dialConfig:      config.withDefaults(),
+		setupFunc:       setupFunc,
+		dialing:         make(map[enode.ID]*dialTask),
+		outboundGroups:  make(map[string]int),
+		dialingGroups:   make(map[string]int),
+		static:          make(map[enode.ID]*dialTask),
+		peers:           make(map[enode.ID]struct{}),
+		inboundProgress: make(map[enode.ID]int),
+		doneCh:          make(chan *dialTask),
+		nodesIn:         make(chan *enode.Node),
+		addStaticCh:     make(chan *enode.Node),
+		remStaticCh:     make(chan *enode.Node),
+		addPeerCh:       make(chan *conn),
+		remPeerCh:       make(chan *conn),
+		addInProgressCh: make(chan enode.ID),
+		remInProgressCh: make(chan enode.ID),
+		probeCh:         make(chan probeCheckDialReq),
 	}
 	d.lastStatsLog = d.clock.Now()
 	d.ctx, d.cancel = context.WithCancel(context.Background())
@@ -257,11 +326,63 @@ func (d *dialScheduler) peerRemoved(c *conn) {
 	}
 }
 
+// inboundProgressBegin marks an inbound conn's NodeID as being mid-
+// handshake. checkDial rejects outbound dials to that ID until the
+// matching inboundProgressEnd. Synchronous: returns once the loop
+// has applied the change, so callers (setupConn on accept goroutines)
+// see a consistent inboundProgress state by the time the next dial
+// candidate is considered.
+func (d *dialScheduler) inboundProgressBegin(id enode.ID) {
+	select {
+	case d.addInProgressCh <- id:
+	case <-d.ctx.Done():
+	}
+}
+
+// inboundProgressEnd is the matching unregister. Always paired with
+// an earlier Begin via defer in setupConn so it fires on every exit
+// path (success, post-handshake-fail, proto-handshake-fail).
+func (d *dialScheduler) inboundProgressEnd(id enode.ID) {
+	select {
+	case d.remInProgressCh <- id:
+	case <-d.ctx.Done():
+	}
+}
+
+// probeCheckDialReq is the message a probeCheckDial sends into the
+// loop: a node to inspect plus a reply channel for the result.
+type probeCheckDialReq struct {
+	n   *enode.Node
+	out chan error
+}
+
+// probeCheckDial runs a checkDial against d's loop-owned state and
+// returns the same error a real iterator pick would see. Test-only.
+// The probe runs ON the loop goroutine via probeCh so the read of
+// inboundProgress can't race with any in-flight begin/end / addPeer
+// updates.
+func (d *dialScheduler) probeCheckDial(n *enode.Node) error {
+	out := make(chan error, 1)
+	select {
+	case d.probeCh <- probeCheckDialReq{n: n, out: out}:
+	case <-d.ctx.Done():
+		return d.ctx.Err()
+	}
+	select {
+	case err := <-out:
+		return err
+	case <-d.ctx.Done():
+		return d.ctx.Err()
+	}
+}
+
 // loop is the main loop of the dialer.
 func (d *dialScheduler) loop(it enode.Iterator) {
 	var (
-		nodesCh    chan *enode.Node
-		historyExp = make(chan struct{}, 1)
+		nodesCh      chan *enode.Node
+		historyExp   = make(chan struct{}, 1)
+		resweepCh    = make(chan struct{}, 1)
+		resweepTimer mclock.Timer
 	)
 
 loop:
@@ -275,41 +396,72 @@ loop:
 			nodesCh = nil
 		}
 		d.rearmHistoryTimer(historyExp)
+		if resweepTimer == nil && d.needsStaticResweep() {
+			resweepTimer = d.clock.AfterFunc(staticPoolResweepInterval, func() {
+				select {
+				case resweepCh <- struct{}{}:
+				default:
+				}
+			})
+		}
 		d.logStats()
 
 		select {
 		case node := <-nodesCh:
-			if err := d.checkDial(node); err != nil {
+			if err := d.checkDial(node, dynDialedConn); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
 			} else if d.v2Predicate != nil && d.v2Dial != nil && d.v2Predicate(node) {
 				// Peer advertises v2-transport in its ENR — bypass
-				// v1 RLPx entirely and hand off to the v2 dial
-				// path. History is still recorded so v1 checkDial
-				// won't reattempt this node for a while.
-				hkey := string(node.ID().Bytes())
-				d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
-				tcp := &net.TCPAddr{IP: node.IP(), Port: node.TCP()}
-				v2Dial := d.v2Dial
-				go func() {
-					if err := v2Dial(tcp); err != nil {
-						d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
-					}
-				}()
+				// v1 RLPx entirely and hand off to the v2 dial path.
+				// The handoff runs as a regular dial task so it
+				// consumes a dial slot, charges dialingGroups, and is
+				// drained on shutdown like any v1 dial. Without that,
+				// a burst of v2-ENR candidates would fan out unbounded
+				// goroutines, two same-group candidates could both
+				// pass checkDial, and the dial goroutine could touch
+				// the addrbook after Stop's addrbook.Save. The task
+				// uses plain dynDialedConn: block-relay bucket choice
+				// for v2 dials is made inside dialV2WithFlags, not by
+				// the v1 scheduler's pick.
+				task := newDialTask(node, dynDialedConn)
+				task.v2 = true
+				d.startDial(task)
 			} else {
 				d.startDial(newDialTask(node, d.pickDynDialFlags()))
 			}
 
 		case task := <-d.doneCh:
 			id := task.dest.ID()
-			if _, ok := d.dialing[id]; ok && task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
-				d.dialingBlockRelay--
+			if _, ok := d.dialing[id]; ok {
+				if task.flags&blockRelayConn != 0 && d.dialingBlockRelay > 0 {
+					d.dialingBlockRelay--
+				}
+				// Decrement the group recorded at startDial time, not
+				// the group of the current task.dest: resolve() swaps
+				// t.dest mid-flight, and a static node that moved to a
+				// different /16 would otherwise strand the old group's
+				// count forever (permanently blacking out dynamic
+				// dials to that group) while decrementing a group that
+				// was never incremented.
+				if g := task.dialGroup; g != "" {
+					if d.dialingGroups[g] <= 1 {
+						delete(d.dialingGroups, g)
+					} else {
+						d.dialingGroups[g]--
+					}
+				}
 			}
 			delete(d.dialing, id)
 			d.updateStaticPool(id)
 			d.doneSinceLastLog++
 
 		case c := <-d.addPeerCh:
-			if c.is(dynDialedConn) || c.is(staticDialedConn) {
+			// Feeler / addrfetch probes are short-lived and must not
+			// consume an outbound slot or a network-group slot
+			// (Bitcoin Core excludes ConnectionType::FEELER from
+			// outbound counts). They still land in d.peers below so
+			// checkDial's already-connected guard covers them.
+			if (c.is(dynDialedConn) || c.is(staticDialedConn)) && !c.is(feelerConn) {
 				d.dialPeers++
 				if c.is(blockRelayConn) {
 					d.blockRelayDialed++
@@ -328,7 +480,9 @@ loop:
 			// TODO: cancel dials to connected peers
 
 		case c := <-d.remPeerCh:
-			if c.is(dynDialedConn) || c.is(staticDialedConn) {
+			// Mirror the feeler exclusion from addPeerCh so the
+			// counters stay balanced.
+			if (c.is(dynDialedConn) || c.is(staticDialedConn)) && !c.is(feelerConn) {
 				d.dialPeers--
 				if c.is(blockRelayConn) && d.blockRelayDialed > 0 {
 					d.blockRelayDialed--
@@ -344,6 +498,25 @@ loop:
 			delete(d.peers, c.node.ID())
 			d.updateStaticPool(c.node.ID())
 
+		case id := <-d.addInProgressCh:
+			d.inboundProgress[id]++
+
+		case id := <-d.remInProgressCh:
+			if n := d.inboundProgress[id]; n > 1 {
+				d.inboundProgress[id] = n - 1
+			} else {
+				delete(d.inboundProgress, id)
+			}
+			// A static task for this ID may have been rejected with
+			// errInboundProgress while the handshake was pending. If
+			// the inbound conn failed (it never became a peer, so no
+			// remPeerCh event will ever fire for it), this is the
+			// only signal that the ID is dialable again.
+			d.updateStaticPool(id)
+
+		case req := <-d.probeCh:
+			req.out <- d.checkDial(req.n, dynDialedConn)
+
 		case node := <-d.addStaticCh:
 			id := node.ID()
 			_, exists := d.static[id]
@@ -353,7 +526,7 @@ loop:
 			}
 			task := newDialTask(node, staticDialedConn)
 			d.static[id] = task
-			if d.checkDial(node) == nil {
+			if d.checkDial(node, staticDialedConn) == nil {
 				d.addToStaticPool(task)
 			}
 
@@ -371,12 +544,21 @@ loop:
 		case <-historyExp:
 			d.expireHistory()
 
+		case <-resweepCh:
+			resweepTimer = nil
+			for id := range d.static {
+				d.updateStaticPool(id)
+			}
+
 		case <-d.ctx.Done():
 			it.Close()
 			break loop
 		}
 	}
 
+	if resweepTimer != nil {
+		resweepTimer.Stop()
+	}
 	d.stopHistoryTimer(historyExp)
 	for range d.dialing {
 		<-d.doneCh
@@ -454,8 +636,9 @@ func (d *dialScheduler) freeDialSlots() int {
 	return free
 }
 
-// checkDial returns an error if node n should not be dialed.
-func (d *dialScheduler) checkDial(n *enode.Node) error {
+// checkDial returns an error if node n should not be dialed with the
+// given conn flags.
+func (d *dialScheduler) checkDial(n *enode.Node, flags connFlag) error {
 	if n.ID() == d.self {
 		return errSelf
 	}
@@ -471,8 +654,30 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	if _, ok := d.peers[n.ID()]; ok {
 		return errAlreadyConnected
 	}
+	// Reject if an inbound conn for the same NodeID is still mid-
+	// handshake. Closes the symmetric-dial race that would otherwise
+	// have us spend a full encryption + protocol handshake just to
+	// hit DiscAlreadyConnected at addPeerChecks. PIP-0006 review A6.
+	if d.inboundProgress[n.ID()] > 0 {
+		return errInboundProgress
+	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNetRestrict
+	}
+	// Never dial a banned address (Bitcoin Core
+	// CConnman::OpenNetworkConnection). Applies to every scheduler
+	// dial including static ones — an operator ban must not be
+	// worked around by an addnode entry.
+	if d.isBanned != nil && n.IP() != nil && d.isBanned(n.IP()) {
+		return errBanned
+	}
+	// Discouragement is softer than an operator ban: it is stamped
+	// automatically on misbehavior and only clears on restart or
+	// filter rotation. Static dials ignore it, as Core's manual
+	// connections do — the operator explicitly chose the endpoint,
+	// and a shared-IP neighbor's misbehavior must not strand it.
+	if flags&staticDialedConn == 0 && d.isDiscouraged != nil && n.IP() != nil && d.isDiscouraged(n.IP()) {
+		return errDiscouraged
 	}
 	if d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed
@@ -480,13 +685,23 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	// Anti-eclipse: refuse to add a second outbound peer in the
 	// same /16 (IPv4) or /32 (IPv6) network group. Mirrors Bitcoin
 	// Core's outbound_ipv46_peer_netgroups guard in
-	// src/net.cpp:2685. Static dials and feeler/anchor types
-	// bypass this rule by virtue of taking different code paths;
-	// the dynamic-dial scheduler's enode.Iterator is the only
-	// caller where group concentration is a concern.
-	if g := nodeNetworkGroupKey(n); g != "" {
-		if d.outboundGroups[g] > 0 {
-			return errOutboundGroupOccupied
+	// src/net.cpp:2685. Static dials are exempt, as Core's manual
+	// connections are: the operator chose those endpoints, group
+	// concentration among them carries no eclipse signal, and
+	// applying the rule would permanently strand static nodes in
+	// clustered deployments (every docker-bridge peer shares
+	// 172.17.0.0/16). Only iterator-sourced dynamic dials are
+	// group-limited.
+	if flags&staticDialedConn == 0 {
+		if g := nodeNetworkGroupKey(n); g != "" {
+			// Attached peers AND in-flight dials both occupy the
+			// group: a successful dial passes through peerAdded
+			// (outboundGroups) before its task reaches doneCh
+			// (dialingGroups), so the combined check never sees a
+			// gap between the two.
+			if d.outboundGroups[g] > 0 || d.dialingGroups[g] > 0 {
+				return errOutboundGroupOccupied
+			}
 		}
 	}
 	return nil
@@ -565,13 +780,13 @@ func ipNetworkGroupKey(ip net.IP) string {
 
 // nodeNetworkGroupKey computes the same key from an enode.Node so
 // checkDial can compare a candidate against the live set without
-// having a *conn yet. Returns the empty string for addresses that
-// are exempt from group-diversity (loopback, link-local, private
-// ranges in test deployments) — a non-empty key signals a routable
-// public-Internet endpoint.
+// having a *conn yet. Returns the empty string only for loopback and
+// link-local addresses — private RFC1918 ranges are NOT exempt and
+// group normally (Bitcoin group-limits them too; test deployments on
+// one LAN share a single group and rely on the static-dial
+// exemption instead).
 //
-// Mirrors Bitcoin Core's m_is_local exemption (eviction.cpp:115)
-// plus the privacy-network exemption (net.cpp:2675-2683).
+// Mirrors Bitcoin Core's m_is_local exemption (eviction.cpp:115).
 func nodeNetworkGroupKey(n *enode.Node) string {
 	ip := n.IP()
 	if ip == nil {
@@ -594,10 +809,31 @@ func (d *dialScheduler) startStaticDials(n int) (started int) {
 	return started
 }
 
+// needsStaticResweep reports whether any static task is stranded: out
+// of the pool while neither dialing nor connected. Such a task is
+// waiting on a checkDial rejection to clear, and some rejections
+// (ban expiry) produce no event — the periodic resweep is their only
+// way back in.
+func (d *dialScheduler) needsStaticResweep() bool {
+	for id, task := range d.static {
+		if task.staticPoolIndex >= 0 {
+			continue
+		}
+		if _, ok := d.dialing[id]; ok {
+			continue
+		}
+		if _, ok := d.peers[id]; ok {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // updateStaticPool attempts to move the given static dial back into staticPool.
 func (d *dialScheduler) updateStaticPool(id enode.ID) {
 	task, ok := d.static[id]
-	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest) == nil {
+	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest, task.flags) == nil {
 		d.addToStaticPool(task)
 	}
 }
@@ -631,6 +867,13 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	if task.flags&blockRelayConn != 0 {
 		d.dialingBlockRelay++
 	}
+	// Record the group charged for this dial on the task itself so
+	// the doneCh decrement targets the same key even if resolve()
+	// replaces task.dest with an endpoint in a different group.
+	task.dialGroup = nodeNetworkGroupKey(task.dest)
+	if task.dialGroup != "" {
+		d.dialingGroups[task.dialGroup]++
+	}
 	go func() {
 		task.run(d)
 		d.doneCh <- task
@@ -641,6 +884,21 @@ func (d *dialScheduler) startDial(task *dialTask) {
 type dialTask struct {
 	staticPoolIndex int
 	flags           connFlag
+
+	// dialGroup is the network-group key charged to dialingGroups
+	// when the task launched. Written by startDial before the task
+	// goroutine starts and read by the doneCh handler after it
+	// finishes, so it needs no synchronization. Kept separate from
+	// dest because resolve() may replace dest with an endpoint in a
+	// different group mid-flight.
+	dialGroup string
+
+	// v2 routes the task through the scheduler's v2Dial callback
+	// (BIP324 transport) instead of the v1 RLPx dial. v2 tasks never
+	// resolve or redial: the v2 path has its own cooldown and
+	// failure accounting.
+	v2 bool
+
 	// These fields are private to the task and should not be
 	// accessed by dialScheduler while the task is running.
 	dest         *enode.Node
@@ -657,6 +915,13 @@ type dialError struct {
 }
 
 func (t *dialTask) run(d *dialScheduler) {
+	if t.v2 {
+		tcp := &net.TCPAddr{IP: t.dest.IP(), Port: t.dest.TCP()}
+		if err := d.v2Dial(tcp); err != nil {
+			d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
+		}
+		return
+	}
 	if t.needResolve() && !t.resolve(d) {
 		return
 	}

@@ -85,6 +85,19 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
+				// Candidates must be representable as IP:port — the
+				// v2 dialer can't use anything else, and skipping
+				// here also guarantees the self-check below can
+				// never be bypassed by an unparseable address.
+				ap, apOk := addr.AddrPort()
+				if !apOk {
+					logging.Trace("pip6: V2Iter skip (no ip:port form)", "addr", addr.String())
+					skips++
+					if skips >= maxSkipsBeforeBackoff {
+						goto idleBackoff
+					}
+					continue
+				}
 				// Skip the local node's own endpoint. The
 				// disc-protocol quorum can ingest our own
 				// observed external IP into addrman; without
@@ -92,16 +105,14 @@ func (it *V2Iter) Next() bool {
 				// cycle and the v2 dial guard burns cycles
 				// rejecting it. Cheap to test, cheap to skip.
 				if it.isSelf != nil {
-					if ap, apOk := addr.AddrPort(); apOk {
-						tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
-						if it.isSelf(tcp) {
-							logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
-							skips++
-							if skips >= maxSkipsBeforeBackoff {
-								goto idleBackoff
-							}
-							continue
+					tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
+					if it.isSelf(tcp) {
+						logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
+						skips++
+						if skips >= maxSkipsBeforeBackoff {
+							goto idleBackoff
 						}
+						continue
 					}
 				}
 				// Skip entries addrman already considers dead.
@@ -191,7 +202,6 @@ type NodeIter struct {
 	closed     chan struct{}
 	closeOnce  sync.Once
 	maxBackoff time.Duration
-	clock      func() time.Time
 }
 
 // NewNodeIter builds a NodeIter. maxBackoff caps the sleep between empty
@@ -205,7 +215,6 @@ func NewNodeIter(m *AddrMan, maxBackoff time.Duration) *NodeIter {
 		m:          m,
 		closed:     make(chan struct{}),
 		maxBackoff: maxBackoff,
-		clock:      time.Now,
 	}
 }
 
@@ -213,6 +222,12 @@ func NewNodeIter(m *AddrMan, maxBackoff time.Duration) *NodeIter {
 // Close() is called.
 func (it *NodeIter) Next() bool {
 	backoff := 10 * time.Millisecond
+	// Cap per-call skip spins, mirroring V2Iter. On an addrbook
+	// dominated by v2-native (KeyType=0x00) entries — the intended
+	// 2.0 steady state — Select always returns ok but buildEnode
+	// always fails, and a bare continue would peg a core forever.
+	const maxSkipsBeforeBackoff = 64
+	skips := 0
 	for {
 		select {
 		case <-it.closed:
@@ -227,13 +242,19 @@ func (it *NodeIter) Next() bool {
 				it.current = n
 				return true
 			}
-			// Entry exists but can't be dialed via legacy RLPx
-			// (no NodeID). Loop back with no backoff — Select
-			// may hand us a different entry next time.
-			continue
+			// Entry exists but can't be dialed via legacy RLPx (no
+			// NodeID). Retry — Select may hand us a different entry
+			// next time — but back off after a burst of consecutive
+			// misses instead of spinning.
+			skips++
+			if skips < maxSkipsBeforeBackoff {
+				continue
+			}
 		}
 
-		// Empty table — sleep with capped exponential backoff.
+		// Empty table or skip burst — sleep with capped exponential
+		// backoff.
+		skips = 0
 		t := time.NewTimer(backoff)
 		select {
 		case <-it.closed:

@@ -171,16 +171,46 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 		// would be rejected by addSeenNode's filter check.
 		add := n
 		if it.tab.nodeFilter != nil {
-			nn, err := it.tab.net.RequestENR(unwrapNode(n))
-			if err != nil {
-				it.tab.log.Debug("Lookup ENR request failed", "id", n.ID(), "addr", n.addr(), "err", err)
+			id := n.ID()
+			// Positive cache: a verified ENR already in the local nodedb
+			// means we previously accepted this ID. Reuse it instead of
+			// round-tripping — but only when it still describes the
+			// endpoint this neighbor advertised (cachedRecordUsable;
+			// a moved node must be re-fetched at its new endpoint, not
+			// pinned to the stale record) and when it passes the
+			// CURRENT filter: pre-2.0 datadirs can carry stale
+			// non-Parallax records that predate the filter (see
+			// loadSeedNodes), and this path feeds dial candidates
+			// directly. Checked before the negative cache so a
+			// transient RequestENR failure cannot blacklist a
+			// known-good node for rejectCacheTTL.
+			if cached := it.tab.db.Node(id); cached != nil &&
+				cachedRecordUsable(cached, n, 0) && it.tab.nodeFilter(cached) {
+				add = wrapNode(cached)
+			} else if it.tab.rejects.Contains(id, n.IP()) {
+				// Negative cache: a recent RequestENR error or filter
+				// rejection for this (ID, IP) short-circuits without another
+				// round-trip. Without this, the same non-Parallax peer being
+				// returned by every neighbor's FINDNODE response would burn
+				// one RequestENR per occurrence (the a55b10... storm in the
+				// original report). Keyed by (ID, IP) so a malicious
+				// neighbor advertising goodID@attackerIP can't suppress the
+				// honest goodID@goodIP for rejectCacheTTL.
 				continue
+			} else {
+				nn, err := it.tab.net.RequestENR(unwrapNode(n))
+				if err != nil {
+					it.tab.rejects.Add(id, n.IP())
+					it.tab.log.Debug("Lookup ENR request failed", "id", id, "addr", n.addr(), "err", err)
+					continue
+				}
+				if !it.tab.nodeFilter(nn) {
+					it.tab.rejects.Add(id, n.IP())
+					it.tab.log.Debug("Lookup filtered node", "id", id, "addr", n.addr())
+					continue
+				}
+				add = wrapNode(nn)
 			}
-			if !it.tab.nodeFilter(nn) {
-				it.tab.log.Debug("Lookup filtered node", "id", n.ID(), "addr", n.addr())
-				continue
-			}
-			add = wrapNode(nn)
 		}
 		it.tab.addSeenNode(add)
 		filtered = append(filtered, add)

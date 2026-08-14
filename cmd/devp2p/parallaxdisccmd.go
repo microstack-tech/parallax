@@ -23,8 +23,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,7 +235,7 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 	hello := &devp2pHello{
 		Version:    5,
 		Name:       "parallax-disc-crawl",
-		Caps:       []p2p.Cap{{Name: "parallax", Version: 66}, {Name: "parallax-disc", Version: 1}},
+		Caps:       crawlerCaps,
 		ListenPort: 0,
 		ID:         ourID,
 	}
@@ -300,10 +302,33 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 		return nil, nil, fmt.Errorf("write GetPeers: %w", err)
 	}
 
+	// The daemon jitters its GetPeers response (Poisson mean 2s, cap
+	// 6s) and may push unsolicited single-entry relay messages in the
+	// meantime — taking the first Peers message as "the" answer would
+	// truncate the sample to one relayed address. Accumulate: any
+	// multi-entry message is the solicited response (relay pushes are
+	// always single-entry) and completes the probe; otherwise collect
+	// until the jitter window closes and return the union.
+	var (
+		collected []disc.PeerEntry
+		window    = time.Now().Add(8 * time.Second) // jitter cap 6s + margin
+	)
 	for {
+		if window.Before(deadline) {
+			_ = fd.SetReadDeadline(window)
+		}
 		code, data, err := wc.ReadMsg()
 		if err != nil {
+			if len(collected) > 0 && errors.Is(err, os.ErrDeadlineExceeded) {
+				return collected, theirHello.Caps, nil
+			}
 			return nil, nil, fmt.Errorf("read reply: %w", err)
+		}
+		// The daemon rejects messages over disc.MaxMessageSize before
+		// decoding; mirror it so a hostile node can't force outsized
+		// transient allocations (the frame caps alone allow ~48x more).
+		if len(data) > disc.MaxMessageSize {
+			return nil, nil, fmt.Errorf("oversized message: %d > %d", len(data), disc.MaxMessageSize)
 		}
 		switch {
 		case code == uint64(discOffset)+disc.PeersMsg:
@@ -311,7 +336,16 @@ func probeOne(_ context.Context, node *CrawlNode) (peers []disc.PeerEntry, caps 
 			if err := rlp.DecodeBytes(data, &pkt); err != nil {
 				return nil, nil, fmt.Errorf("decode Peers: %w", err)
 			}
-			return pkt.Entries, theirHello.Caps, nil
+			// Enforce the same shape limits the daemon handler
+			// applies: a hostile probed node must not feed an
+			// oversized or malformed fan-out into the crawl queue.
+			if err := pkt.Validate(); err != nil {
+				return nil, nil, fmt.Errorf("invalid Peers: %w", err)
+			}
+			if len(pkt.Entries) > 1 {
+				return append(collected, pkt.Entries...), theirHello.Caps, nil
+			}
+			collected = append(collected, pkt.Entries...)
 		case code == disconnectCode:
 			return nil, nil, fmt.Errorf("peer disconnected during crawl")
 		default:
@@ -368,33 +402,66 @@ func dialAndAuth(fd net.Conn, node *CrawlNode) (wireConn, []byte, error) {
 	}
 }
 
+// crawlerCaps is the capability set the crawler offers in its devp2p
+// Hello. computeDiscOffset negotiates against this same set — the two
+// must never diverge, or the crawler and the server compute different
+// message-code layouts.
+//
+// Deliberately parallax-disc only: the crawler never speaks the prl
+// block/tx protocol, and advertising parallax/66 without sending its
+// Status message armed the daemon's 5s prl handshake timeout — which
+// raced the disc response's 2-6s Poisson jitter and spuriously tore
+// down a measurable fraction of probes.
+var crawlerCaps = []p2p.Cap{
+	{Name: "parallax-disc", Version: 1},
+}
+
+// crawlerCapLengths maps each (name, version) the crawler speaks to
+// its message-code Length. parallax-disc's Length comes from the
+// protocol package so a future bump can't leave this table stale.
+var crawlerCapLengths = map[p2p.Cap]uint64{
+	{Name: "parallax-disc", Version: 1}: disc.ProtocolLength,
+}
+
 // computeDiscOffset returns the parallax-disc subprotocol's message-code
 // base after devp2p capability negotiation against the peer's Hello.
 //
-// devp2p sorts (our caps ∩ their caps) by name and assigns contiguous
-// blocks starting at baseProtocolLength=16. parallax/66 has length 17,
-// parallax-disc/1 has length 3. Alphabetical → parallax first if both
-// matched.
+// Mirrors the server's negotiation exactly: only capabilities BOTH
+// sides offer count (per name, the highest mutual version), laid out
+// alphabetically by name in contiguous blocks starting at
+// baseProtocolLength=16. Matching by name alone would silently desync
+// the layouts the moment the daemon ships a parallax version we don't
+// speak, and counting every advertised version would double-count a
+// peer offering two parallax versions.
 func computeDiscOffset(theirCaps []p2p.Cap) (int, error) {
 	const baseProtocolLength = 16
-	const parallaxProtocolLength = 17
-	var matched []p2p.Cap
-	for _, theirs := range theirCaps {
-		if theirs.Name == "parallax" || theirs.Name == "parallax-disc" {
-			matched = append(matched, theirs)
+	negotiated := make(map[string]p2p.Cap)
+	for _, ours := range crawlerCaps {
+		for _, theirs := range theirCaps {
+			if theirs.Name != ours.Name || theirs.Version != ours.Version {
+				continue
+			}
+			if cur, ok := negotiated[ours.Name]; !ok || ours.Version > cur.Version {
+				negotiated[ours.Name] = ours
+			}
 		}
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
+	if _, ok := negotiated["parallax-disc"]; !ok {
+		return -1, fmt.Errorf("no mutual parallax-disc version with peer (got caps: %v)", theirCaps)
+	}
+	names := make([]string, 0, len(negotiated))
+	for name := range negotiated {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	off := uint64(baseProtocolLength)
-	for _, c := range matched {
-		switch c.Name {
-		case "parallax-disc":
+	for _, name := range names {
+		if name == "parallax-disc" {
 			return int(off), nil
-		case "parallax":
-			off += parallaxProtocolLength
 		}
+		off += crawlerCapLengths[negotiated[name]]
 	}
-	return -1, fmt.Errorf("peer does not advertise parallax-disc/1 (got caps: %v)", theirCaps)
+	return -1, fmt.Errorf("no mutual parallax-disc version with peer (got caps: %v)", theirCaps)
 }
 
 func translateEntries(entries []disc.PeerEntry) []crawlEntry {
@@ -514,7 +581,9 @@ func randomDiscHelloNonce() uint64 {
 	}
 	n := binary.BigEndian.Uint64(b[:])
 	if n == 0 {
-		// 0 is a sentinel some implementations reserve. Bump it.
+		// The daemon compares nonces for equality only (self-connect
+		// check); avoid 0 anyway so the field never looks unset in
+		// captures or logs.
 		n = 1
 	}
 	return n

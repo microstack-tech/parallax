@@ -37,6 +37,10 @@ type testBackend struct {
 	gotHellos []Hello
 	obsOK     bool
 	self      *PeerEntry // if non-nil, SelfEntry returns (*self, true)
+	// selfEntryPort records the listenPort argument of the last
+	// SelfEntry call, so tests can assert the handler threads the
+	// local Hello's listen port through the self-advertise.
+	selfEntryPort uint16
 	// localHello is the Hello returned from LocalHello(). Tests that
 	// drive Hello flows can set the nonce or other fields.
 	localHello Hello
@@ -60,12 +64,13 @@ func (b *testBackend) HandleYourAddr(_ *p2p.Peer, net uint8, addr []byte, port u
 	b.gotAddrs = append(b.gotAddrs, YourAddr{NetworkID: net, Addr: append([]byte(nil), addr...), TCPPort: port})
 }
 
-func (b *testBackend) HandlePeers(_ *p2p.Peer, entries []PeerEntry) {
+func (b *testBackend) HandlePeers(_ *p2p.Peer, entries []PeerEntry) []PeerEntry {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	cp := make([]PeerEntry, len(entries))
 	copy(cp, entries)
 	b.gotPeers = append(b.gotPeers, cp)
+	return entries
 }
 
 func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
@@ -77,9 +82,10 @@ func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 	return b.sample
 }
 
-func (b *testBackend) SelfEntry(_ uint16) (PeerEntry, bool) {
+func (b *testBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.selfEntryPort = listenPort
 	if b.self == nil {
 		return PeerEntry{}, false
 	}
@@ -119,7 +125,7 @@ func runHandlerWithPeer(t *testing.T, backend Backend, configure func(*p2p.Peer)
 	t.Helper()
 	// Disable Poisson jitter for the duration of the test — a 2s
 	// mean per response wrecks suite runtime.
-	prev := peersResponseJitterMean
+	prev := getPeersResponseJitterMean()
 	SetPeersResponseJitterMean(0)
 	t.Cleanup(func() { SetPeersResponseJitterMean(prev) })
 	appRW, netRW := p2p.MsgPipe()
@@ -226,6 +232,61 @@ func TestHandlerBlockRelayOnlySkipsAddressGossip(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 		// Expected: no further outbound traffic.
 	}
+}
+
+// outboxTrackingBackend records whether RegisterPeerOutbox was called.
+type outboxTrackingBackend struct {
+	*testBackend
+	mu         sync.Mutex
+	registered bool
+}
+
+func (b *outboxTrackingBackend) RegisterPeerOutbox(_ PeerKey, _ chan<- PeerEntry) <-chan struct{} {
+	b.mu.Lock()
+	b.registered = true
+	b.mu.Unlock()
+	return make(chan struct{})
+}
+
+func (b *outboxTrackingBackend) UnregisterPeerOutbox(_ PeerKey, _ <-chan struct{}) {}
+
+func (b *outboxTrackingBackend) wasRegistered() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.registered
+}
+
+// TestHandlerBlockRelayOnlyGetsNoRelayOutbox — block-relay-only peers
+// must be excluded from the relay fan-out: no outbox is registered
+// for them, so freshly-learned addresses are never pushed to a peer
+// that committed not to gossip. A full-relay peer does get one.
+func TestHandlerBlockRelayOnlyGetsNoRelayOutbox(t *testing.T) {
+	// Block-relay-only: greeting is Hello + YourAddr only (no
+	// self-advertise, no GetPeers), and no relay outbox is
+	// registered. Drain the two greeting messages to unblock Run,
+	// then confirm no registration happened.
+	brBackend := &outboxTrackingBackend{testBackend: &testBackend{obsOK: true}}
+	appBR, _ := runHandlerWithPeer(t, brBackend, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+	drainOne(t, appBR) // Hello
+	drainOne(t, appBR) // YourAddr
+	time.Sleep(50 * time.Millisecond)
+	if brBackend.wasRegistered() {
+		t.Error("block-relay-only peer must not get a relay outbox")
+	}
+	appBR.Close()
+
+	// Full-relay peer: greeting includes GetPeers, and the outbox is
+	// registered.
+	fullBackend := &outboxTrackingBackend{testBackend: &testBackend{obsOK: true}}
+	appFull, _ := runHandlerWithPeer(t, fullBackend, nil)
+	drainGreeting(t, appFull)
+	time.Sleep(50 * time.Millisecond)
+	if !fullBackend.wasRegistered() {
+		t.Error("full-relay peer must get a relay outbox")
+	}
+	appFull.Close()
 }
 
 // TestHandlerBlockRelayOnlyDropsIncomingGetPeers — receiving a
@@ -368,6 +429,42 @@ func TestHandlerRejectsMessageBeforeHello(t *testing.T) {
 				t.Fatalf("handler didn't exit after pre-Hello %s", tc.name)
 			}
 		})
+	}
+}
+
+// TestHandlerIgnoresPeersFromBlockRelayOnly — Core never sets up
+// address relay on block-relay-only connections, so an addr message on
+// one is ignored outright: it must feed neither addrman nor onward
+// relay, and it is not a misbehavior (the session stays up).
+func TestHandlerIgnoresPeersFromBlockRelayOnly(t *testing.T) {
+	b := &testBackend{obsOK: true}
+	app, done := runHandlerWithPeer(t, b, func(p *p2p.Peer) {
+		p.SetBlockRelayOnly(true)
+	})
+	// Block-relay-only greetings carry no GetPeers, so drain only
+	// Hello and YourAddr.
+	drainOne(t, app)
+	drainOne(t, app)
+
+	hello := Hello{ProtoVersion: HelloMinProtoVersion, Nonce: 0x33, ListenPort: 32110}
+	if err := p2p.Send(app, HelloMsg, hello); err != nil {
+		t.Fatalf("Hello send: %v", err)
+	}
+	entry := PeerEntry{NetworkID: NetIPv4, Addr: []byte{8, 8, 8, 8}, TCPPort: 30303, KeyType: KeyTypeNone}
+	if err := p2p.Send(app, PeersMsg, Peers{Entries: []PeerEntry{entry}}); err != nil {
+		t.Fatalf("Peers send: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited on block-relay-only Peers message: %v", err)
+	default:
+	}
+	b.mu.Lock()
+	got := len(b.gotPeers)
+	b.mu.Unlock()
+	if got != 0 {
+		t.Fatalf("HandlePeers called %d times for a block-relay-only peer, want 0", got)
 	}
 }
 
@@ -556,6 +653,39 @@ func TestHandlerRejectsOversizedPeersMessage(t *testing.T) {
 	}
 }
 
+// TestHandlerAcceptsMultipleUnsolicitedPeers — address relay pushes
+// freshly-learned addresses as single-entry Peers messages
+// throughout a session. The handler must ingest every one of them
+// without disconnecting or flagging the peer as misbehaving; an
+// earlier revision capped unsolicited Peers at one, which made
+// honest relaying peers discourage each other.
+func TestHandlerAcceptsMultipleUnsolicitedPeers(t *testing.T) {
+	b := &testBackend{obsOK: true}
+	app, done := runHandler(t, b)
+	drainAndOpen(t, app)
+
+	const n = 5
+	for i := range n {
+		msg := Peers{Entries: []PeerEntry{
+			{NetworkID: NetIPv4, Addr: []byte{10, 0, 0, byte(i + 1)}, TCPPort: 30303, KeyType: KeyTypeNone},
+		}}
+		if err := p2p.Send(app, PeersMsg, msg); err != nil {
+			t.Fatalf("Send %d: %v", i, err)
+		}
+	}
+	// All n batches should have been ingested (subject to the ingest
+	// token bucket, which the testBackend does not throttle).
+	waitForSample(t, b, n, time.Second)
+
+	// The session must still be alive: no disconnect fired.
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited on unsolicited Peers stream: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	app.Close()
+}
+
 // TestHandlerRejectsDoubleYourAddr — YourAddr is single-shot; a second
 // one is a protocol violation.
 func TestHandlerRejectsDoubleYourAddr(t *testing.T) {
@@ -588,8 +718,8 @@ func TestHandlerAnswersGetPeers(t *testing.T) {
 			{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone, LastSeen: 1700000000},
 		},
 	}
-	app, _ := runHandler(t, b)
-	drainAndOpen(t, app)
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) { p.MarkInboundForTest() })
+	drainAndOpenInbound(t, app)
 
 	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
 		t.Fatal(err)
@@ -610,6 +740,41 @@ func TestHandlerAnswersGetPeers(t *testing.T) {
 	}
 }
 
+// TestHandlerIgnoresGetPeersOnOutboundConn — we only answer GetPeers
+// from peers that connected to us. A node we dialed probing for our
+// addrbook is ignored (Bitcoin: getaddr is ignored on outbound
+// connections), without disconnecting the session.
+func TestHandlerIgnoresGetPeersOnOutboundConn(t *testing.T) {
+	b := &testBackend{
+		obsOK:  true,
+		sample: []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone}},
+	}
+	// Default harness peers carry no inbound flag: this session is
+	// outbound from our side.
+	app, done := runHandler(t, b)
+	drainAndOpen(t, app)
+
+	if err := p2p.Send(app, GetPeersMsg, GetPeers{}); err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan struct{}, 1)
+	go func() {
+		if _, err := app.ReadMsg(); err == nil {
+			read <- struct{}{}
+		}
+	}()
+	select {
+	case <-read:
+		t.Fatal("handler answered GetPeers on an outbound connection")
+	case <-time.After(150 * time.Millisecond):
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited unexpectedly: %v", err)
+	default:
+	}
+}
+
 // TestHandlerIgnoresRepeatGetPeers — Bitcoin parity: one response per
 // session. Second GetPeers yields no response.
 func TestHandlerIgnoresRepeatGetPeers(t *testing.T) {
@@ -617,8 +782,8 @@ func TestHandlerIgnoresRepeatGetPeers(t *testing.T) {
 		obsOK:  true,
 		sample: []PeerEntry{{NetworkID: NetIPv4, Addr: []byte{1, 2, 3, 4}, TCPPort: 30303, KeyType: KeyTypeNone}},
 	}
-	app, _ := runHandler(t, b)
-	drainAndOpen(t, app)
+	app, _ := runHandlerWithPeer(t, b, func(p *p2p.Peer) { p.MarkInboundForTest() })
+	drainAndOpenInbound(t, app)
 
 	_ = p2p.Send(app, GetPeersMsg, GetPeers{})
 	drainOne(t, app) // first response
@@ -684,6 +849,16 @@ func drainAndOpen(t *testing.T, app p2p.MsgReadWriter) {
 	sendTestHello(t, app)
 }
 
+// drainAndOpenInbound is drainAndOpen for handlers whose peer is
+// marked inbound: the greeting is Hello + YourAddr only (inbound
+// peers get no self-advertise or GetPeers).
+func drainAndOpenInbound(t *testing.T, app p2p.MsgReadWriter) {
+	t.Helper()
+	drainOne(t, app) // Hello
+	drainOne(t, app) // YourAddr
+	sendTestHello(t, app)
+}
+
 func waitForSample(t *testing.T, b *testBackend, want int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -697,4 +872,136 @@ func waitForSample(t *testing.T, b *testBackend, want int, timeout time.Duration
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected %d HandlePeers calls, got timeout", want)
+}
+
+// TestHandlerDisconnectsOnMissingHello — a peer that completes
+// negotiation but never sends its Hello is disconnected after the
+// deadline (Bitcoin's VERSION_HANDSHAKE_TIMEOUT) instead of holding
+// a slot forever with an undisclosed relay policy.
+func TestHandlerDisconnectsOnMissingHello(t *testing.T) {
+	prevDeadline := getHelloDeadline()
+	SetHelloDeadline(50 * time.Millisecond)
+	t.Cleanup(func() { SetHelloDeadline(prevDeadline) })
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{obsOK: true}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	// NewPeerPipe wires Disconnect to close the handler-side pipe, so
+	// the deadline disconnect actually unwinds the blocked read loop
+	// the way a live Server teardown does.
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() { appRW.Close() })
+
+	// Consume the greeting but never send Hello back.
+	drainGreeting(t, appRW)
+
+	select {
+	case <-done:
+		// Session ended: deadline disconnect fired.
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler still running long after the Hello deadline")
+	}
+}
+
+// TestHandlerHelloBeatsDeadline — a Hello arriving inside the
+// deadline keeps the session alive past it.
+func TestHandlerHelloBeatsDeadline(t *testing.T) {
+	prevDeadline := getHelloDeadline()
+	SetHelloDeadline(150 * time.Millisecond)
+	t.Cleanup(func() { SetHelloDeadline(prevDeadline) })
+
+	b := &testBackend{obsOK: true}
+	app, done := runHandler(t, b)
+	drainGreeting(t, app)
+	sendTestHello(t, app)
+
+	select {
+	case err := <-done:
+		t.Fatalf("handler exited after timely Hello: %v", err)
+	case <-time.After(400 * time.Millisecond):
+		// Survived well past the deadline.
+	}
+}
+
+// TestPreHelloMessageDisconnectsWithoutDiscourage — a message before
+// Hello ends the session with a plain disconnect and must NOT stamp
+// the discourage filter. A pre-flag-day node (protocol Length 3, no
+// HelloMsg) leads every session with GetPeers or YourAddr; a
+// discourage stamp would ban its address across reconnects —
+// including after the node upgrades — turning a brief mixed-
+// population rollout window into a longer-lived partition.
+func TestPreHelloMessageDisconnectsWithoutDiscourage(t *testing.T) {
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{obsOK: true}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() { appRW.Close() })
+
+	drainGreeting(t, appRW)
+
+	// Lead with GetPeers instead of Hello, the exact first message a
+	// pre-flag-day node sends.
+	if err := p2p.Send(appRW, GetPeersMsg, GetPeers{}); err != nil {
+		t.Fatalf("send pre-Hello GetPeers: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("session survived a pre-Hello message")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler still running after pre-Hello message")
+	}
+	if peer.ShouldDiscourage() {
+		t.Fatalf("pre-Hello message stamped discourage (reason %q); want plain disconnect", peer.DiscourageReason())
+	}
+}
+
+// TestSelfAdvertisePassesListenPort — the handler must thread the
+// local Hello's listen port into SelfEntry so a port-less quorum
+// winner (e.g. a --nat extip override without a port) can fall back
+// to it. Passing 0 made that fallback dead code: a port-0 winner
+// would be advertised as TCPPort 0, which fails Validate() on every
+// receiver and gets this node discouraged on sight.
+func TestSelfAdvertisePassesListenPort(t *testing.T) {
+	prevJitter := getPeersResponseJitterMean()
+	SetPeersResponseJitterMean(0)
+	t.Cleanup(func() { SetPeersResponseJitterMean(prevJitter) })
+
+	b := &testBackend{
+		obsOK:      true,
+		localHello: Hello{ProtoVersion: HelloMinProtoVersion, ListenPort: 32110, Services: ServiceNodeNetwork},
+	}
+	appRW, netRW := p2p.MsgPipe()
+	var id enode.ID
+	_, _ = rand.Read(id[:])
+	peer := p2p.NewPeerPipe(id, "test", nil, netRW)
+	done := make(chan error, 1)
+	go func() { done <- Run(b, peer, netRW) }()
+	t.Cleanup(func() {
+		appRW.Close()
+		<-done
+	})
+
+	drainGreeting(t, appRW)
+
+	b.mu.Lock()
+	got := b.selfEntryPort
+	b.mu.Unlock()
+	if got != 32110 {
+		t.Fatalf("SelfEntry called with listenPort %d, want the local Hello's 32110", got)
+	}
 }

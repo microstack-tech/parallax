@@ -61,12 +61,39 @@ func NetworkGroupForIP(ip net.IP) []byte {
 		return out
 	}
 	if v6 := ip.To16(); v6 != nil {
+		// 6to4 / Teredo tunnels route through an IPv4 endpoint, so
+		// the peer's real network position is the embedded IPv4 /16 —
+		// Core's GetGroup unwraps these via GetLinkedIPv4 for the
+		// same reason. Without the unwrap, one IPv4 host could
+		// spread across many apparent IPv6 /32 groups.
+		if v4 := tunneledIPv4(v6); v4 != nil {
+			out := make([]byte, 1+netGroupPrefixIPv4)
+			out[0] = netGroupTagIPv4
+			copy(out[1:], v4[:netGroupPrefixIPv4])
+			return out
+		}
 		out := make([]byte, 1+netGroupPrefixIPv6)
 		out[0] = netGroupTagIPv6
 		copy(out[1:], v6[:netGroupPrefixIPv6])
 		return out
 	}
 	return []byte{netGroupTagUnknown}
+}
+
+// tunneledIPv4 extracts the IPv4 address embedded in a 6to4
+// (2002::/16) or Teredo (2001::/32) IPv6 address, or nil when the
+// address is neither. 6to4 carries the v4 address in bytes 2-5;
+// Teredo stores the client's v4 address bit-inverted in the last
+// four bytes (RFC 4380 §4). Mirrors CNetAddr::GetLinkedIPv4
+// (src/netaddress.cpp).
+func tunneledIPv4(v6 net.IP) net.IP {
+	if v6[0] == 0x20 && v6[1] == 0x02 {
+		return net.IP{v6[2], v6[3], v6[4], v6[5]}
+	}
+	if v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x00 && v6[3] == 0x00 {
+		return net.IP{v6[12] ^ 0xFF, v6[13] ^ 0xFF, v6[14] ^ 0xFF, v6[15] ^ 0xFF}
+	}
+	return nil
 }
 
 // NetworkGroup returns this peer's cached network-group bytes,

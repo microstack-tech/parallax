@@ -269,7 +269,7 @@ func TestEthClient(t *testing.T) {
 		"BalanceAt": {
 			func(t *testing.T) { testBalanceAt(t, client) },
 		},
-		"TxInBlockInterrupted": {
+		"TxInBlock": {
 			func(t *testing.T) { testTransactionInBlock(t, client) },
 		},
 		"ChainID": {

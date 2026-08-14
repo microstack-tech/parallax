@@ -22,6 +22,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ParallaxProtocol/parallax/internal/testlog"
+	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 // TestAnchorsRoundTripIPv4 — write 2 IPv4 (IP, port) entries to
@@ -147,6 +151,73 @@ func TestAnchorsSaveEmptyRemovesFile(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("file should be removed after empty save; stat err: %v", err)
 	}
+}
+
+// TestPersistAnchorsSnapshotsBlockRelayPeers — persistAnchors must
+// write the (IP, port) of the currently-connected block-relay-only
+// outbound peers it is given, and leave full-relay peers out.
+// Regression: persistAnchors used to read srv.Peers(), which
+// returns nil once the run loop has closed quit, so every shutdown
+// wrote an empty file (and thereby deleted anchors.dat). It now
+// takes the live peer set captured during spindown.
+func TestPersistAnchorsSnapshotsBlockRelayPeers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "anchors.dat")
+	srv := &Server{Config: Config{AnchorsPath: path}}
+	srv.log = testlog.Logger(t, logging.LvlCrit)
+
+	// One block-relay-only outbound peer (should be persisted) and
+	// one ordinary outbound peer (should not).
+	br := newOutboundPeerAt(t, net.IPv4(203, 0, 113, 7), 32110)
+	br.SetBlockRelayOnly(true)
+	full := newOutboundPeerAt(t, net.IPv4(198, 51, 100, 4), 32110)
+
+	srv.persistAnchors(peerSet(br, full))
+
+	got, err := loadAnchors(path)
+	if err != nil {
+		t.Fatalf("loadAnchors: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("persisted %d anchors, want 1 (only the block-relay peer)", len(got))
+	}
+	if !got[0].IP.Equal(net.IPv4(203, 0, 113, 7)) || got[0].Port != 32110 {
+		t.Fatalf("persisted anchor = %v, want 203.0.113.7:32110", got[0])
+	}
+}
+
+// TestPersistAnchorsEmptyPeerSetLeavesNoFile — with no block-relay
+// peers there is nothing to persist; an existing anchors.dat is
+// removed so a crash-restart doesn't replay stale anchors. (This is
+// the branch that silently ran on EVERY shutdown before the fix.)
+func TestPersistAnchorsEmptyPeerSetLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "anchors.dat")
+	if err := saveAnchors(path, []*net.TCPAddr{{IP: net.IPv4(1, 2, 3, 4), Port: 32110}}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Config: Config{AnchorsPath: path}}
+	srv.log = testlog.Logger(t, logging.LvlCrit)
+
+	srv.persistAnchors(map[enode.ID]*Peer{})
+
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("anchors.dat should be removed when no block-relay peers; stat err: %v", err)
+	}
+}
+
+// newOutboundPeerAt builds a synthetic outbound peer whose remote
+// address is (ip, port). peerListenAddr returns the remote addr
+// directly for outbound peers, so this is enough for persistAnchors.
+func newOutboundPeerAt(t *testing.T, ip net.IP, port int) *Peer {
+	t.Helper()
+	pipe, _ := net.Pipe()
+	fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: ip, Port: port}}
+	t.Cleanup(func() { _ = fake.Close() })
+	p := NewPeerForTest(randomID(), "anchor-test", nil, fake)
+	// Outbound (dynDialedConn): peerListenAddr uses RemoteAddr directly.
+	p.rw.set(dynDialedConn, true)
+	return p
 }
 
 // TestAnchorsRemoveAnchors — removeAnchors deletes the file when

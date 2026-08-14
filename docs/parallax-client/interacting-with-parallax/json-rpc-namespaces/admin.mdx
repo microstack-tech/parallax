@@ -6,7 +6,7 @@ The `admin` API gives access to several non-standard RPC methods, which allows f
 
 ### admin\_addnode
 
-Ingests an address into the addrbook with `source=manual`. Manual entries persist across restarts, are exempt from source-aware bucket eviction, and are dialed before any other source. Accepts either plain `ip:port` (v2.0-native peers, `KeyType=0x00`) or the legacy `enode://<nodeID>@ip:port` form (v1.x peers, `KeyType=0x01`).
+Ingests an address into the addrbook with `source=manual`. Manual entries persist across restarts, are exempt from source-aware bucket eviction, and are heavily weighted in dial selection (a 4x chance multiplier over other sources, not a strict front-of-queue guarantee). Accepts either plain `ip:port` (v2.0-native peers, `KeyType=0x00`) or the legacy `enode://<nodeID>@ip:port` form (v1.x peers, `KeyType=0x01`).
 
 Returns `true` if the entry was inserted or updated, `false` otherwise.
 
@@ -54,7 +54,7 @@ Returns `true` on success.
 
 ### admin\_addrbookStatus
 
-Returns a read-only snapshot of the addrbook: total entry count, the new/tried split, and per-source counts (`manual`, `dns_seed`, `tcp_gossip`, `legacy_udp`).
+Returns a read-only snapshot of the addrbook: total entry count, the new/tried split, and per-source counts (`manual`, `dns_seed`, `tcp_gossip`, `legacy_udp`, plus `self_advertised` when present).
 
 | CLIENT  | METHOD INVOCATION                          |
 | ------- | ------------------------------------------ |
@@ -153,7 +153,7 @@ Imports an exported list of blocks from a local file. Importing involves process
 
 ### admin\_listbanned
 
-Returns the active (non-expired) entries from the persistent ban list as a JSON array. Each entry has the CIDR-formatted subnet, the Unix-second timestamps for `ban_created` and `banned_until`, and an optional free-form `reason` tag. Expired entries are pruned lazily on each call.
+Returns the active (non-expired) entries from the persistent ban list as a JSON array, matching Bitcoin Core's `listbanned` output shape. Each entry has the CIDR-formatted subnet, the Unix-second timestamps for `ban_created` and `banned_until`, plus the derived `ban_duration` and `time_remaining` in seconds. Expired entries are pruned lazily on each call.
 
 | CLIENT  | METHOD INVOCATION                       |
 | ------- | --------------------------------------- |
@@ -169,7 +169,8 @@ Returns the active (non-expired) entries from the persistent ban list as a JSON 
     address: "10.0.0.0/24",
     ban_created: 1730000000,
     banned_until: 1730086400,
-    reason: "manual"
+    ban_duration: 86400,
+    time_remaining: 82500
   }
 ]
 ```
@@ -325,16 +326,18 @@ Removes a remote node from the trusted peer set, but it does not disconnect it a
 
 ### admin\_setban
 
-Adds or removes an entry in the persistent ban list. Banned IPs are hard-rejected at the listener for every inbound; trusted peers bypass the check.
+Adds or removes an entry in the persistent ban list. Banned IPs are hard-rejected at the listener for every inbound, with no trusted-peer exemption — the rejection happens before the handshake, so the node cannot yet know whether the remote is trusted. If a banned range must reach a trusted peer, unban it rather than working around the check.
 
 Arguments:
 
 - `subnet` — IP or CIDR string. `"1.2.3.4"` is treated as `/32`; `"10.0.0.0/24"` as a CIDR. IPv6 supported similarly.
 - `command` — `"add"` or `"remove"`.
-- `bantime` — seconds. Honored only on `"add"`. `0` falls back to the daemon's `DefaultBanDuration` (24 h).
-- `absolute` — when `true`, `bantime` is interpreted as a Unix timestamp instead of an offset from now. Defaults to `false`.
+- `bantime` — seconds. Honored only on `"add"`. Omitted, `0`, or negative falls back to the daemon's `DefaultBanDuration` (24 h) — relative form only.
+- `absolute` — when `true`, `bantime` is interpreted as a Unix timestamp instead of an offset from now and must lie in the future (`0` is an error in this form). Defaults to `false`.
 
-On `"add"` any currently-connected peer whose remote address matches the subnet is also disconnected. On `"remove"` the call returns an error if the subnet was not previously banned.
+On `"add"` any currently-connected peer whose remote address matches the subnet is also disconnected, and re-adding a currently-active ban is an error (`IP/subnet already banned`) unless the new expiry extends the old one. On `"remove"` the call returns an error if the subnet was not previously banned.
+
+Note for the interactive console: `admin.setban` requires all four positional arguments there — pass `null` for the optional ones, e.g. `admin.setban("1.2.3.4", "add", null, null)`. The JSON-RPC and `parallax-cli` surfaces accept omitted optionals.
 
 Returns `true` on success.
 

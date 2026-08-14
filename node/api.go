@@ -22,6 +22,7 @@ import (
 	"crypto/elliptic"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"time"
@@ -111,7 +112,7 @@ func (api *privateAdminAPI) AddPeer(url string) (bool, error) {
 		return false, err
 	}
 	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2(tcp); err != nil {
+	if err := server.DialV2Manual(tcp); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -252,7 +253,7 @@ func (api *privateAdminAPI) DialV2(address string) (bool, error) {
 		return false, err
 	}
 	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2(tcp); err != nil {
+	if err := server.DialV2Manual(tcp); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -289,21 +290,56 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 	}
 	switch command {
 	case "add":
-		duration := time.Duration(0) // banman.New default
-		if bantime != nil && *bantime != 0 {
-			if absolute != nil && *absolute {
-				until := time.Unix(*bantime, 0)
-				if !until.After(time.Now()) {
-					return false, errors.New("absolute bantime must be in the future")
-				}
-				duration = time.Until(until)
-			} else {
-				if *bantime < 0 {
-					return false, errors.New("bantime cannot be negative")
-				}
-				duration = time.Duration(*bantime) * time.Second
-			}
+		// Bitcoin parity (rpc/net.cpp RPC_CLIENT_NODE_ALREADY_ADDED):
+		// re-adding an active ban is an error and the operator must
+		// remove it first. BanSubnet's extend-only rule would keep
+		// the longer of the two expiries while reporting success, so
+		// a "shortened" ban would silently not apply. Core's check is
+		// form-sensitive: the subnet form looks up the exact banmap
+		// entry, while the plain-IP form checks containment in ANY
+		// active ban (isSubnet ? IsBanned(subNet) : IsBanned(netAddr)).
+		alreadyBanned := bm.IsBannedSubnet(netw)
+		if !strings.Contains(subnet, "/") {
+			alreadyBanned = bm.IsBanned(netw.IP)
 		}
+		if alreadyBanned {
+			return false, errors.New("IP/subnet already banned")
+		}
+		duration := time.Duration(0) // banman.New default
+		if absolute != nil && *absolute {
+			// With absolute set, bantime IS the expiry — including
+			// an omitted or zero bantime, which resolves to the
+			// epoch and errors, matching Core's "Error: Absolute
+			// timestamp is in the past" rather than silently falling
+			// back to the 24h default.
+			var ts int64
+			if bantime != nil {
+				ts = *bantime
+			}
+			until := time.Unix(ts, 0)
+			if !until.After(time.Now()) {
+				return false, errors.New("absolute bantime must be in the future")
+			}
+			duration = time.Until(until)
+		} else if bantime != nil && *bantime > 0 {
+			// time.Duration counts int64 nanoseconds, so seconds
+			// above ~292 years overflow the multiplication to a
+			// negative value — which BanSubnet would then silently
+			// replace with the 24h default while the RPC reports
+			// success. Clamp so the huge relative bantimes Bitcoin
+			// operators use as "permanent" (e.g. 9999999999) keep
+			// their intent. Core adds the offset in whole seconds
+			// and is immune (src/banman.cpp BanMan::Ban).
+			secs := *bantime
+			if maxSecs := math.MaxInt64 / int64(time.Second); secs > maxSecs {
+				secs = maxSecs
+			}
+			duration = time.Duration(secs) * time.Second
+		}
+		// A zero, omitted, or negative relative bantime leaves
+		// duration 0, which BanSubnet resolves to the 24h default —
+		// matching BanMan::Ban's ban_time_offset <= 0 normalization
+		// (src/banman.cpp).
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err
 		}
@@ -374,9 +410,27 @@ func parseBanSubnet(s string) (*net.IPNet, error) {
 	}
 	// CIDR form?
 	if strings.Contains(s, "/") {
-		_, subnet, err := net.ParseCIDR(s)
+		ip, subnet, err := net.ParseCIDR(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid CIDR %q: %w", s, err)
+		}
+		// An IPv4-mapped IPv6 CIDR ("::ffff:1.2.3.0/24") means the
+		// embedded IPv4 subnet — Core's CSubNet normalizes the
+		// address to IPv4 and applies the prefix to it. Convert
+		// here, before the ::ffff: mapping prefix is masked away, or
+		// the ban would silently cover a huge IPv6 range ("::/24")
+		// instead. Prefixes above /32 are meaningless for a v4
+		// target and rejected, exactly as Core rejects them —
+		// including the IPv6-style /96../128 forms an earlier
+		// revision accepted as a custom extension.
+		if v4 := ip.To4(); v4 != nil {
+			if ones, bits := subnet.Mask.Size(); bits == 128 {
+				if ones > 32 {
+					return nil, fmt.Errorf("invalid prefix length /%d for IPv4-mapped subnet %q", ones, s)
+				}
+				mask := net.CIDRMask(ones, 32)
+				return &net.IPNet{IP: v4.Mask(mask), Mask: mask}, nil
+			}
 		}
 		return subnet, nil
 	}

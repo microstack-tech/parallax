@@ -21,37 +21,18 @@ import (
 	"time"
 )
 
-func TestTokenBucketBurstThenRefill(t *testing.T) {
-	tb := newTokenBucket(outboundRate, outboundBurst)
-	start := time.Now()
-	// Should allow ~burst tokens instantly.
-	taken := 0
-	for range 20 {
-		if tb.Take(start) {
-			taken++
-		}
-	}
-	if float64(taken) < outboundBurst-0.5 || float64(taken) > outboundBurst+0.5 {
-		t.Errorf("burst: took %d, want ~%.0f", taken, outboundBurst)
-	}
-	// After 1 second, rate=1/s means exactly 1 additional token.
-	if !tb.Take(start.Add(time.Second)) {
-		t.Error("expected token after 1s refill")
-	}
-	if tb.Take(start.Add(time.Second)) {
-		t.Error("bucket drained but Take returned true")
-	}
-}
-
-func TestTokenBucketInboundSlow(t *testing.T) {
-	tb := newTokenBucket(inboundRate, inboundBurst)
+// TestTokenBucketCoreSemantics — Core's m_addr_token_bucket model:
+// initial fill 1.0, refill 0.1/s, soft cap 1000. A fresh session gets
+// exactly one address through and earns the rest at the refill rate.
+func TestTokenBucketCoreSemantics(t *testing.T) {
+	tb := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
 	now := time.Now()
-	// Burst=1 means exactly one token immediately.
+	// Initial fill 1.0 means exactly one token immediately.
 	if !tb.Take(now) {
-		t.Fatal("expected initial burst token")
+		t.Fatal("expected initial token")
 	}
 	if tb.Take(now) {
-		t.Fatal("second take on burst=1 at t=0 should fail")
+		t.Fatal("second take at t=0 should fail (initial fill is 1.0, not the cap)")
 	}
 	// After 9s, rate=0.1/s → still below the 1-token refill threshold.
 	if tb.Take(now.Add(9 * time.Second)) {
@@ -63,6 +44,37 @@ func TestTokenBucketInboundSlow(t *testing.T) {
 	}
 }
 
+// TestTokenBucketSoftCapAccumulation — an idle session accumulates
+// toward the 1000-token soft cap and can then absorb a large honest
+// burst; the cap bounds the accumulation.
+func TestTokenBucketSoftCapAccumulation(t *testing.T) {
+	tb := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
+	start := time.Now()
+	// 200s idle at 0.1/s → 1 + 20 = 21 tokens.
+	at := start.Add(200 * time.Second)
+	taken := 0
+	for range 40 {
+		if tb.Take(at) {
+			taken++
+		}
+	}
+	if taken != 21 {
+		t.Errorf("after 200s idle: took %d, want 21", taken)
+	}
+	// A very long idle period is bounded by the soft cap.
+	tb2 := newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
+	at2 := start.Add(1000 * time.Hour)
+	taken = 0
+	for range 1500 {
+		if tb2.Take(at2) {
+			taken++
+		}
+	}
+	if taken != int(addrTokenBucketCap) {
+		t.Errorf("after long idle: took %d, want the %v cap", taken, addrTokenBucketCap)
+	}
+}
+
 func TestBloomFilterBasic(t *testing.T) {
 	f := &bloomFilter{}
 	keys := [][]byte{
@@ -71,15 +83,15 @@ func TestBloomFilterBasic(t *testing.T) {
 		[]byte("addr-3"),
 	}
 	for _, k := range keys {
-		if f.Contains(k) {
+		if f.Contains(k, 0x1234) {
 			t.Errorf("unseen key reported present: %s", k)
 		}
 	}
 	for _, k := range keys {
-		f.Add(k)
+		f.Add(k, 0x1234)
 	}
 	for _, k := range keys {
-		if !f.Contains(k) {
+		if !f.Contains(k, 0x1234) {
 			t.Errorf("added key not found: %s", k)
 		}
 	}
@@ -91,16 +103,49 @@ func TestBloomFilterLowFalsePositiveRate(t *testing.T) {
 	// count false positives. We expect ~0.1% with bloomSize=72kbit
 	// and 10 hashes at 100-item load; allow 5% safety margin.
 	for i := range 100 {
-		f.Add([]byte{byte(i), byte(i >> 8), 0x01})
+		f.Add([]byte{byte(i), byte(i >> 8), 0x01}, 0x1234)
 	}
 	fps := 0
 	for i := range 10_000 {
 		key := []byte{byte(i), byte(i >> 8), 0x02}
-		if f.Contains(key) {
+		if f.Contains(key, 0x1234) {
 			fps++
 		}
 	}
 	if fps > 50 {
 		t.Errorf("bloom false-positive rate too high: %d/10000", fps)
+	}
+}
+
+// TestRollingBloomRotates — the known-address filter must keep the
+// most recent keys reliably while forgetting old generations, so a
+// weeks-long session can't saturate it into a filter whose false
+// positives silently stop all relay to the peer.
+func TestRollingBloomRotates(t *testing.T) {
+	var r rollingBloom
+	key := func(i int) []byte {
+		return []byte{byte(i >> 16), byte(i >> 8), byte(i), 0xAB}
+	}
+	const total = 4 * bloomGenerationCap
+	for i := 0; i < total; i++ {
+		r.Add(key(i))
+	}
+	// The retention guarantee: at least the last n=5000 (two full
+	// generations) inserts are remembered.
+	for i := total - 2*bloomGenerationCap; i < total; i++ {
+		if !r.Contains(key(i)) {
+			t.Fatalf("recent key %d missing from rolling bloom", i)
+		}
+	}
+	// Rotation actually forgets: the earliest generation is gone.
+	// Allow for false positives, but the bulk must be absent.
+	present := 0
+	for i := 0; i < bloomGenerationCap; i++ {
+		if r.Contains(key(i)) {
+			present++
+		}
+	}
+	if present > bloomGenerationCap/10 {
+		t.Fatalf("%d/%d oldest keys still present; rotation is not forgetting", present, bloomGenerationCap)
 	}
 }

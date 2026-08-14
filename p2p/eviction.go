@@ -17,27 +17,29 @@
 package p2p
 
 import (
+	crand "crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"math"
+	"net"
 	"sort"
-	"time"
 
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
 )
 
 // Protection counts. Mirrors Bitcoin Core's eviction.cpp constants
-// (src/node/eviction.cpp:178-240). Tunable via Server config when
-// operator wants different anti-eclipse trade-offs.
+// (src/node/eviction.cpp:178-240).
 const (
-	// evictProtectNetGroup peers with diverse network groups are
-	// preserved before any quality-based round runs. Bitcoin Core
-	// uses 4 (eviction.cpp:188).
+	// evictProtectNetGroup peers with the highest keyed network-group
+	// hash are preserved before any quality-based round runs.
+	// Bitcoin Core uses 4 (eviction.cpp:188).
 	evictProtectNetGroup = 4
 	// evictProtectFastestPing peers with the lowest min-ping RTT
 	// are preserved. Core uses 8 (eviction.cpp:191).
 	evictProtectFastestPing = 8
 	// evictProtectNewestTx peers with the most-recent tx relay
-	// are preserved (only counts tx-relay-enabled peers). Core
-	// uses 4 (eviction.cpp:194).
+	// are preserved. Core uses 4 (eviction.cpp:194).
 	evictProtectNewestTx = 4
 	// evictProtectBlockRelay block-relay-only peers with newest
 	// blocks are preserved. Core uses 8 (eviction.cpp:196).
@@ -45,23 +47,68 @@ const (
 	// evictProtectNewestBlock peers with the most-recent block
 	// announce are preserved. Core uses 4 (eviction.cpp:201).
 	evictProtectNewestBlock = 4
-	// evictMinAge is the minimum connection age before a peer can
-	// be evicted. Bitcoin Core's MINIMUM_CONNECT_TIME = 30s
-	// (src/net_processing.cpp:112).
-	evictMinAge = 30 * time.Second
 )
 
+// evictNetGroupSalt is a per-process random salt for the keyed
+// network-group hash. Bitcoin Core salts nKeyedNetGroup with a
+// deterministic per-node randomizer (net.cpp CalculateKeyedNetGroup)
+// precisely so an attacker cannot predict which network groups the
+// diversity round will protect.
+var evictNetGroupSalt = func() [16]byte {
+	var s [16]byte
+	if _, err := crand.Read(s[:]); err != nil {
+		panic("p2p: eviction netgroup salt init: " + err.Error())
+	}
+	return s
+}()
+
+// keyedNetGroup returns the salted hash of p's network group.
+// All peers in one /16 (or IPv6 /32) share a value; the value
+// itself is unpredictable to an attacker. Peers with no derivable
+// group (non-TCP transports) hash their node ID instead, preserving
+// the "nil is a unique singleton group" contract of NetworkGroup.
+func keyedNetGroup(p *Peer) uint64 {
+	group := p.NetworkGroup()
+	if group == nil {
+		id := p.ID()
+		group = id[:]
+	}
+	h := sha256.New()
+	h.Write(evictNetGroupSalt[:])
+	h.Write(group)
+	var sum [sha256.Size]byte
+	return binary.BigEndian.Uint64(h.Sum(sum[:0]))
+}
+
+// evictMinPing returns the peer's minimum measured ping RTT, or
+// MaxInt64 when no pong has been received yet. Bitcoin Core
+// initializes m_min_ping_time to microseconds::max() (src/net.h)
+// so an unmeasured peer sorts as the WORST candidate in the
+// lowest-ping protection round; a zero default would instead make
+// a peer that simply never answers our pings look like the fastest
+// peer we have and grant it permanent protection.
+func evictMinPing(p *Peer) int64 {
+	if v := p.minPing.Load(); v > 0 {
+		return v
+	}
+	return math.MaxInt64
+}
+
 // evictionCandidates filters the full peer set down to the slice of
-// inbound peers that may be evicted: trusted, static, and
-// recently-connected peers are excluded.
+// inbound peers that may be evicted: trusted (Core: NoBan), static,
+// outbound, and already-disconnecting peers are excluded.
 //
 // Mirrors Bitcoin Core's AttemptToEvictConnection candidate-build
-// at src/net.cpp:1684-1731. Outbound peers are excluded by the
-// "remove non-INBOUND" pass at eviction.cpp:96; trusted peers by
-// "remove m_noban" at eviction.cpp:87.
-func evictionCandidates(peers map[enode.ID]*Peer, now mclock.AbsTime) []*Peer {
+// at src/net.cpp:1684-1711: the fDisconnect skip corresponds to our
+// discRequested flag — a peer whose teardown is in flight must not
+// be picked again, or concurrent admissions would all "pay" with
+// the same victim and over-admit past the inbound cap. Core has no
+// minimum-age filter and neither do we: brand-new connections are
+// valid victims, which is what makes inbound churn attacks pay for
+// themselves (the attacker's own newest connection is the natural
+// pick of the youngest-in-largest-group rule).
+func evictionCandidates(peers map[enode.ID]*Peer) []*Peer {
 	out := make([]*Peer, 0, len(peers))
-	minAgeNs := int64(evictMinAge)
 	for _, p := range peers {
 		if p.rw.is(trustedConn) {
 			continue
@@ -72,7 +119,7 @@ func evictionCandidates(peers map[enode.ID]*Peer, now mclock.AbsTime) []*Peer {
 		if !p.rw.is(inboundConn) {
 			continue
 		}
-		if int64(now)-int64(p.created) < minAgeNs {
+		if p.discRequested.Load() {
 			continue
 		}
 		out = append(out, p)
@@ -80,147 +127,175 @@ func evictionCandidates(peers map[enode.ID]*Peer, now mclock.AbsTime) []*Peer {
 	return out
 }
 
-// protectByMin removes the n peers with the smallest values
-// returned by metric. Used for "lowest min ping" preservation
-// (and other "low-is-better" rounds). Returns the surviving slice.
+// protectLastK mirrors Bitcoin Core's EraseLastKElements
+// (src/node/eviction.cpp:76-84): stable-sort candidates ascending
+// by less — so the peers most deserving protection land at the END
+// of the slice — then remove (protect) the members of the last-k
+// window for which keep returns true. Peers inside the window that
+// fail the predicate stay candidates, and the window does NOT
+// extend to compensate; that asymmetry is Core behavior.
 //
-// If n >= len(candidates) returns an empty slice (everyone
-// protected). Stable: ties don't reorder beyond what sort.Slice
-// guarantees.
-func protectByMin(candidates []*Peer, n int, metric func(*Peer) int64) []*Peer {
-	if n <= 0 {
+// A nil keep predicate protects the whole window.
+func protectLastK(candidates []*Peer, k int, less func(a, b *Peer) bool, keep func(*Peer) bool) []*Peer {
+	if k <= 0 || len(candidates) == 0 {
 		return candidates
-	}
-	if n >= len(candidates) {
-		return candidates[:0]
 	}
 	sorted := make([]*Peer, len(candidates))
 	copy(sorted, candidates)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return metric(sorted[i]) < metric(sorted[j])
-	})
-	// Drop the first n (lowest values) — they are protected.
-	return sorted[n:]
-}
-
-// protectByMax removes the n peers with the largest values
-// returned by metric. Used for "newest" preservation rounds
-// (high-is-better). Returns the surviving slice.
-func protectByMax(candidates []*Peer, n int, metric func(*Peer) int64) []*Peer {
-	if n <= 0 {
-		return candidates
+	sort.SliceStable(sorted, func(i, j int) bool { return less(sorted[i], sorted[j]) })
+	if k > len(sorted) {
+		k = len(sorted)
 	}
-	if n >= len(candidates) {
-		return candidates[:0]
-	}
-	sorted := make([]*Peer, len(candidates))
-	copy(sorted, candidates)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return metric(sorted[i]) > metric(sorted[j])
-	})
-	return sorted[n:]
-}
-
-// protectByMaxConditional is protectByMax restricted to peers for
-// which the conditional predicate returns true. Peers that fail
-// the predicate are NOT protected by this round but stay in the
-// candidate pool for subsequent rounds. Used for "newest tx among
-// tx-relayers" and "newest block among block-relay-only with
-// services" passes (eviction.cpp:194 and :196).
-func protectByMaxConditional(candidates []*Peer, n int, metric func(*Peer) int64, cond func(*Peer) bool) []*Peer {
-	if n <= 0 {
-		return candidates
-	}
-	// Partition: indices that pass cond go into eligible; the
-	// others go into excluded. Sort eligible by metric, take the
-	// top n. Survivors = excluded + (eligible minus top n).
-	eligible := make([]*Peer, 0, len(candidates))
-	excluded := make([]*Peer, 0, len(candidates))
-	for _, p := range candidates {
-		if cond(p) {
-			eligible = append(eligible, p)
-		} else {
-			excluded = append(excluded, p)
+	windowStart := len(sorted) - k
+	out := sorted[:windowStart:windowStart]
+	if keep != nil {
+		for _, p := range sorted[windowStart:] {
+			if !keep(p) {
+				out = append(out, p)
+			}
 		}
 	}
-	if n >= len(eligible) {
-		return excluded
-	}
-	sort.SliceStable(eligible, func(i, j int) bool {
-		return metric(eligible[i]) > metric(eligible[j])
-	})
-	survivors := make([]*Peer, 0, len(excluded)+len(eligible)-n)
-	survivors = append(survivors, excluded...)
-	survivors = append(survivors, eligible[n:]...)
-	return survivors
+	return out
 }
 
-// protectByNetGroupKeyed preserves up to n peers chosen for
-// network-group diversity. The simplification vs Bitcoin Core's
-// keyed-hash approach (src/node/eviction.cpp:188 with
-// CompareNetGroupKeyed) is to pick the n peers from the most
-// distinct groups; ties broken by youngest connection (so older
-// peers in the same group lose out to a younger peer in a
-// previously-unrepresented group).
-//
-// The intent matches Core: an attacker can't fill our inbound
-// pool from a single network group and starve eviction of
-// "diverse" candidates to keep.
-func protectByNetGroupKeyed(candidates []*Peer, n int) []*Peer {
-	if n <= 0 {
-		return candidates
+// Comparators, ascending = least deserving of protection first.
+// Each is a direct port of the corresponding Bitcoin Core
+// comparator in src/node/eviction.cpp, including the tie-break
+// chains: equal-metric ties fall through to "longer connected is
+// more protected" (a.m_connected > b.m_connected), which keeps the
+// rounds deterministic instead of leaking Go map iteration order.
+
+// lessNetGroupKeyed — CompareNetGroupKeyed (eviction.cpp:26).
+func lessNetGroupKeyed(a, b *Peer) bool {
+	return keyedNetGroup(a) < keyedNetGroup(b)
+}
+
+// lessMinPingReverse — ReverseCompareNodeMinPingTime
+// (eviction.cpp:16): highest ping first, lowest ping protected.
+func lessMinPingReverse(a, b *Peer) bool {
+	return evictMinPing(a) > evictMinPing(b)
+}
+
+// lessTxTime — CompareNodeTXTime (eviction.cpp:38): oldest tx time
+// first; ties prefer protecting tx-relayers, then longest-connected.
+func lessTxTime(a, b *Peer) bool {
+	at, bt := a.lastTxRx.Load(), b.lastTxRx.Load()
+	if at != bt {
+		return at < bt
 	}
-	if n >= len(candidates) {
-		return candidates[:0]
+	ar, br := a.relayTxs.Load(), b.relayTxs.Load()
+	if ar != br {
+		return br
 	}
-	// Sort by (group-frequency-ascending, connection-age-ascending):
-	// peers in rare groups sort first, so the head of the list is
-	// the most diverse subset. Then peek the first n as protected.
-	freq := map[string]int{}
-	for _, p := range candidates {
-		freq[string(p.NetworkGroup())]++
+	return a.Created() > b.Created()
+}
+
+// lessBlockRelayOnlyTime — CompareNodeBlockRelayOnlyTime
+// (eviction.cpp:48): tx-relayers first (least protected), then
+// oldest block time, then longest-connected protected.
+func lessBlockRelayOnlyTime(a, b *Peer) bool {
+	ar, br := a.relayTxs.Load(), b.relayTxs.Load()
+	if ar != br {
+		return ar
 	}
-	sorted := make([]*Peer, len(candidates))
-	copy(sorted, candidates)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		fi := freq[string(sorted[i].NetworkGroup())]
-		fj := freq[string(sorted[j].NetworkGroup())]
-		if fi != fj {
-			return fi < fj
-		}
-		return sorted[i].Created() < sorted[j].Created()
-	})
-	return sorted[n:]
+	at, bt := a.lastBlockRx.Load(), b.lastBlockRx.Load()
+	if at != bt {
+		return at < bt
+	}
+	return a.Created() > b.Created()
+}
+
+// lessBlockTime — CompareNodeBlockTime (eviction.cpp:30): oldest
+// block time first; ties protect longest-connected. (Core's
+// fRelevantServices middle tie-break has no Parallax equivalent
+// yet — every peer speaks the full protocol — so it is omitted
+// rather than approximated.)
+func lessBlockTime(a, b *Peer) bool {
+	at, bt := a.lastBlockRx.Load(), b.lastBlockRx.Load()
+	if at != bt {
+		return at < bt
+	}
+	return a.Created() > b.Created()
 }
 
 // protectByRatio mirrors Bitcoin Core's
 // ProtectEvictionCandidatesByRatio (src/node/eviction.cpp:105-176):
-// reserve ~50% of the candidate pool for protection by uptime,
-// with up to 25% set aside for under-represented privacy networks
-// (Tor / I2P / CJDNS / localhost — currently unused in Parallax;
-// the plumbing is here for future).
-//
-// Today's implementation: protect the oldest 50% by Connection
-// Age, dropping them from the candidate pool. The privacy-network
-// reservation is a no-op until Parallax speaks those networks; the
-// peers slice has no tag for them yet.
+// reserve ~50% of the candidate pool for protection by uptime, with
+// up to half of those slots (25% of candidates) set aside for
+// disadvantaged-network peers first. Localhost is the only
+// disadvantaged "network" Parallax accepts inbound (there is no
+// Tor/I2P/CJDNS transport), and it needs the reservation badly:
+// keyedNetGroup buckets every 127.x peer into one group, so without
+// it, co-hosted peers on a multi-node machine are *preferential*
+// victims of the largest-group round — the opposite of Core.
 func protectByRatio(candidates []*Peer) []*Peer {
-	half := len(candidates) / 2
-	if half <= 0 {
+	total := len(candidates) / 2
+	if total <= 0 {
 		return candidates
 	}
-	sorted := make([]*Peer, len(candidates))
-	copy(sorted, candidates)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Created() < sorted[j].Created()
-	})
-	// Drop the oldest `half` — they are protected.
-	return sorted[half:]
+	// Localhost reservation: protect up to total/2 longest-connected
+	// local peers. protectLastK's keep predicate skips non-local
+	// window members without extending the window — the same
+	// asymmetry as Core's EraseLastKElements.
+	before := len(candidates)
+	if maxByNetwork := total / 2; maxByNetwork > 0 {
+		candidates = protectLastK(candidates, maxByNetwork, lessLocalNetworkTime, isLocalPeer)
+	}
+	// Protect the remainder of the 50% budget by uptime.
+	remaining := total - (before - len(candidates))
+	return protectLastK(candidates, remaining, lessUptime, nil)
+}
+
+// isLocalPeer reports whether the peer connected from localhost —
+// Core's NodeEvictionCandidate.m_is_local (addr.IsLocal()).
+func isLocalPeer(p *Peer) bool {
+	ra, ok := p.RemoteAddr().(*net.TCPAddr)
+	return ok && ra.IP.IsLoopback()
+}
+
+// lessLocalNetworkTime — CompareNodeNetworkTime(is_local=true)
+// (eviction.cpp:39): localhost peers sort after everyone else, and
+// among themselves the longest-connected land at the end (most
+// protected).
+func lessLocalNetworkTime(a, b *Peer) bool {
+	al, bl := isLocalPeer(a), isLocalPeer(b)
+	if al != bl {
+		return !al
+	}
+	return a.Created() > b.Created()
+}
+
+// lessUptime — ReverseCompareNodeTimeConnected (eviction.cpp:26):
+// longest-connected peers land at the end (most protected).
+func lessUptime(a, b *Peer) bool {
+	return a.Created() > b.Created()
+}
+
+// preferEvict narrows the surviving candidates to peers flagged for
+// discouragement, when any exist. Mirrors Core's prefer_evict
+// filter (eviction.cpp:209-215): a peer we already caught
+// misbehaving — this session (ShouldDiscourage) or before admission
+// (PreferEvict, the discourage-filter membership stamped at accept,
+// Core's m_prefer_evict) — should absorb the eviction before any
+// well-behaved survivor does. Runs after the protection rounds on
+// purpose — if a misbehaving peer is genuinely our best block
+// source, Core prefers keeping it anyway, and so do we.
+func preferEvict(candidates []*Peer) []*Peer {
+	flagged := make([]*Peer, 0, len(candidates))
+	for _, p := range candidates {
+		if p.ShouldDiscourage() || p.PreferEvict() {
+			flagged = append(flagged, p)
+		}
+	}
+	if len(flagged) == 0 {
+		return candidates
+	}
+	return flagged
 }
 
 // pickEvictionVictim is the final step after all protection rounds.
 // Mirrors src/node/eviction.cpp:217-239:
-//   - group survivors by network group;
+//   - group survivors by keyed network group;
 //   - find the most-populated group (ties → group with youngest
 //     representative connection);
 //   - within that group, evict the youngest peer.
@@ -230,15 +305,16 @@ func pickEvictionVictim(candidates []*Peer) *Peer {
 	if len(candidates) == 0 {
 		return nil
 	}
-	groups := map[string][]*Peer{}
+	groups := map[uint64][]*Peer{}
 	for _, p := range candidates {
-		key := string(p.NetworkGroup())
+		key := keyedNetGroup(p)
 		groups[key] = append(groups[key], p)
 	}
 	var bestGroup []*Peer
 	bestCount := 0
 	var bestYoungest mclock.AbsTime
-	for _, members := range groups {
+	var bestKey uint64
+	for key, members := range groups {
 		count := len(members)
 		// Find youngest in this group.
 		youngest := members[0].Created()
@@ -247,14 +323,18 @@ func pickEvictionVictim(candidates []*Peer) *Peer {
 				youngest = m.Created()
 			}
 		}
+		// The final key comparison exists only to keep the pick
+		// deterministic when two groups tie on both count and
+		// youngest-connection time — Go map iteration order is
+		// random, whereas Core's banked std::map walks groups in
+		// key order and always resolves such ties the same way.
 		switch {
 		case count > bestCount:
-			bestGroup = members
-			bestCount = count
-			bestYoungest = youngest
+			bestGroup, bestCount, bestYoungest, bestKey = members, count, youngest, key
 		case count == bestCount && youngest > bestYoungest:
-			bestGroup = members
-			bestYoungest = youngest
+			bestGroup, bestYoungest, bestKey = members, youngest, key
+		case count == bestCount && youngest == bestYoungest && bestGroup != nil && key > bestKey:
+			bestGroup, bestKey = members, key
 		}
 	}
 	// Within bestGroup, return the youngest member.
@@ -280,37 +360,38 @@ func pickEvictionVictim(candidates []*Peer) *Peer {
 // peer-map lock — the run loop owns the map and invokes us
 // holding ownership.
 func (srv *Server) evictInbound(peers map[enode.ID]*Peer) bool {
-	candidates := evictionCandidates(peers, mclock.Now())
+	candidates := evictionCandidates(peers)
 	if len(candidates) == 0 {
 		return false
 	}
 
-	// Round 1: preserve network-group diversity.
-	candidates = protectByNetGroupKeyed(candidates, evictProtectNetGroup)
-	// Round 2: preserve fastest pings (lowest minPing).
-	candidates = protectByMin(candidates, evictProtectFastestPing,
-		func(p *Peer) int64 { return p.minPing.Load() })
-	// Round 3: preserve newest tx-relay among tx-relayers.
-	candidates = protectByMaxConditional(candidates, evictProtectNewestTx,
-		func(p *Peer) int64 { return p.lastTxRx.Load() },
-		func(p *Peer) bool { return p.relayTxs.Load() })
-	// Round 4: preserve newest blocks among block-relay-only with
-	// the NodeNetwork service flag (mirrors Core's "block-relay
-	// peers with services" round). For now, just gate on
-	// !relayTxs since service-flag plumbing happens in phase 4.
-	candidates = protectByMaxConditional(candidates, evictProtectBlockRelay,
-		func(p *Peer) int64 { return p.lastBlockRx.Load() },
+	// Round 1: preserve network-group diversity (keyed hash, so an
+	// attacker cannot predict which groups win the slots).
+	candidates = protectLastK(candidates, evictProtectNetGroup, lessNetGroupKeyed, nil)
+	// Round 2: preserve fastest pings (lowest measured minPing;
+	// unmeasured counts as worst).
+	candidates = protectLastK(candidates, evictProtectFastestPing, lessMinPingReverse, nil)
+	// Round 3: preserve newest tx activity.
+	candidates = protectLastK(candidates, evictProtectNewestTx, lessTxTime, nil)
+	// Round 4: preserve newest blocks among non-tx-relay peers.
+	// Core's extra fRelevantServices gate has no equivalent here.
+	candidates = protectLastK(candidates, evictProtectBlockRelay, lessBlockRelayOnlyTime,
 		func(p *Peer) bool { return !p.relayTxs.Load() })
 	// Round 5: preserve newest block announces overall.
-	candidates = protectByMax(candidates, evictProtectNewestBlock,
-		func(p *Peer) int64 { return p.lastBlockRx.Load() })
+	candidates = protectLastK(candidates, evictProtectNewestBlock, lessBlockTime, nil)
 	// Round 6: preserve oldest 50%.
 	candidates = protectByRatio(candidates)
+	// If any survivor is already flagged for discouragement, evict
+	// among those first (Core prefer_evict).
+	candidates = preferEvict(candidates)
 
 	victim := pickEvictionVictim(candidates)
 	if victim == nil {
 		return false
 	}
+	srv.log.Debug("Evicting inbound peer to admit new connection",
+		"id", victim.ID(), "addr", victim.RemoteAddr(),
+		"discouraged", victim.ShouldDiscourage())
 	victim.Disconnect(DiscTooManyPeers)
 	return true
 }

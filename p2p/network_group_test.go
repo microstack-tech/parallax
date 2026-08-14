@@ -139,3 +139,31 @@ func TestPeerNetworkGroupNilForNonTCPConn(t *testing.T) {
 		t.Fatalf("net.Pipe peer NetworkGroup = %x, want nil", p.NetworkGroup())
 	}
 }
+
+// 6to4 and Teredo addresses tunnel through an IPv4 endpoint; the
+// group must be the embedded IPv4 /16, matching Core's GetLinkedIPv4
+// unwrapping, so one v4 host can't fan out across IPv6 /32 groups.
+func TestNetworkGroupTunneledIPv4(t *testing.T) {
+	// 6to4: 2002:0102:0304:: embeds 1.2.3.4.
+	sixToFour := net.ParseIP("2002:102:304::1")
+	want := NetworkGroupForIP(net.ParseIP("1.2.3.4"))
+	if got := NetworkGroupForIP(sixToFour); !SameNetworkGroup(got, want) {
+		t.Fatalf("6to4 group = %x, want the embedded v4 group %x", got, want)
+	}
+	// Teredo: 2001:0:x:x:x:x:fefd:fcfb embeds 1.2.3.4 (bit-inverted
+	// in the last four bytes).
+	teredo := net.ParseIP("2001:0:4136:e378:8000:63bf:fefd:fcfb")
+	if got := NetworkGroupForIP(teredo); !SameNetworkGroup(got, want) {
+		t.Fatalf("teredo group = %x, want the embedded v4 group %x", got, want)
+	}
+	// A same-prefix v4 host must land in the same group as the
+	// tunneled forms.
+	if got := NetworkGroupForIP(net.ParseIP("1.2.200.200")); !SameNetworkGroup(got, want) {
+		t.Fatalf("v4 /16 sibling group = %x, want %x", got, want)
+	}
+	// Plain IPv6 must not be unwrapped.
+	plain := NetworkGroupForIP(net.ParseIP("2a00:1450::1"))
+	if SameNetworkGroup(plain, want) {
+		t.Fatalf("plain IPv6 wrongly grouped with v4")
+	}
+}

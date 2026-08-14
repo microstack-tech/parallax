@@ -25,8 +25,10 @@ const (
 	SourceDNSSeed Source = 3
 
 	// SourceManual — operator-pinned via `parallax-cli addnode`. Persists
-	// across restarts, dialed before any other source, exempt from
-	// source-aware eviction. Mirrors Bitcoin Core's `addnode` semantics.
+	// across restarts, heavily weighted in dial selection (a 4x
+	// chance multiplier in Select, not a strict front-of-queue
+	// guarantee), exempt from source-aware eviction. Mirrors Bitcoin
+	// Core's `addnode` semantics.
 	SourceManual Source = 4
 
 	// SourceSelfAdvertised — a locally-observed self-address that reached

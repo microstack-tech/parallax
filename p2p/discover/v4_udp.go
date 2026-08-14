@@ -712,10 +712,10 @@ func (t *UDPv4) handlePing(h *packetHandlerV4, from *net.UDPAddr, fromID enode.I
 	n := wrapNode(enode.NewV4(h.senderKey, from.IP, int(req.From.TCP), from.Port))
 	if time.Since(t.db.LastPongReceived(n.ID(), from.IP)) > bondExpiration {
 		t.sendPing(fromID, from, func() {
-			t.tab.verifyAndAdd(n)
+			t.tab.verifyAndAdd(n, req.ENRSeq)
 		})
 	} else {
-		t.tab.verifyAndAdd(n)
+		t.tab.verifyAndAdd(n, req.ENRSeq)
 	}
 
 	// Update node database and endpoint predictor.
@@ -809,8 +809,9 @@ func (t *UDPv4) recoverBond(from *net.UDPAddr, fromKey v4wire.Pubkey) {
 	// routing table after the bond exchange completes. verifyAndAdd takes the
 	// synchronous addVerifiedNode path when no NodeFilter is set, so the
 	// explicit Ping above is the bond-establishment step in plain discv4
-	// (filter-less) deployments.
-	t.tab.verifyAndAdd(n)
+	// (filter-less) deployments. FINDNODE/ENRRequest packets carry no ENR
+	// sequence claim, hence observedSeq=0.
+	t.tab.verifyAndAdd(n, 0)
 }
 
 // allowRecoverBond returns true if a bond-recovery attempt may be made for

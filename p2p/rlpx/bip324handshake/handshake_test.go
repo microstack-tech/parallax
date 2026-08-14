@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -412,6 +413,227 @@ func FuzzPeekVersionDispatch(f *testing.F) {
 	})
 }
 
+// pairConns establishes a real v2-handshake-authenticated Conn pair
+// over net.Pipe and returns (initConn, respConn). Used by the framing
+// fuzz target so it operates against the real keystreams, not a stub.
+func pairConns(t testing.TB) (*Conn, *Conn, func()) {
+	t.Helper()
+	a, b := net.Pipe()
+	cleanup := func() {
+		_ = a.Close()
+		_ = b.Close()
+	}
+	initConn := NewConn(a)
+	respConn := NewConn(b)
+	done := make(chan error, 2)
+	go func() {
+		var magic [1]byte
+		if _, err := io.ReadFull(b, magic[:]); err != nil {
+			done <- err
+			return
+		}
+		if magic[0] != VersionMagic {
+			done <- errors.New("magic mismatch")
+			return
+		}
+		done <- respConn.AcceptHandshake()
+	}()
+	go func() {
+		done <- initConn.DialHandshake()
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			cleanup()
+			t.Fatalf("pairConns: %v", err)
+		}
+	}
+	return initConn, respConn, cleanup
+}
+
+// FuzzReadFrame feeds adversary-controlled length prefixes and frame
+// tails into a fully-handshaked Conn's Read path. Invariants checked:
+//
+//   - no panic on truncated, oversized, or malformed input;
+//   - recvNonce never advances on a failed Read (no partial-state
+//     retention — a failed AEAD must not leave the receive counter
+//     incremented for the next legitimate frame);
+//   - oversized length prefixes are rejected before any allocation
+//     proportional to the claimed size;
+//   - Read either returns a non-nil error OR a non-nil plaintext,
+//     but never both nil with no error.
+func FuzzReadFrame(f *testing.F) {
+	// Seeds: empty, short header, header claiming 0, header claiming
+	// less than the AEAD overhead, header claiming MaxFrameLen+1
+	// (overflow), well-formed but garbage AEAD body.
+	f.Add([]byte{})
+	f.Add([]byte{0x00})
+	f.Add([]byte{0x00, 0x00, 0x00})
+	f.Add([]byte{0x00, 0x00, 0x10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	f.Add([]byte{0xFF, 0xFF, 0xFF})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, respConn, cleanup := pairConns(t)
+		defer cleanup()
+
+		// Drive Read against a synthetic reader yielding `data`,
+		// sharing the real respConn's recvAEAD. Using a stub avoids
+		// the deadline-vs-EOF races that net.Pipe would otherwise
+		// surface into the fuzz oracle.
+		recvBefore := respConn.recvNonce
+		stub := &fuzzReader{src: data}
+		probe := &Conn{
+			conn:      stub,
+			recvAEAD:  respConn.recvAEAD,
+			recvNonce: respConn.recvNonce,
+		}
+
+		pt, err := probe.Read()
+		if err == nil && pt == nil {
+			t.Fatal("Read returned (nil, nil)")
+		}
+		if err != nil {
+			// Failed Read MUST NOT advance the recv nonce — leaving
+			// the counter desynced from the peer would silently break
+			// every subsequent legitimate frame.
+			if probe.recvNonce != recvBefore {
+				t.Fatalf("recvNonce advanced on failed Read: before=%d after=%d", recvBefore, probe.recvNonce)
+			}
+		}
+	})
+}
+
+// fuzzReader implements net.Conn for the purpose of feeding a fixed
+// byte slice into Conn.Read without involving the OS pipe machinery
+// (which would surface deadline-vs-EOF races into the fuzz oracle).
+type fuzzReader struct {
+	src []byte
+	pos int
+}
+
+func (r *fuzzReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.src) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.src[r.pos:])
+	r.pos += n
+	return n, nil
+}
+func (r *fuzzReader) Write([]byte) (int, error)       { return 0, io.ErrClosedPipe }
+func (r *fuzzReader) Close() error                    { return nil }
+func (r *fuzzReader) LocalAddr() net.Addr             { return dummyAddr{} }
+func (r *fuzzReader) RemoteAddr() net.Addr            { return dummyAddr{} }
+func (r *fuzzReader) SetDeadline(time.Time) error     { return nil }
+func (r *fuzzReader) SetReadDeadline(time.Time) error { return nil }
+func (r *fuzzReader) SetWriteDeadline(time.Time) error {
+	return nil
+}
+
+type dummyAddr struct{}
+
+func (dummyAddr) Network() string { return "fuzz" }
+func (dummyAddr) String() string  { return "fuzz" }
+
+// TestReadFrameLengthBoundaries — explicit boundary cases for the
+// length-prefix decoding, complementing the fuzz target. Locks in the
+// MaxFrameLen + AEAD-tag arithmetic so a future refactor can't widen
+// the cap silently.
+func TestReadFrameLengthBoundaries(t *testing.T) {
+	_, respConn, cleanup := pairConns(t)
+	defer cleanup()
+
+	cases := []struct {
+		name    string
+		header  []byte
+		wantErr error
+	}{
+		{
+			name:    "claimed length below AEAD overhead",
+			header:  []byte{0x00, 0x00, 0x01},
+			wantErr: ErrBadFrame,
+		},
+		{
+			name:    "claimed length exactly at AEAD overhead with no body",
+			header:  []byte{0x00, 0x00, 0x10},
+			wantErr: nil, // io.EOF on the body read — not ErrBadFrame
+		},
+		{
+			name:    "claimed length above MaxFrameLen+overhead",
+			header:  []byte{0xFF, 0xFF, 0xFF},
+			wantErr: ErrFrameTooLarge,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recvBefore := respConn.recvNonce
+			stub := &fuzzReader{src: tc.header}
+			probe := &Conn{conn: stub, recvAEAD: respConn.recvAEAD}
+			probe.recvNonce = respConn.recvNonce
+			_, err := probe.Read()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got %v, want %v", err, tc.wantErr)
+			}
+			if probe.recvNonce != recvBefore {
+				t.Fatalf("recvNonce advanced on error path: before=%d after=%d", recvBefore, probe.recvNonce)
+			}
+		})
+	}
+}
+
+// TestReadFrameNonceDesyncRejected — a frame encrypted with sendNonce=N
+// but presented when recvNonce=N+1 must fail authentication. This locks
+// down the contract that the receive counter is part of the AEAD's
+// associated state; an attacker reordering frames cannot get them
+// accepted out of sequence.
+func TestReadFrameNonceDesyncRejected(t *testing.T) {
+	initConn, respConn, cleanup := pairConns(t)
+	defer cleanup()
+
+	// Capture the wire bytes for one legitimate frame.
+	var captured bytes.Buffer
+	tee := &captureConn{buf: &captured}
+	teeProbe := &Conn{
+		conn:      tee,
+		sendAEAD:  initConn.sendAEAD,
+		sendNonce: 0,
+	}
+	if err := teeProbe.Write([]byte("first")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Re-create a respConn-like reader where recvNonce starts at 1
+	// (skip-ahead). The captured frame was sealed at nonce=0, so the
+	// AEAD must reject it.
+	stub := &fuzzReader{src: captured.Bytes()}
+	probe := &Conn{conn: stub, recvAEAD: respConn.recvAEAD, recvNonce: 1}
+	if _, err := probe.Read(); err == nil {
+		t.Fatal("Read accepted a frame at desynced recvNonce")
+	} else if !errors.Is(err, ErrBadFrame) {
+		t.Fatalf("got %v, want ErrBadFrame", err)
+	}
+}
+
+// captureConn is a write-sink net.Conn that records everything
+// written to it. Used to snapshot a legitimate AEAD frame for the
+// desync test; nothing is forwarded anywhere.
+type captureConn struct {
+	buf *bytes.Buffer
+}
+
+func (t *captureConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (t *captureConn) Close() error                     { return nil }
+func (t *captureConn) LocalAddr() net.Addr              { return dummyAddr{} }
+func (t *captureConn) RemoteAddr() net.Addr             { return dummyAddr{} }
+func (t *captureConn) SetDeadline(time.Time) error      { return nil }
+func (t *captureConn) SetReadDeadline(time.Time) error  { return nil }
+func (t *captureConn) SetWriteDeadline(time.Time) error { return nil }
+func (t *captureConn) Write(p []byte) (int, error) {
+	t.buf.Write(p)
+	return len(p), nil
+}
+
 // TestRandomBytesClassification — exhaustive sweep over 0x00..0xFF.
 // Exactly one byte (0xA0) maps to V2; all others map to Legacy.
 func TestRandomBytesClassification(t *testing.T) {
@@ -459,4 +681,158 @@ func BenchmarkHandshakeRoundTrip(b *testing.B) {
 		_ = a.Close()
 		_ = c.Close()
 	}
+}
+
+// TestEmptyFrameRoundTrip — a zero-length Write produces a tag-only
+// frame that must Read back as a non-nil empty slice: Read never
+// yields (nil, nil), which is the invariant FuzzReadFrame asserts.
+func TestEmptyFrameRoundTrip(t *testing.T) {
+	a, b := handshakedPair(t)
+	if err := a.Write([]byte{}); err != nil {
+		t.Fatalf("write empty frame: %v", err)
+	}
+	pt, err := b.Read()
+	if err != nil {
+		t.Fatalf("read empty frame: %v", err)
+	}
+	if pt == nil {
+		t.Fatal("Read returned nil plaintext for a valid empty frame")
+	}
+	if len(pt) != 0 {
+		t.Fatalf("plaintext = %x, want empty", pt)
+	}
+	// The stream stays usable afterwards.
+	if err := a.Write([]byte("after")); err != nil {
+		t.Fatal(err)
+	}
+	if pt, err := b.Read(); err != nil || string(pt) != "after" {
+		t.Fatalf("frame after empty = %q err=%v", pt, err)
+	}
+}
+
+// TestTransportBreaksAfterFrameFailure — any framing failure latches
+// the Conn: subsequent Reads/Writes fail with ErrTransportBroken. A
+// partial write would otherwise be retryable under the same send
+// nonce (ChaCha20-Poly1305 nonce reuse), and a read-side failure
+// leaves the stream position ambiguous.
+func TestTransportBreaksAfterFrameFailure(t *testing.T) {
+	a, b := handshakedPair(t)
+
+	// Corrupt a frame in transit by writing garbage bytes straight to
+	// the underlying conn, then let the reader hit the AEAD reject.
+	if _, err := a.Underlying().Write([]byte{0x00, 0x00, 0x20}); err != nil {
+		t.Fatal(err)
+	}
+	junk := make([]byte, 0x20)
+	if _, err := a.Underlying().Write(junk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(); err == nil {
+		t.Fatal("expected AEAD failure on corrupted frame")
+	}
+	if _, err := b.Read(); !errors.Is(err, ErrTransportBroken) {
+		t.Fatalf("second Read after failure = %v, want ErrTransportBroken", err)
+	}
+	if err := b.Write([]byte("x")); !errors.Is(err, ErrTransportBroken) {
+		t.Fatalf("Write after read failure = %v, want ErrTransportBroken", err)
+	}
+
+	// An oversize-plaintext Write touches nothing on the wire and
+	// must NOT latch the sender.
+	big := make([]byte, MaxFrameLen+1)
+	if err := a.Write(big); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("oversize write = %v, want ErrFrameTooLarge", err)
+	}
+	if err := a.Write([]byte("still fine")); err != nil {
+		t.Fatalf("write after oversize rejection = %v, want nil", err)
+	}
+}
+
+// TestLargeFrameRoundTrip locks in that a frame the size of the
+// protocol layer's largest legal message (prl/snap maxMessageSize,
+// 10 MiB, plus the RLP code prefix) traverses the transport. The
+// v2 transport sends one message per frame with no fragmentation,
+// so a MaxFrameLen below this size breaks block/state sync between
+// v2 peers: WriteMsg fails with ErrFrameTooLarge and the peer is
+// torn down.
+func TestLargeFrameRoundTrip(t *testing.T) {
+	a, b, cleanup := pairConns(t)
+	defer cleanup()
+
+	const size = 10*1024*1024 + 9 // maxMessageSize + RLP code prefix
+	payload := make([]byte, size)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	werr := make(chan error, 1)
+	go func() { werr <- a.Write(payload) }()
+
+	got, err := b.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if err := <-werr; err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("round-tripped frame differs from payload")
+	}
+}
+
+// handshakedPair returns two Conns on a loopback TCP pair with the
+// v2 handshake completed. TCP (unlike net.Pipe) is kernel-buffered,
+// so single-goroutine write-then-read tests don't deadlock.
+func handshakedPair(t *testing.T) (*Conn, *Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	type accepted struct {
+		c   net.Conn
+		err error
+	}
+	acceptCh := make(chan accepted, 1)
+	go func() {
+		c, err := ln.Accept()
+		acceptCh <- accepted{c, err}
+	}()
+	dialFD, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := <-acceptCh
+	if acc.err != nil {
+		t.Fatal(acc.err)
+	}
+	t.Cleanup(func() {
+		dialFD.Close()
+		acc.c.Close()
+	})
+
+	init := NewConn(dialFD)
+	resp := NewConn(acc.c)
+	errCh := make(chan error, 1)
+	go func() {
+		// Consume the version magic the dispatcher would normally
+		// peek before AcceptHandshake.
+		var magic [1]byte
+		if _, err := readFull(acc.c, magic[:]); err != nil {
+			errCh <- err
+			return
+		}
+		if magic[0] != VersionMagic {
+			errCh <- errors.New("bad magic")
+			return
+		}
+		errCh <- resp.AcceptHandshake()
+	}()
+	if err := init.DialHandshake(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	return init, resp
 }

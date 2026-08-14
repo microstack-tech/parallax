@@ -205,8 +205,8 @@ func (s *CrawlState) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// walker drives the multi-hop crawl. One walker per `parallax-disc walk`
-// invocation; not safe to run two against the same state file.
+// walker drives the multi-hop crawl. One walker per `parallax-disc
+// crawl` invocation; not safe to run two against the same state file.
 type walker struct {
 	state *CrawlState
 	stMu  sync.Mutex // guards state.Nodes mutation

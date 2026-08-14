@@ -17,6 +17,7 @@
 package disc
 
 import (
+	crand "crypto/rand"
 	"encoding/binary"
 	"hash/fnv"
 	"sync"
@@ -24,17 +25,24 @@ import (
 )
 
 // Token bucket constants — mirror Bitcoin Core's m_addr_token_bucket
-// semantics in src/net_processing.cpp.
+// semantics in src/net_processing.cpp exactly. One model for every
+// peer, inbound and outbound alike:
 //
-// Bitcoin's numbers: inbound 0.1 addr/s with burst 1, outbound 1.0
-// addr/s with burst 10. Addresses over the rate are dropped silently,
-// not disconnected — rate-exceed-as-disconnect is a DoS vector against
+//	MAX_ADDR_RATE_PER_SECOND         = 0.1 tokens/s
+//	MAX_ADDR_PROCESSING_TOKEN_BUCKET = 1000 (soft cap, = MAX_ADDR_TO_SEND)
+//	initial fill                     = 1.0
+//
+// The 1000-token soft cap is what lets an idle session absorb an
+// honest gossip burst: at 0.1/s the bucket accumulates ~360 tokens an
+// hour, so a peer that has been quiet all day can deliver a large
+// batch at once, while a peer streaming addresses is held to the
+// steady 0.1/s. Addresses over the rate are dropped silently, not
+// disconnected — rate-exceed-as-disconnect is a DoS vector against
 // honest peers under load.
 const (
-	inboundRate   = 0.1 // tokens per second
-	inboundBurst  = 1.0
-	outboundRate  = 1.0
-	outboundBurst = 10.0
+	addrRatePerSecond   = 0.1
+	addrTokenBucketCap  = 1000.0
+	addrTokenBucketInit = 1.0
 
 	// BloomSize / BloomHashes are the per-peer known-address filter
 	// sizing. 5000 elements at 0.001 false-positive rate → ~72k bits,
@@ -45,6 +53,13 @@ const (
 	bloomBits   = 73984 // ~72 kbit, byte-aligned
 	bloomBytes  = bloomBits / 8
 	bloomHashes = 10
+
+	// bloomGenerationCap is the insert budget of one rolling-filter
+	// generation. Three generations at (n+1)/2 inserts each guarantee
+	// the filter remembers at least the n=5000 most recent keys —
+	// the same scheme as Bitcoin's CRollingBloomFilter{5000, 0.001}
+	// backing m_addr_known.
+	bloomGenerationCap = (5000 + 1) / 2
 )
 
 // tokenBucket is a classic leaky-bucket rate limiter. Refill happens
@@ -57,11 +72,15 @@ type tokenBucket struct {
 	lastFill time.Time
 }
 
-func newTokenBucket(rate, burst float64) *tokenBucket {
+// newTokenBucket returns a bucket with the given refill rate, soft
+// cap, and initial fill. The initial fill is 1.0 in production
+// (Core's m_addr_token_bucket{1.0}): a brand-new session gets one
+// address through immediately and earns the rest at the refill rate.
+func newTokenBucket(rate, burst, initial float64) *tokenBucket {
 	return &tokenBucket{
 		rate:     rate,
 		burst:    burst,
-		level:    burst,
+		level:    initial,
 		lastFill: time.Now(),
 	}
 }
@@ -74,9 +93,16 @@ func (b *tokenBucket) Take(now time.Time) bool {
 
 	elapsed := now.Sub(b.lastFill).Seconds()
 	if elapsed > 0 {
-		b.level += elapsed * b.rate
-		if b.level > b.burst {
-			b.level = b.burst
+		// Refill tops the level toward burst but never past it, and
+		// never touches a level already above burst — a Credit for a
+		// solicited response may legitimately hold the level there,
+		// and clamping would destroy the credit (Bitcoin: "Don't
+		// increment bucket if it's already full").
+		if b.level < b.burst {
+			b.level += elapsed * b.rate
+			if b.level > b.burst {
+				b.level = b.burst
+			}
 		}
 		b.lastFill = now
 	}
@@ -87,6 +113,18 @@ func (b *tokenBucket) Take(now time.Time) bool {
 	return false
 }
 
+// Credit adds n tokens, allowing the level to exceed burst. Used when
+// soliciting a GetPeers response: the reply may carry a full
+// MaxPeersPerMessage batch, which must bypass the steady-state gossip
+// rate (Bitcoin: peer.m_addr_token_bucket += MAX_ADDR_TO_SEND on
+// getaddr send). The excess drains through Take; lazy refill never
+// raises the level past burst on its own.
+func (b *tokenBucket) Credit(n float64) {
+	b.mu.Lock()
+	b.level += n
+	b.mu.Unlock()
+}
+
 // Level returns the current fill level. Read-only; for tests.
 func (b *tokenBucket) Level() float64 {
 	b.mu.Lock()
@@ -94,20 +132,19 @@ func (b *tokenBucket) Level() float64 {
 	return b.level
 }
 
-// bloomFilter is a fixed-size counting-free bloom filter. Thread-safe.
-// One per peer. Cleared on session start (fresh allocation).
+// bloomFilter is a fixed-size counting-free bloom filter. NOT
+// thread-safe on its own — it is a generation inside rollingBloom,
+// which serializes access under its mutex. tweak is the per-instance
+// random salt supplied by the owning rollingBloom.
 type bloomFilter struct {
-	mu   sync.Mutex
 	bits [bloomBytes]byte
 }
 
 // Contains checks whether key may have been seen. False positives are
 // possible; false negatives are not.
-func (f *bloomFilter) Contains(key []byte) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+func (f *bloomFilter) Contains(key []byte, tweak uint32) bool {
 	for i := 0; i < bloomHashes; i++ {
-		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
+		pos := bloomHash(key, uint32(i), tweak) % uint32(bloomBits)
 		if f.bits[pos/8]&(1<<(pos%8)) == 0 {
 			return false
 		}
@@ -116,19 +153,84 @@ func (f *bloomFilter) Contains(key []byte) bool {
 }
 
 // Add marks key as seen.
-func (f *bloomFilter) Add(key []byte) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+func (f *bloomFilter) Add(key []byte, tweak uint32) {
 	for i := 0; i < bloomHashes; i++ {
-		pos := bloomHash(key, uint32(i)) % uint32(bloomBits)
+		pos := bloomHash(key, uint32(i), tweak) % uint32(bloomBits)
 		f.bits[pos/8] |= 1 << (pos % 8)
 	}
 }
 
-func bloomHash(key []byte, seed uint32) uint32 {
+// rollingBloom keeps the most recent ~5000 keys by cycling three
+// bloom generations: inserts land in the current generation, and when
+// it reaches its insert budget the oldest generation is dropped. A
+// session that relays addresses for weeks therefore never saturates
+// the filter (a fixed filter's false-positive rate climbs toward 1
+// and silently stops all relay to that peer — worst on the long-lived
+// backbone links). Mirrors Bitcoin's CRollingBloomFilter behavior for
+// m_addr_known. The zero value is ready to use.
+type rollingBloom struct {
+	mu   sync.Mutex
+	gens [3]bloomFilter
+	// cur indexes the generation receiving inserts; curCount is the
+	// number of inserts it has absorbed.
+	cur      int
+	curCount int
+	// tweak is a per-instance random salt mixed into every hash,
+	// lazily drawn on first use. Bitcoin's CRollingBloomFilter uses a
+	// random nTweak for the same reason: with fixed seeds a peer can
+	// precompute cover-sets that force Contains(target)==true and
+	// suppress our relay of a chosen address to it.
+	tweak uint32
+}
+
+func (r *rollingBloom) tweakLocked() uint32 {
+	if r.tweak == 0 {
+		var b [4]byte
+		if _, err := crand.Read(b[:]); err == nil {
+			// |1 keeps a legitimately-drawn zero from re-rolling
+			// every call; the salt's exact value doesn't matter.
+			r.tweak = binary.LittleEndian.Uint32(b[:]) | 1
+		} else {
+			r.tweak = 1
+		}
+	}
+	return r.tweak
+}
+
+// Contains checks whether key may have been seen in any live
+// generation. False positives possible, false negatives not (within
+// the retention window).
+func (r *rollingBloom) Contains(key []byte) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tweak := r.tweakLocked()
+	for i := range r.gens {
+		if r.gens[i].Contains(key, tweak) {
+			return true
+		}
+	}
+	return false
+}
+
+// Add marks key as seen, rotating generations when the current one
+// is full.
+func (r *rollingBloom) Add(key []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gens[r.cur].Add(key, r.tweakLocked())
+	r.curCount++
+	if r.curCount >= bloomGenerationCap {
+		r.cur = (r.cur + 1) % len(r.gens)
+		r.gens[r.cur] = bloomFilter{}
+		r.curCount = 0
+	}
+}
+
+func bloomHash(key []byte, seed, tweak uint32) uint32 {
 	h := fnv.New32a()
-	var sbuf [4]byte
-	binary.LittleEndian.PutUint32(sbuf[:], seed)
+	var sbuf [8]byte
+	binary.LittleEndian.PutUint32(sbuf[:4], seed)
+	binary.LittleEndian.PutUint32(sbuf[4:], tweak)
 	_, _ = h.Write(sbuf[:])
 	_, _ = h.Write(key)
 	return h.Sum32()

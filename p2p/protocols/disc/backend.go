@@ -17,7 +17,11 @@
 package disc
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/binary"
 	"errors"
+	mrand "math/rand/v2"
 	"net"
 	"sync"
 	"time"
@@ -81,6 +85,37 @@ type AddrmanBackend struct {
 	// Looked up by Server.peerListenAddr to dedup cross-dial pairs
 	// (phase 2) and by future eviction telemetry (phase 3).
 	peerHello map[PeerKey]Hello
+
+	// peerOutboxes is the per-peer relay channel registered by
+	// handler.Run. RelayAddress fans newly-learned addresses into
+	// the chosen subset of these. See relay.go for the picker.
+	peerOutboxes map[PeerKey]*peerRelayState
+
+	// getPeersPending marks peers we have solicited a GetPeers
+	// response from that has not yet arrived. Entries received while
+	// the response is pending are ingested but never relayed onward
+	// (Bitcoin: the !peer.m_getaddr_sent gate in the ADDR relay
+	// path). Set by NoteGetPeersSent, cleared by the first Peers
+	// message smaller than a full response (Bitcoin: m_getaddr_sent
+	// is cleared by any addr message under 1000 entries).
+	getPeersPending map[PeerKey]bool
+
+	// peersReply caches the GetPeers response per requestor network
+	// for ~a day, so reconnecting requestors keep drawing the same
+	// sample instead of a fresh one per session. Without it an
+	// attacker enumerates the whole addrbook in a handful of
+	// reconnects and can fingerprint the node across network
+	// identities (Bitcoin: CConnman::m_addr_response_caches, ~21-27h
+	// per cache entry).
+	peersReply map[uint8]peersReplyCache
+
+	// relayKey is the per-process secret used as the keyed-hash key
+	// for the address-relay PRF. 32 random bytes from crypto/rand at
+	// backend construction; never persisted, never rotated. Rotating
+	// per-process means an observer can't predict our pick set across
+	// restarts; rotating per-process-not-per-day means the daily
+	// pick rotation is the work of the day-bucket input, not the key.
+	relayKey [32]byte
 }
 
 // NewAddrmanBackend wraps an addrman and a quorum tally into the
@@ -98,16 +133,26 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 	if log == nil {
 		log = logging.Root()
 	}
-	return &AddrmanBackend{
-		m:             m,
-		Q:             q,
-		log:           log,
-		isSelf:        isSelf,
-		helloProv:     helloProvider,
-		peerBuckets:   make(map[PeerKey]*tokenBucket),
-		handshakeByID: make(map[enode.ID]string),
-		peerHello:     make(map[PeerKey]Hello),
+	b := &AddrmanBackend{
+		m:               m,
+		Q:               q,
+		log:             log,
+		isSelf:          isSelf,
+		helloProv:       helloProvider,
+		peerBuckets:     make(map[PeerKey]*tokenBucket),
+		handshakeByID:   make(map[enode.ID]string),
+		peerHello:       make(map[PeerKey]Hello),
+		peerOutboxes:    make(map[PeerKey]*peerRelayState),
+		getPeersPending: make(map[PeerKey]bool),
+		peersReply:      make(map[uint8]peersReplyCache),
 	}
+	if _, err := rand.Read(b.relayKey[:]); err != nil {
+		// crypto/rand failures are catastrophic (see crypto.io's
+		// unfailing-by-design guarantee on linux/getrandom). Panic
+		// rather than ship with a zero-key relay PRF.
+		panic("disc: cannot read randomness for relayKey: " + err.Error())
+	}
+	return b
 }
 
 // TrackHandshake records the handshake variant used for this session.
@@ -173,7 +218,43 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 	if len(group) == 0 {
 		return
 	}
+	// On sessions we dialed, the peer observed our ephemeral source
+	// port, not our listen port. Zero it so the report still counts
+	// toward the address tally (the quorum key ignores ports) without
+	// polluting the port ranking; inbound sessions dialed the port we
+	// are actually reachable on, so their observation is kept.
+	if !peer.Inbound() {
+		port = 0
+	}
 	b.Q.Report(peerKeyFor(peer), net, addr, port, group)
+}
+
+// ancientLastSeen is the garbage-timestamp sentinel threshold: any
+// claimed LastSeen at or below it (about March 1973 in Unix seconds)
+// is treated as unset. Mirrors Bitcoin's 100000000-second cutoff in
+// the ADDR ingest path (src/net_processing.cpp).
+const ancientLastSeen = 100000000
+
+// maxRelayBatch is the largest Peers message whose entries are
+// eligible for onward relay. Genuine relay pushes arrive as 1-entry
+// messages; anything larger is bulk transfer, not gossip. Mirrors
+// Bitcoin's vAddr.size() <= 10 gate in the ADDR relay path.
+const maxRelayBatch = 10
+
+// NoteGetPeersSent records that we solicited a GetPeers response from
+// peer. Entries arriving while the response is pending are ingested
+// but never relayed onward; the mark is cleared by the first Peers
+// message smaller than a full response. Called by RequestPeers.
+func (b *AddrmanBackend) NoteGetPeersSent(peer *p2p.Peer) {
+	b.mu.Lock()
+	b.getPeersPending[peerKeyFor(peer)] = true
+	b.mu.Unlock()
+	// Accept a full response on top of the steady-state gossip rate.
+	// Without this credit a solicited 1000-entry response would be
+	// ~99% rate-limit-dropped and bootstrap would lean entirely on
+	// seed nodes (Bitcoin: m_addr_token_bucket += MAX_ADDR_TO_SEND
+	// when sending getaddr).
+	b.ingestBucketFor(peer).Credit(MaxPeersPerMessage)
 }
 
 // HandlePeers ingests a batch of gossiped PeerEntry records into
@@ -181,9 +262,38 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 // LastSeen (PIP-0006 Phase 2 rule: "Subtract a 2-hour penalty when the
 // source is gossip rather than direct observation") is applied here.
 // Rate limiting is enforced per-peer via the ingest bucket.
-func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
-	if b.m == nil || len(entries) == 0 {
-		return
+//
+// Returns the entries that made it past the token bucket, so the
+// handler can mark exactly those in the peer's known-address bloom —
+// Core calls AddAddressKnown after the rate limit, and marking
+// rate-limited entries would let a peer suppress our future relay of
+// addresses it never actually processed.
+func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) []PeerEntry {
+	if b.m == nil {
+		return nil
+	}
+	// Relay eligibility is per-message (Bitcoin's ADDR relay gates,
+	// net_processing.cpp): entries from a solicited GetPeers response
+	// are never re-gossiped, and only small unsolicited batches (the
+	// shape a genuine relay push has — RelayAddress sends 1-entry
+	// messages) qualify. Without the solicited-response gate, every
+	// 1000-entry GetPeers response would fan out again as up to 2000
+	// relayed messages. Any batch smaller than a full response also
+	// completes a pending solicited exchange — including an empty one
+	// from a fresh node with a bare addrbook — mirroring Core's
+	// clearing of m_getaddr_sent on any sub-1000-entry addr message.
+	// Leaving the flag set would misclassify everything that peer
+	// relays for the rest of the session as solicited (never
+	// re-gossiped).
+	key := peerKeyFor(peer)
+	b.mu.Lock()
+	solicited := b.getPeersPending[key]
+	if len(entries) < MaxPeersPerMessage {
+		delete(b.getPeersPending, key)
+	}
+	b.mu.Unlock()
+	if len(entries) == 0 {
+		return nil
 	}
 	bucket := b.ingestBucketFor(peer)
 	sourceNet, sourceAddr, ok := peerNetworkGroup(peer)
@@ -191,19 +301,32 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 		// Can't bucket the source — addrman needs a CNetAddr for
 		// the source-group portion of newBucket. Drop the whole
 		// batch; per-peer loss is acceptable.
-		return
+		return nil
 	}
 	source, err := addrman.NewNetAddr(addrmanNetID(sourceNet), sourceAddr, 0)
 	if err != nil {
-		return
+		return nil
 	}
+	mayRelay := !solicited && len(entries) <= maxRelayBatch
+
+	// Shuffle before the rate-limited loop (Core: std::shuffle before
+	// processing) so token-bucket drops aren't a deterministic prefix
+	// of the sender's ordering — otherwise the tail of every large
+	// honest batch is systematically lost.
+	mrand.Shuffle(len(entries), func(i, j int) { entries[i], entries[j] = entries[j], entries[i] })
 
 	now := time.Now()
+	rateLimited := 0
+	accepted := make([]PeerEntry, 0, len(entries))
 	for _, e := range entries {
 		if !bucket.Take(now) {
-			// Rate-limit drop — silent (Bitcoin parity).
+			// Rate-limit drop — no disconnect, no misbehavior mark
+			// (Bitcoin parity), but counted for diagnostics like
+			// Core's m_addr_rate_limited.
+			rateLimited++
 			continue
 		}
+		accepted = append(accepted, e)
 		net := addrmanNetID(e.NetworkID)
 		naddr, err := addrman.NewNetAddr(net, e.Addr, e.TCPPort)
 		if err != nil {
@@ -220,33 +343,95 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) {
 				continue
 			}
 		}
-		// Clamp LastSeen to [now-10min, now+10min] per PIP-0006
-		// Phase 2. Future-dating is rejected by falling back to now
-		// — matches Bitcoin's ingest, which never trusts a
-		// forward-dated address.
+		// Sanitize LastSeen the way Bitcoin ingests addr timestamps
+		// (net_processing.cpp ADDR handling): an ancient sentinel
+		// (pre-2001) or a claim more than 10 minutes in the future is
+		// replaced with now-5days; every other claim is preserved
+		// as-is. Preserving old claims is what lets dead addresses age
+		// out — addrman's IsTerrible drops entries past the 30-day
+		// horizon, which an ingest-time floor would forever reset,
+		// keeping zombie addresses in circulation hop-to-hop.
 		claimed := time.Unix(int64(e.LastSeen), 0)
-		if claimed.Before(now.Add(-10 * time.Minute)) {
-			claimed = now.Add(-10 * time.Minute)
+		if e.LastSeen <= ancientLastSeen || claimed.After(now.Add(10*time.Minute)) {
+			claimed = now.Add(-5 * 24 * time.Hour)
 		}
-		if claimed.After(now.Add(10 * time.Minute)) {
-			claimed = now
+		e.LastSeen = uint64(claimed.Unix())
+		// This node dials IP networks only — there is no Tor/I2P/CJDNS
+		// transport. Core's ADDR handling ("Do not store addresses
+		// outside our network", net_processing.cpp) keeps such entries
+		// out of addrman — otherwise an attacker stuffs the addrbook
+		// and GetPeers response slots with undialable entries — while
+		// still relaying them (below, at the reduced unreachable
+		// fanout) so they propagate toward nodes that serve those
+		// networks.
+		reachable := e.NetworkID == NetIPv4 || e.NetworkID == NetIPv6
+		if reachable {
+			// Plus the 2-hour gossip penalty applied by the Add path.
+			b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
 		}
-		// Plus the 2-hour gossip penalty applied by the Add path.
-		b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
+		// Bitcoin's per-entry relay gates: only a fresh claim (under
+		// 10 minutes old) on a routable address is gossiped onward,
+		// and only from a message that passed the per-message gates
+		// above. Relay is independent of whether addrman stored the
+		// entry — an already-known address still propagates (Core
+		// relays before AddrMan::Add); the per-destination knownAddr
+		// bloom in the relay drain is what suppresses repeats to the
+		// same peer, exactly like Core's m_addr_known. Freshness
+		// expiring 10 minutes after the original claim bounds any
+		// relay loop.
+		if mayRelay && naddr.Valid() && claimed.After(now.Add(-10*time.Minute)) {
+			b.RelayAddress(peer, e, reachable)
+		}
 	}
+	if rateLimited > 0 {
+		b.log.Debug("parallax-disc/1: rate-limited address ingest",
+			"peer", peer.ID(), "dropped", rateLimited, "received", len(entries))
+	}
+	return accepted
 }
 
-// SamplePeers returns up to max entries for a GetPeers response. Draws
-// from addrman.GetAddr with filtered=true so IsTerrible entries are
-// dropped. Maps each entry back to the PeerEntry wire format with the
-// stored KeyType/NodeID.
-func (b *AddrmanBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
+// maxPctPeersToSend caps a GetPeers response at this percentage of
+// the addrbook, whichever of it and MaxPeersPerMessage is smaller.
+// Mirrors Bitcoin's MAX_PCT_ADDR_TO_SEND=23: one response never
+// discloses more than about a quarter of the book.
+const maxPctPeersToSend = 23
+
+// peersReplyCache is one cached GetPeers response (see peersReply).
+type peersReplyCache struct {
+	entries []PeerEntry
+	expires time.Time
+}
+
+// SamplePeers returns up to max entries for a GetPeers response.
+// Draws from addrman.GetAddr with filtered=true so IsTerrible entries
+// are dropped, capped at maxPctPeersToSend percent of the book, and
+// caches the response per requestor network for ~a day so repeated
+// requests can't enumerate the addrbook. Maps each entry back to the
+// PeerEntry wire format with the stored KeyType/NodeID.
+func (b *AddrmanBackend) SamplePeers(peer *p2p.Peer, max int) []PeerEntry {
 	if b.m == nil || max <= 0 {
 		return nil
 	}
+	// Cache key: the requestor's network. Coarser than Bitcoin's
+	// (network, local socket) key, but Parallax nodes run a single
+	// listener, so the network alone carries the same intent — all
+	// same-network requestors share one long-lived sample. Callers
+	// must treat the returned slice as read-only.
+	netID, _, ok := peerNetworkGroup(peer)
+	if !ok {
+		netID = 0
+	}
+	now := time.Now()
+	b.mu.Lock()
+	if c, hit := b.peersReply[netID]; hit && now.Before(c.expires) {
+		b.mu.Unlock()
+		return c.entries
+	}
+	b.mu.Unlock()
+
 	// Ask addrman for up to max*2 entries so we have slack after
 	// filtering out entries that can't be serialized on the wire.
-	sample := b.m.GetAddr(max*2, 0, nil, true)
+	sample := b.m.GetAddr(max*2, maxPctPeersToSend, nil, true)
 	out := make([]PeerEntry, 0, len(sample))
 	for _, addr := range sample {
 		if len(out) >= max {
@@ -267,6 +452,16 @@ func (b *AddrmanBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 			LastSeen:  uint64(info.LastSeen.Unix()),
 		})
 	}
+	// Bitcoin's cache lifetime: 21h plus up to 6h of jitter, chosen
+	// so scraped data is mostly stale by the time a full scrape could
+	// complete, while honest requestors still get a usably fresh
+	// sample (churn is bounded by the 30-day IsTerrible horizon).
+	b.mu.Lock()
+	b.peersReply[netID] = peersReplyCache{
+		entries: out,
+		expires: now.Add(21*time.Hour + time.Duration(mrand.Int64N(int64(6*time.Hour)))),
+	}
+	b.mu.Unlock()
 	return out
 }
 
@@ -283,6 +478,12 @@ func (b *AddrmanBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 	// hint), substitute our listen port.
 	if port == 0 {
 		port = listenPort
+	}
+	// Still no port — a port-less winner on a non-listening node.
+	// A PeerEntry with TCPPort 0 fails Validate() on every receiver
+	// and flags us as misbehaving, so advertise nothing.
+	if port == 0 {
+		return PeerEntry{}, false
 	}
 	return PeerEntry{
 		NetworkID: net,
@@ -304,11 +505,7 @@ func (b *AddrmanBackend) ingestBucketFor(peer *p2p.Peer) *tokenBucket {
 	if ok {
 		return bk
 	}
-	rate, burst := inboundRate, inboundBurst
-	if !peer.Inbound() {
-		rate, burst = outboundRate, outboundBurst
-	}
-	bk = newTokenBucket(rate, burst)
+	bk = newTokenBucket(addrRatePerSecond, addrTokenBucketCap, addrTokenBucketInit)
 	b.peerBuckets[key] = bk
 	return bk
 }
@@ -321,8 +518,66 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	delete(b.peerBuckets, key)
 	delete(b.handshakeByID, peer.ID())
 	delete(b.peerHello, key)
+	delete(b.getPeersPending, key)
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
+}
+
+// connectedPeerKeys snapshots the set of peers currently tracked by the
+// backend (those that have completed Hello and not yet disconnected).
+// Used by RunQuorumRefreshLoop to reconcile Quorum's report tally
+// against the actually-connected set — the "drop reports for peers no
+// longer connected" half of PIP-0006 §Phase 4's quorum re-eval.
+//
+// Passed to Quorum.Refresh as a function (not a pre-taken value) so the
+// snapshot is captured under the quorum's report lock, atomically with
+// respect to a peer completing Hello+YourAddr — see Refresh's contract.
+func (b *AddrmanBackend) connectedPeerKeys() map[PeerKey]struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[PeerKey]struct{}, len(b.peerHello))
+	for k := range b.peerHello {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// RunQuorumRefreshLoop is the 1h periodic backstop that recomputes
+// Quorum's tally — runs evictStaleLocked plus a connected-peer-set
+// reconciliation. Returns when stop fires; caller is responsible for
+// goroutine lifetime. Safe to call exactly once per backend.
+//
+// In production Server.Start spawns this as part of the parallax-disc/1
+// wiring. Tests invoke it directly with a synthetic stop chan, or
+// exercise Quorum.Refresh in isolation.
+func (b *AddrmanBackend) RunQuorumRefreshLoop(stop <-chan struct{}) {
+	b.RunQuorumRefreshLoopWithInterval(stop, QuorumRefreshInterval)
+}
+
+// RunQuorumRefreshLoopWithInterval is the test-facing variant of
+// RunQuorumRefreshLoop. Internal to the package.
+func (b *AddrmanBackend) RunQuorumRefreshLoopWithInterval(stop <-chan struct{}, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-t.C:
+			// Pass the snapshot function, not a pre-taken snapshot, so
+			// Refresh evaluates it under the quorum lock — a peer that
+			// finishes its handshake mid-tick can't be seen as "in the
+			// tally but absent from the snapshot" and lose its vote.
+			dropped := b.Q.Refresh(now, b.connectedPeerKeys)
+			if dropped > 0 {
+				b.log.Debug("parallax-disc/1: quorum refresh dropped reports from disconnected peers",
+					"dropped", dropped)
+			}
+		}
+	}
 }
 
 // LocalHello returns the local node's outgoing Hello (the value sent
@@ -354,10 +609,23 @@ func (b *AddrmanBackend) LocalHello() Hello {
 // Server's run loop processes delpeer in the next iteration.
 func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 	if b.helloProv != nil {
-		if local := b.helloProv(); h.Nonce == local.Nonce {
+		local := b.helloProv()
+		var hbuf, lbuf [8]byte
+		binary.BigEndian.PutUint64(hbuf[:], h.Nonce)
+		binary.BigEndian.PutUint64(lbuf[:], local.Nonce)
+		if subtle.ConstantTimeCompare(hbuf[:], lbuf[:]) == 1 {
 			return errSelfConnect
 		}
 	}
+	// Record the peer's disclosed tx-relay intent on the Peer object
+	// so the eviction algorithm and the tx-broadcast path can see it.
+	// A peer that connected to us block-relay-only clears
+	// ServiceRelayTx in its Hello (sendHello), and we must not push
+	// transactions to it nor mis-protect it in the tx-relay eviction
+	// round. Bitcoin Core tracks this as CNode::m_relays_txs, set
+	// from the version message's fRelay bit.
+	peer.SetRelayTxs(h.Services&ServiceRelayTx != 0)
+
 	key := peerKeyFor(peer)
 	b.mu.Lock()
 	b.peerHello[key] = h
@@ -447,8 +715,12 @@ func (b *AddrmanBackend) SetCrossDialHost(h CrossDialHost) {
 	b.crossDialHostMu.Unlock()
 }
 
-// peerKeyFor returns the stable PeerKey for the session lifetime. We
-// use the enode.ID hex because it's unique per connection.
+// peerKeyFor returns the stable PeerKey for the session lifetime: the
+// enode.ID hex. For v2 handshakes the ID derives from ephemeral
+// session keys, so it's unique per connection; for legacy peers it's
+// the persistent node ID, stable across that peer's reconnects (only
+// one live session per legacy ID exists at a time, so per-session
+// state keyed on it cannot collide).
 func peerKeyFor(peer *p2p.Peer) PeerKey {
 	id := peer.ID()
 	return PeerKey(id.String())

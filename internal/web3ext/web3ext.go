@@ -142,6 +142,57 @@ web3._extend({
 			params: 1
 		}),
 		new web3._extend.Method({
+			name: 'addnode',
+			call: 'admin_addnode',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'removenode',
+			call: 'admin_removenode',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'dialV2',
+			call: 'admin_dialV2',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'setban',
+			call: 'admin_setban',
+			params: 4,
+			inputFormatter: [null, null, null, null]
+		}),
+		new web3._extend.Method({
+			name: 'listbanned',
+			call: 'admin_listbanned',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'clearbanned',
+			call: 'admin_clearbanned',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'addrbookStatus',
+			call: 'admin_addrbookStatus',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'addrbookResetKey',
+			call: 'admin_addrbookResetKey',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'uptime',
+			call: 'admin_uptime',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'stop',
+			call: 'admin_stop',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'exportChain',
 			call: 'admin_exportChain',
 			params: 3,

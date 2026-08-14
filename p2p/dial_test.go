@@ -465,6 +465,320 @@ func TestDialSchedNetworkGroupDiversity(t *testing.T) {
 	})
 }
 
+// TestDialSchedSkipsInboundInProgress — when an inbound conn is
+// mid-handshake for some NodeID (registered via inboundProgressBegin),
+// the dial scheduler must NOT pick that ID from the discovery
+// iterator. Closes the symmetric-handshake race that previously had
+// us spend a full encryption + protocol handshake just to hit
+// DiscAlreadyConnected at the second checkpointAddPeer. PIP-0006
+// review item A6.
+func TestDialSchedSkipsInboundInProgress(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	racing := newNode(uintID(0x42), "1.2.3.4:32110")
+	other := newNode(uintID(0x43), "5.6.7.8:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: inbound for racing.ID() is mid-handshake. Both
+		// candidates appear from the iterator — only `other` should
+		// be dialed; `racing` is suppressed by inboundProgress.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(racing.ID())
+				// Drain the channel synchronously by triggering a
+				// loop turn — sleep-free wait by sending a static
+				// add and removing it (a no-op the loop must handle
+				// before it picks from nodesIn).
+			},
+			discovered:   []*enode.Node{racing, other},
+			wantNewDials: []*enode.Node{other},
+		},
+		// Round 1: the inbound finishes and unregisters. `racing`
+		// should now be eligible.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: []*enode.Node{racing},
+		},
+	})
+}
+
+// TestDialSchedSkipsBannedAddresses — the scheduler must not dial a
+// node whose IP is banned or discouraged, mirroring Bitcoin Core's
+// outbound ban gate. Without it, an operator ban is trivially
+// bypassed: the banned peer stays in the addrbook and gets redialed
+// as an outbound connection.
+func TestDialSchedSkipsBannedAddresses(t *testing.T) {
+	t.Parallel()
+
+	banned := map[string]bool{"6.6.6.6": true}
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isBanned: func(ip net.IP) bool {
+			return banned[ip.String()]
+		},
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			discovered: []*enode.Node{
+				newNode(uintID(0x30), "6.6.6.6:32110"), // banned → skip
+				newNode(uintID(0x31), "1.2.3.4:32110"), // ok
+			},
+			wantNewDials: []*enode.Node{
+				newNode(uintID(0x31), "1.2.3.4:32110"),
+			},
+		},
+	})
+}
+
+// TestDialSchedGroupLimitInFlight — the one-outbound-per-group rule
+// counts in-flight dials, not just attached peers. A burst of
+// same-/16 candidates discovered back-to-back must produce exactly
+// one dial; the group frees again when the dial fails or the
+// attached peer disconnects.
+func TestDialSchedGroupLimitInFlight(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	nodeA := newNode(uintID(0x60), "44.55.1.1:32110")
+	nodeB := newNode(uintID(0x61), "44.55.2.2:32110")
+	nodeC := newNode(uintID(0x62), "44.55.3.3:32110")
+	runDialTest(t, config, []dialTestRound{
+		// A and B share 44.55.0.0/16: only A is dialed, because A's
+		// in-flight dial already occupies the group when B arrives.
+		{
+			discovered:   []*enode.Node{nodeA, nodeB},
+			wantNewDials: []*enode.Node{nodeA},
+		},
+		// A's dial fails, releasing the in-flight slot.
+		{
+			failed: []enode.ID{uintID(0x60)},
+		},
+		// The rediscovered B is dialable again.
+		{
+			discovered:   []*enode.Node{nodeB},
+			wantNewDials: []*enode.Node{nodeB},
+		},
+		// B attaches; the group moves from in-flight to attached
+		// and C stays blocked.
+		{
+			succeeded:  []enode.ID{uintID(0x61)},
+			discovered: []*enode.Node{nodeC},
+		},
+		// B disconnects, freeing the attached slot; C is dialable
+		// after rediscovery.
+		{
+			peersRemoved: []enode.ID{uintID(0x61)},
+			discovered:   []*enode.Node{nodeC},
+			wantNewDials: []*enode.Node{nodeC},
+		},
+	})
+}
+
+// TestDialSchedGroupFreedAfterResolveMove — a static task whose dial
+// fails and whose re-resolve lands in a different /16 must release the
+// group charged at launch, not the group of the resolved endpoint.
+// Regression test: the doneCh decrement used to read the resolved
+// dest, stranding the original group's in-flight count forever and
+// blacking out dynamic dials to that /16 for the process lifetime.
+func TestDialSchedGroupFreedAfterResolveMove(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	staticNode := newNode(uintID(0x70), "44.66.1.1:32110")
+	moved := newNode(uintID(0x70), "44.77.1.1:32110")
+	dynNode := newNode(uintID(0x71), "44.66.9.9:32110")
+	runDialTest(t, config, []dialTestRound{
+		// The static dial launches, charging group 44.66/16.
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+			wantNewDials: []*enode.Node{staticNode},
+		},
+		// The dial fails; the task re-resolves to 44.77/16 and
+		// redials in-run (no fresh startDial accounting).
+		{
+			failed: []enode.ID{uintID(0x70)},
+			wantResolves: map[enode.ID]*enode.Node{
+				uintID(0x70): moved,
+			},
+			wantNewDials: []*enode.Node{moved},
+		},
+		// The redial fails too; task completion must free 44.66/16,
+		// the group recorded at launch. Drop the static so history
+		// expiry doesn't relaunch it in the next round.
+		{
+			failed: []enode.ID{uintID(0x70)},
+			update: func(d *dialScheduler) {
+				d.removeStatic(staticNode)
+			},
+		},
+		// A dynamic candidate in 44.66/16 is dialable again.
+		{
+			discovered:   []*enode.Node{dynNode},
+			wantNewDials: []*enode.Node{dynNode},
+		},
+	})
+}
+
+// TestDialSchedV2HandoffAccounting — v2-ENR handoffs run as tracked
+// dial tasks: an in-flight v2 dial occupies its network group (so a
+// same-/16 candidate is not dialed concurrently) and frees it on
+// completion. Regression test: the handoff used to be a bare
+// goroutine with no d.dialing / dialingGroups registration, so
+// same-group v2 candidates dialed in parallel and shutdown never
+// waited for the goroutine.
+func TestDialSchedV2HandoffAccounting(t *testing.T) {
+	t.Parallel()
+
+	var (
+		started = make(chan string, 8)
+		release = make(chan error)
+	)
+	config := dialConfig{
+		self:           uintID(0xff),
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		log:            testlog.Logger(t, logging.LvlTrace),
+		clock:          new(mclock.Simulated),
+		rand:           rand.New(rand.NewSource(0x2222)),
+		dialer:         newDialTestDialer(),
+		v2Predicate:    func(*enode.Node) bool { return true },
+		v2Dial: func(addr *net.TCPAddr) error {
+			started <- addr.String()
+			return <-release
+		},
+	}
+	it := newDialTestIterator()
+	d := newDialScheduler(config, it, func(net.Conn, connFlag, *enode.Node) error { return nil })
+	defer d.stop()
+	// Unblock any still-parked v2Dial before stop() drains the task
+	// (a closed channel yields a nil error). Registered after stop's
+	// defer so it runs first.
+	defer close(release)
+
+	nodeA := newNode(uintID(0x80), "77.88.1.1:32110")
+	nodeB := newNode(uintID(0x81), "77.88.2.2:32110") // same /16 as A
+	it.addNodes([]*enode.Node{nodeA, nodeB})
+
+	if got := <-started; got != "77.88.1.1:32110" {
+		t.Fatalf("first v2 dial = %s, want 77.88.1.1:32110", got)
+	}
+	// B shares A's /16: no second dial while A is in flight.
+	select {
+	case got := <-started:
+		t.Fatalf("second same-group v2 dial launched concurrently: %s", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// A's dial fails; the group frees and the rediscovered B dials.
+	// Wait for the loop to process the task completion before
+	// rediscovering B, or B races the doneCh handling and is
+	// discarded against the still-charged group.
+	release <- errors.New("connection refused")
+	for i := 0; d.probeCheckDial(nodeB) != nil; i++ {
+		if i > 500 {
+			t.Fatal("group never freed after v2 dial completion")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	it.addNodes([]*enode.Node{nodeB})
+	select {
+	case got := <-started:
+		if got != "77.88.2.2:32110" {
+			t.Fatalf("post-release v2 dial = %s, want 77.88.2.2:32110", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("same-group v2 dial not launched after the group freed")
+	}
+}
+
+// TestDialSchedDiscouragedGate — discouragement blocks dynamic dials
+// but not static ones. A ban blocks both; discouragement is stamped
+// automatically on misbehavior and has no clearing RPC, so honoring
+// it on statics would strand an operator-chosen peering until
+// restart. Core's manual connections likewise bypass discouragement.
+func TestDialSchedDiscouragedGate(t *testing.T) {
+	t.Parallel()
+
+	discouraged := map[string]bool{"7.7.7.7": true, "8.8.8.8": true}
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isDiscouraged: func(ip net.IP) bool {
+			return discouraged[ip.String()]
+		},
+	}
+	staticNode := newNode(uintID(0x50), "7.7.7.7:32110")
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+			discovered: []*enode.Node{
+				newNode(uintID(0x51), "8.8.8.8:32110"), // discouraged dynamic → skip
+				newNode(uintID(0x52), "1.2.3.4:32110"), // ok
+			},
+			wantNewDials: []*enode.Node{
+				staticNode, // discouraged but static → dialed
+				newNode(uintID(0x52), "1.2.3.4:32110"),
+			},
+		},
+	})
+}
+
+// TestDialSchedInboundProgressRefcount — two inbound conns claiming
+// the same NodeID register independently; the dial scheduler must
+// keep blocking until BOTH unregister. Defends against a peer that
+// opens a second inbound socket while the first is still mid-
+// handshake.
+func TestDialSchedInboundProgressRefcount(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	racing := newNode(uintID(0x44), "9.10.11.12:32110")
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(racing.ID())
+				d.inboundProgressBegin(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: nil, // suppressed (refcount=2)
+		},
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: nil, // still suppressed (refcount=1)
+		},
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(racing.ID())
+			},
+			discovered:   []*enode.Node{racing},
+			wantNewDials: []*enode.Node{racing},
+		},
+	})
+}
+
 // This test checks that past dials are not retried for some time.
 func TestDialSchedHistory(t *testing.T) {
 	t.Parallel()
@@ -823,4 +1137,115 @@ func (t *dialTestResolver) Resolve(n *enode.Node) *enode.Node {
 
 	t.calls = append(t.calls, n.ID())
 	return t.answers[n.ID()]
+}
+
+// TestDialSchedStaticIgnoresGroupOccupancy — static (addnode-style)
+// dials are operator-chosen and exempt from the outbound network-group
+// diversity rule, as Core's manual connections are. Before the
+// exemption, a dynamic peer occupying the static node's /16 (the
+// docker-bridge 172.17.0.0/16 case) pushed the static task out of the
+// pool with no event to ever bring it back.
+func TestDialSchedStaticIgnoresGroupOccupancy(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			peersAdded: []*conn{
+				{flags: dynDialedConn, node: newNode(uintID(0x01), "172.17.0.2:32110")},
+			},
+			update: func(d *dialScheduler) {
+				d.addStatic(newNode(uintID(0x02), "172.17.0.3:32110"))
+			},
+			wantNewDials: []*enode.Node{
+				newNode(uintID(0x02), "172.17.0.3:32110"),
+			},
+		},
+	})
+}
+
+// TestDialSchedStaticRecoversAfterBanExpiry — a static node rejected
+// by the ban gate must be redialed once the ban lifts. Ban expiry
+// produces no scheduler event, so recovery rides on the periodic
+// static-pool resweep (staticPoolResweepInterval); each test round
+// advances the simulated clock 16s, so the 60s resweep fires during
+// round 3's clock run and the dial surfaces in round 4.
+func TestDialSchedStaticRecoversAfterBanExpiry(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu     sync.Mutex
+		banned = true
+	)
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+		isBanned: func(ip net.IP) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return banned && ip.String() == "7.7.7.7"
+		},
+	}
+	staticNode := newNode(uintID(0x50), "7.7.7.7:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: the static node is banned — no dial.
+		{
+			update: func(d *dialScheduler) {
+				d.addStatic(staticNode)
+			},
+		},
+		// Round 1: the ban lifts silently. Still no dial until the
+		// resweep timer fires.
+		{
+			update: func(*dialScheduler) {
+				mu.Lock()
+				banned = false
+				mu.Unlock()
+			},
+		},
+		{},
+		{},
+		// Round 4: the resweep re-pooled the task; it gets dialed.
+		{
+			wantNewDials: []*enode.Node{staticNode},
+		},
+	})
+}
+
+// TestDialSchedStaticRecoversAfterInboundFailure — a static task
+// rejected with errInboundProgress must be redialed when the inbound
+// handshake FAILS. A failed inbound never becomes a peer, so no
+// peer-removed event fires for the ID; recovery rides on the
+// inbound-progress clear hook re-checking the static pool.
+func TestDialSchedStaticRecoversAfterInboundFailure(t *testing.T) {
+	t.Parallel()
+
+	config := dialConfig{
+		maxActiveDials: 5,
+		maxDialPeers:   5,
+	}
+	staticNode := newNode(uintID(0x51), "9.9.9.9:32110")
+	runDialTest(t, config, []dialTestRound{
+		// Round 0: an inbound conn claiming the static node's ID is
+		// mid-handshake, so the freshly-added static task is rejected
+		// out of the pool.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressBegin(staticNode.ID())
+				d.addStatic(staticNode)
+			},
+		},
+		// Round 1: the inbound handshake fails (unregisters without
+		// ever having produced a peer). The static task must come
+		// back and get dialed.
+		{
+			update: func(d *dialScheduler) {
+				d.inboundProgressEnd(staticNode.ID())
+			},
+			wantNewDials: []*enode.Node{staticNode},
+		},
+	})
 }

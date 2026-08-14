@@ -511,6 +511,84 @@ func randomID() (id enode.ID) {
 	return id
 }
 
+// TestSetupConnInboundProgressLifecycle — confirms the
+// inboundProgress register/unregister wiring in setupConn:
+//
+//   - on inbound setup, the NodeID is registered with the dial
+//     scheduler before checkpointPostHandshake;
+//   - the registration is cleared on every exit path (here:
+//     protoHandshake failure mid-stream).
+//
+// Verified by checking the dialsched's inboundProgress map directly
+// after SetupConn returns. Pairs with the dial-scheduler unit tests
+// that exercise checkDial's new branch.
+func TestSetupConnInboundProgressLifecycle(t *testing.T) {
+	t.Parallel()
+
+	clientkey := newkey()
+	srvkey := newkey()
+	clientpub := &clientkey.PublicKey
+	tt := &setupTransport{
+		pubkey:            clientpub,
+		phs:               protoHandshake{ID: crypto.FromECDSAPub(clientpub)[1:]},
+		protoHandshakeErr: errors.New("fail at proto handshake"),
+	}
+	cfg := Config{
+		PrivateKey:  srvkey,
+		MaxPeers:    10,
+		NoDial:      true,
+		NoDiscovery: true,
+		Protocols:   []Protocol{discard},
+		Logger:      testlog.Logger(t, logging.LvlTrace),
+	}
+	srv := &Server{
+		Config:       cfg,
+		newTransport: func(fd net.Conn, _ *ecdsa.PublicKey) transport { return tt },
+		log:          cfg.Logger,
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Stop()
+
+	clientNode := nodeFromConn(clientpub, &fakeConn{remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}})
+	id := clientNode.ID()
+
+	a, b := net.Pipe()
+	defer b.Close()
+	if err := srv.SetupConn(a, inboundConn, nil); err == nil {
+		t.Fatal("SetupConn returned nil; want proto-handshake error")
+	}
+
+	// After SetupConn returns, the deferred inboundProgressEnd must
+	// have run. Probe dialsched via checkDial: a candidate carrying
+	// our just-vacated NodeID must NOT be blocked by errInboundProgress.
+	probe := newNode(id, "1.2.3.4:32110")
+	gotErr := make(chan error, 1)
+	go func() {
+		// checkDial runs on the dial loop goroutine. We funnel a
+		// query in via a synthetic dial-update helper.
+		gotErr <- srv.dialsched.probeCheckDial(probe)
+	}()
+	select {
+	case err := <-gotErr:
+		if errors.Is(err, errInboundProgress) {
+			t.Fatalf("inboundProgress leaked after SetupConn returned: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("probeCheckDial did not return")
+	}
+}
+
+// fakeConn is a net.Conn stub that returns a fixed RemoteAddr. Used
+// to coax nodeFromConn into producing the same ID setupConn would.
+type fakeConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (f *fakeConn) RemoteAddr() net.Addr { return f.remote }
+
 // This test checks that inbound connections are throttled by IP.
 func TestServerInboundThrottle(t *testing.T) {
 	const timeout = 5 * time.Second
@@ -660,7 +738,13 @@ func newSelfEndpointServer(t *testing.T, ip net.IP, port int) *Server {
 		ln.Set(enr.TCP(port))
 	}
 	return &Server{
-		Config:    Config{MaxPeers: 1},
+		// A non-empty ListenAddr models a node that intends to
+		// listen: in the port==0 cases that means the listener just
+		// hasn't published its port yet (startup window), which is
+		// what the pre-listen self-endpoint tests exercise. The
+		// "configured not to listen" case sets ListenAddr back to ""
+		// explicitly.
+		Config:    Config{MaxPeers: 1, ListenAddr: "127.0.0.1:0"},
 		localnode: ln,
 		log:       testlog.Logger(t, logging.LvlTrace),
 	}
@@ -697,14 +781,46 @@ func TestIsSelfEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("port unset", func(t *testing.T) {
+	t.Run("port unset external IP", func(t *testing.T) {
 		// Bootstrap state: setupLocalNode has run (IP fallback)
 		// but setupListening has not yet published the TCP port.
-		// Must not false-positive — admin RPC paths can call DialV2
-		// before listenSetup completes.
+		// Dialing some external (IP, port) must NOT be classified
+		// as self — we genuinely don't know our port yet, and the
+		// remote IP can't be us.
 		early := newSelfEndpointServer(t, selfIP, 0)
 		if early.IsSelfEndpoint(&net.TCPAddr{IP: selfIP, Port: selfPort}) {
-			t.Fatal("IsSelfEndpoint must return false while localnode TCP port is 0")
+			t.Fatal("IsSelfEndpoint must return false on external IP while localnode TCP port is 0")
+		}
+	})
+
+	t.Run("port unset loopback", func(t *testing.T) {
+		// Before the listener publishes a port, a loopback dial is
+		// always self — no legitimate caller wants to dial 127.0.0.1
+		// during the Start() window. Closes the prior gap where
+		// admin RPC / replayAnchors could have raced setupListening.
+		early := newSelfEndpointServer(t, selfIP, 0)
+		if !early.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must catch loopback dial during pre-listen window")
+		}
+		if !early.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must catch IPv6 loopback dial during pre-listen window")
+		}
+	})
+
+	t.Run("not listening loopback", func(t *testing.T) {
+		// A node configured not to listen (ListenAddr == "") never
+		// publishes a TCP port, so selfPort stays 0 for the whole
+		// process lifetime. A loopback dial then reaches a co-hosted
+		// node, not a hairpin into a listener we don't have, so it
+		// must NOT be classified as self. Without this a non-listening
+		// node could never dial a co-hosted peer over 127.0.0.1.
+		noListen := newSelfEndpointServer(t, selfIP, 0)
+		noListen.ListenAddr = ""
+		if noListen.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must not treat a loopback dial as self when the node does not listen")
+		}
+		if noListen.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: 1234}) {
+			t.Fatal("IsSelfEndpoint must not treat an IPv6 loopback dial as self when the node does not listen")
 		}
 	})
 
@@ -715,6 +831,24 @@ func TestIsSelfEndpoint(t *testing.T) {
 		loop := newSelfEndpointServer(t, net.IP{127, 0, 0, 1}, selfPort)
 		if !loop.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
 			t.Fatal("IsSelfEndpoint must catch loopback self-dial")
+		}
+	})
+
+	t.Run("loopback to listen port with external IP", func(t *testing.T) {
+		// Once the listener is bound on an external IP, a loopback
+		// dial to the listen port still hairpins to our own listener
+		// (kernel routes 127.0.0.1 -> the local socket regardless of
+		// the bind interface). Must be flagged as self.
+		ext := newSelfEndpointServer(t, selfIP, selfPort)
+		if !ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must catch loopback dial to our listen port")
+		}
+		if !ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IPv6loopback, Port: selfPort}) {
+			t.Fatal("IsSelfEndpoint must catch v6-loopback dial to our listen port")
+		}
+		// Loopback at a *different* port is not self.
+		if ext.IsSelfEndpoint(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: selfPort + 1}) {
+			t.Fatal("IsSelfEndpoint false-positive on loopback at non-listen port")
 		}
 	})
 }
@@ -771,7 +905,7 @@ func TestPostHandshakeChecksRejectsV2Self(t *testing.T) {
 		node:      other,
 	}
 
-	err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, c)
+	err := srv.postHandshakeChecks(map[enode.ID]*Peer{}, 0, 0, c)
 	if !errors.Is(err, DiscSelf) {
 		t.Fatalf("postHandshakeChecks err = %v, want DiscSelf", err)
 	}
@@ -957,18 +1091,65 @@ func TestFindCrossDialDupZeroPort(t *testing.T) {
 	}
 }
 
-// TestFindCrossDialDupInboundWithLookup — finds an inbound peer as
-// the duplicate when its disclosed listen port (via lookup) matches.
+// TestFindCrossDialDupInboundWithLookup — the legitimate symmetric-dial
+// case where the new peer is our OUTBOUND leg and the existing inbound
+// leg is the same node: we dialed (8.8.8.8, 32110) and the inbound peer
+// from that IP disclosed listen port 32110. The outbound leg's port is
+// its trusted dial target (RemoteAddr), which is what anchors the match.
 func TestFindCrossDialDupInboundWithLookup(t *testing.T) {
 	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
 	id := randomID()
 	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{id: 32110}})
 	existing := makeFakePeer(t, id, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
-	newPeer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, false /*outbound*/)
+	// Outbound leg: dial target (RemoteAddr) IS (8.8.8.8, 32110), the
+	// peer's real listen endpoint — the port we actually connected to.
+	newPeer := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110}, false /*outbound*/)
 
 	dup := srv.findCrossDialDupIn([]*Peer{existing}, newPeer, 32110)
 	if dup != existing {
 		t.Fatalf("must find existing inbound as duplicate; got %v want %v", dup, existing.ID())
+	}
+}
+
+// TestFindCrossDialDupInboundClaimDoesNotEvictHonest — DEFECT 3
+// regression (attack case A). An inbound peer sharing a source IP with
+// an existing honest inbound connection pre-claims that connection's
+// listen port. Because both connections are inbound, their linkage
+// would rest entirely on unverified Hello ports, so the dedup must NOT
+// fire — otherwise the attacker could get the honest connection torn
+// down as a bogus duplicate.
+func TestFindCrossDialDupInboundClaimDoesNotEvictHonest(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	victimID := randomID()
+	// The honest inbound victim disclosed listen port 32110.
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{victimID: 32110}})
+	victim := makeFakePeer(t, victimID, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
+	// Attacker: inbound, same source IP, claiming the victim's port.
+	attacker := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, true /*inbound*/)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{victim}, attacker, 32110); dup != nil {
+		t.Fatalf("inbound peer's port claim must not match an existing inbound peer; got %v", dup.ID())
+	}
+}
+
+// TestFindCrossDialDupOutboundClaimIgnoresHelloPort — DEFECT 3
+// regression (attack case B). An OUTBOUND peer (one we dialed) claims,
+// via Hello, a listen port different from where we actually dialed it —
+// here the victim's port. The match must use the trusted dial-target
+// port (RemoteAddr), not the self-claimed Hello port, so the attacker
+// can't make an existing honest inbound connection look like a
+// duplicate and get it evicted.
+func TestFindCrossDialDupOutboundClaimIgnoresHelloPort(t *testing.T) {
+	srv := &Server{log: testlog.Logger(t, logging.LvlTrace)}
+	victimID := randomID()
+	srv.SetPeerListenPortLookup(&fakePortLookup{ports: map[enode.ID]uint16{victimID: 32110}})
+	victim := makeFakePeer(t, victimID, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 55555}, true /*inbound*/)
+	// Attacker: we dialed it at (8.8.8.8, 44444); its Hello lies that it
+	// listens on 32110 (the victim's port).
+	attacker := makeFakePeer(t, randomID(), &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 44444}, false /*outbound*/)
+
+	if dup := srv.findCrossDialDupIn([]*Peer{victim}, attacker, 32110); dup != nil {
+		t.Fatalf("outbound peer's Hello-claimed port must not evict an existing connection; got %v", dup.ID())
 	}
 }
 
@@ -1266,4 +1447,54 @@ func selectCrossDialLoser(a, b *Peer) *Peer {
 		return b
 	}
 	return a
+}
+
+// TestPostHandshakeEnforcesBlockRelayCap — the checkpoint rejects a
+// dialed block-relay conn when the bucket is already full. The dial
+// scheduler and runV2Dialer each check the bucket against the live
+// peer set before dialing, but neither sees the other's in-flight
+// dials, so two racing picks can both target the last slot; the
+// checkpoint, serialized on the run loop, is where the excess is
+// caught before it becomes a persistent overshoot.
+func TestPostHandshakeEnforcesBlockRelayCap(t *testing.T) {
+	srv := newSelfEndpointServer(t, nil, 0)
+	// MaxBlockRelayPeers 0 -> default cap of 2; MaxPeers must be
+	// large enough that the maxDialedConns/2 clamp doesn't shrink it.
+	srv.Config.MaxPeers = 30
+
+	mkBRPeer := func(ip net.IP) *Peer {
+		p := makeEvictionPeer(t, evictionOpts{ip: ip})
+		p.rw.set(dynDialedConn, true)
+		p.rw.set(blockRelayConn, true)
+		return p
+	}
+	mkConn := func(flags connFlag, ip net.IP) *conn {
+		pipe, _ := net.Pipe()
+		t.Cleanup(func() { pipe.Close() })
+		fake := &fakeAddrConn{Conn: pipe, remoteAddr: &net.TCPAddr{IP: ip, Port: 32110}}
+		return &conn{
+			fd:    fake,
+			flags: flags,
+			node:  enode.SignNull(new(enr.Record), randomID()),
+		}
+	}
+
+	peers := map[enode.ID]*Peer{}
+	first := mkBRPeer(net.IPv4(10, 0, 0, 1))
+	peers[randomID()] = first
+
+	// One of two slots used: a fresh block-relay dial is admitted.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn|blockRelayConn, net.IPv4(10, 1, 0, 1))); err != nil {
+		t.Fatalf("block-relay conn with a free slot: err = %v, want nil", err)
+	}
+	peers[randomID()] = mkBRPeer(net.IPv4(10, 2, 0, 1))
+
+	// Bucket full: the racing third block-relay dial is rejected.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn|blockRelayConn, net.IPv4(10, 3, 0, 1))); !errors.Is(err, DiscTooManyPeers) {
+		t.Fatalf("block-relay conn past the cap: err = %v, want DiscTooManyPeers", err)
+	}
+	// A full-relay dial is unaffected by block-relay saturation.
+	if err := srv.postHandshakeChecks(peers, 0, 0, mkConn(dynDialedConn, net.IPv4(10, 4, 0, 1))); err != nil {
+		t.Fatalf("full-relay conn at block-relay saturation: err = %v, want nil", err)
+	}
 }

@@ -20,6 +20,7 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +33,8 @@ import (
 	"github.com/ParallaxProtocol/parallax/logging"
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/banman"
+	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
 	"github.com/ParallaxProtocol/parallax/rpc"
 	"github.com/ParallaxProtocol/parallax/support/event"
@@ -277,6 +280,9 @@ func (n *Node) openEndpoints() error {
 	// (rather than letting Server do it internally) avoids the import
 	// cycle that would appear if p2p imported p2p/protocols/disc.
 	if err := n.setupAddrManAndDisc(); err != nil {
+		return err
+	}
+	if err := n.setupBanMan(); err != nil {
 		return err
 	}
 	// start networking endpoints
@@ -617,6 +623,20 @@ func (n *Node) setupAddrManAndDisc() error {
 		}
 	}
 	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint, helloProvider)
+	// An operator-pinned external IP (--nat extip:<IP>) short-circuits
+	// quorum: the address is an operator statement, not a guess to be
+	// voted on, so self-advertisement must work even with zero inbound
+	// peers. UPnP/PMP resolutions stay quorum-driven — router answers
+	// are best-effort. Port 0 lets SelfEntry attach the live listen
+	// port at advertise time.
+	if extip, ok := n.config.P2P.NAT.(nat.ExtIP); ok {
+		ip := net.IP(extip)
+		if v4 := ip.To4(); v4 != nil {
+			backend.Q.SetOverride(disc.NetIPv4, v4, 0)
+		} else if v6 := ip.To16(); v6 != nil {
+			backend.Q.SetOverride(disc.NetIPv6, v6, 0)
+		}
+	}
 	// Bidirectional wiring for cross-dial dedup:
 	//   Server → backend.PeerListenPort to resolve inbound peers'
 	//     listen ports in alreadyConnectedTo / peerListenAddr.
@@ -626,6 +646,36 @@ func (n *Node) setupAddrManAndDisc() error {
 	backend.SetCrossDialHost(n.server)
 	n.server.Protocols = append(n.server.Protocols, disc.MakeProtocol(backend))
 	n.server.AddrManager = m
+
+	// Periodic 1h quorum re-evaluation backstop (PIP-0006 §Phase 4).
+	// Peer churn is already covered by handler.Run's PeerDisconnected
+	// hook; this tick reconciles Quorum's report tally against the
+	// connected-peer set in case a Disconnect was missed, and ages out
+	// time-stale reports.
+	go backend.RunQuorumRefreshLoop(n.stop)
+	return nil
+}
+
+// setupBanMan constructs the persistent BanMan and assigns it to the
+// p2p Server before Start. Done at the node layer so the path
+// defaulting lives next to AddrBookPath / AnchorsPath in
+// cmd/utils/flags.go and so test harnesses that preset
+// server.BanList are respected via the early-return.
+//
+// When n.config.P2P.BanListPath is empty the BanMan runs in-memory
+// only (no persistence). Mutators auto-Dump after every change, so
+// no shutdown hook is required; the in-memory discourage filter is
+// restart-cleared by design.
+func (n *Node) setupBanMan() error {
+	if n.server.BanList != nil {
+		// Already wired (test harness or double-Start).
+		return nil
+	}
+	bm, err := banman.New(n.config.P2P.BanListPath, n.log)
+	if err != nil {
+		return err
+	}
+	n.server.BanList = bm
 	return nil
 }
 

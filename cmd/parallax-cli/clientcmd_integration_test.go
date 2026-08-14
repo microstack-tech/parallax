@@ -87,6 +87,14 @@ type devDaemon struct {
 	t       *testing.T
 	cmd     *exec.Cmd
 	datadir string
+
+	// exited is closed by the single background waiter goroutine when
+	// cmd.Wait returns. exec.Cmd.Wait must be called exactly once, so
+	// both cleanup and any test that wants to observe exit select on
+	// this channel instead of calling Wait themselves. waitErr is set
+	// before exited is closed and is safe to read afterwards.
+	exited  chan struct{}
+	waitErr error
 }
 
 // startDevDaemon launches parallax in foreground dev mode and waits
@@ -115,7 +123,12 @@ func startDevDaemon(t *testing.T) *devDaemon {
 		t.Fatalf("start dev daemon: %v", err)
 	}
 
-	d := &devDaemon{t: t, cmd: cmd, datadir: datadir}
+	d := &devDaemon{t: t, cmd: cmd, datadir: datadir, exited: make(chan struct{})}
+	// Single owner of cmd.Wait: everything else awaits d.exited.
+	go func() {
+		d.waitErr = d.cmd.Wait()
+		close(d.exited)
+	}()
 	t.Cleanup(d.cleanup)
 
 	// Wait up to 15s for the IPC socket to come up. Dev mode generates
@@ -147,14 +160,14 @@ func (d *devDaemon) cleanup() {
 	}
 	// Prefer a graceful shutdown via SIGTERM so the node flushes
 	// state correctly. Fall back to SIGKILL if it refuses to exit.
+	// The background waiter goroutine owns cmd.Wait; we only await
+	// d.exited so we never call Wait twice (which is a data race).
 	_ = d.cmd.Process.Signal(os.Interrupt)
-	done := make(chan error, 1)
-	go func() { done <- d.cmd.Wait() }()
 	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-d.exited:
+	case <-time.After(15 * time.Second):
 		_ = d.cmd.Process.Kill()
-		<-done
+		<-d.exited
 	}
 }
 
@@ -828,17 +841,15 @@ func TestSugarStop(t *testing.T) {
 		t.Errorf("expected 'stopping' in stop output, got: %q", out)
 	}
 
-	// The daemon should exit within a few seconds. Poll rather than
-	// sleeping to keep the test fast when it does exit quickly.
-	done := make(chan struct{})
-	go func() {
-		_ = d.cmd.Wait()
-		close(done)
-	}()
+	// The daemon should exit shortly after the stop RPC. Await the
+	// shared exit channel (owned by the single cmd.Wait goroutine)
+	// rather than calling Wait here, which would race cleanup's Wait.
+	// The deadline is generous so a race-instrumented shutdown, which
+	// is markedly slower than a plain build, doesn't flake.
 	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not exit within 10s of stop")
+	case <-d.exited:
+	case <-time.After(30 * time.Second):
+		t.Fatal("daemon did not exit within 30s of stop")
 	}
 
 	// After the daemon is gone, another stop should fail cleanly.

@@ -63,6 +63,15 @@
 //     re-contacted by session-id-aware tooling; Parallax's v3.0
 //     design treats every connection as brand-new and pins nothing to
 //     a prior session.
+//  5. No intra-session rekeying. BIP324's FSChaCha20Poly1305 rekeys
+//     every 256 messages so a mid-session key compromise exposes at
+//     most one rekey window; here each direction keeps its single
+//     HKDF-derived key for the whole session (nonce = monotonic
+//     counter, safe to 2^64 frames), so a compromised session key
+//     decrypts that entire session, past and future. Accepted
+//     because the ephemeral-only DH already scopes any compromise
+//     to one session and the documented trust model treats the
+//     transport as MITM-undetectable anyway.
 //
 // Security model (summarized — full argument in PIP-0006 §5.5):
 //

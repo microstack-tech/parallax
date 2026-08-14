@@ -1,6 +1,6 @@
 name: Release
 
-# Builds CLI binaries (parallaxd, parallax-cli, parallax, clef, parallaxkey)
+# Builds CLI binaries (parallaxd, parallax-cli, parallax-wallet, parallax)
 # for every supported OS / arch and attaches them to a draft GitHub Release.
 #
 # CLI bundles use the same `make package` path as the local release,
@@ -35,7 +35,7 @@ env:
 
 jobs:
   # ------------------------------------------------------------------ #
-  # CLI: parallaxd / parallax-cli / parallax / clef / parallaxkey       #
+  # CLI: parallaxd / parallax-cli / parallax-wallet / parallax         #
   # One runner per target so each platform produces its own artifact   #
   # instead of being lumped together. The CLI is CGO-disabled so every #
   # target cross-compiles cleanly from a single ubuntu host.           #
