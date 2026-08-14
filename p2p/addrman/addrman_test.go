@@ -58,6 +58,70 @@ func TestAddRejectsUnroutable(t *testing.T) {
 	}
 }
 
+// TestAddRejectsRFC2544UpperHalf — RFC 2544 is 198.18.0.0/15, so
+// 198.19.x.x is just as unroutable as 198.18.x.x.
+func TestAddRejectsRFC2544UpperHalf(t *testing.T) {
+	m := newTestMan(t)
+	src := addr4(1, 2, 3, 4, 30303)
+	if m.AddOne(addr4(198, 19, 0, 1, 30303), 0, nil, time.Now(), src, SourceTCPGossip, 0) {
+		t.Fatal("198.19.0.1 (RFC 2544) was accepted")
+	}
+}
+
+// TestAddRefreshBasedOnIncomingFreshness pins the Core rule that the
+// 1h-vs-24h LastSeen refresh interval is chosen from the INCOMING
+// claim's freshness (addr.nTime in AddSingle), not the stored entry's.
+// Stored 25h old + incoming 23.5h old: the incoming claim is within
+// 24h of now, so the 1h interval applies and the entry refreshes.
+// Judging from the stored (stale) side would pick the 24h interval and
+// skip the update.
+func TestAddRefreshBasedOnIncomingFreshness(t *testing.T) {
+	m := newTestMan(t)
+	addr := addr4(8, 8, 8, 8, 30303)
+	src := addr4(1, 2, 3, 4, 30303)
+	now := time.Now()
+	stored := now.Add(-25 * time.Hour)
+	incoming := now.Add(-23*time.Hour - 30*time.Minute)
+
+	if !m.AddOne(addr, 0, nil, stored, src, SourceTCPGossip, 0) {
+		t.Fatal("initial AddOne failed")
+	}
+	m.AddOne(addr, 0, nil, incoming, src, SourceTCPGossip, 0)
+
+	info := m.Lookup(addr)
+	if info == nil {
+		t.Fatal("entry vanished")
+	}
+	if !info.LastSeen.Equal(incoming) {
+		t.Errorf("LastSeen = %v, want refreshed to %v", info.LastSeen, incoming)
+	}
+}
+
+// TestGoodMissAdvancesLastGood pins the Core ordering that m_last_good
+// updates before the address lookup (src/addrman.cpp:632) — a Good()
+// on an unknown address still re-opens Attempt's counting gate.
+func TestGoodMissAdvancesLastGood(t *testing.T) {
+	m := newTestMan(t)
+	addr := addr4(8, 8, 8, 8, 30303)
+	src := addr4(1, 2, 3, 4, 30303)
+	t0 := time.Now()
+	if !m.AddOne(addr, 0, nil, t0, src, SourceTCPGossip, 0) {
+		t.Fatal("AddOne failed")
+	}
+
+	m.Attempt(addr, true, t0)
+	m.Attempt(addr, true, t0.Add(time.Second)) // gated: no Good since last count
+	if got := m.Lookup(addr).Attempts; got != 1 {
+		t.Fatalf("Attempts after gated retry = %d, want 1", got)
+	}
+
+	m.Good(addr4(99, 99, 99, 99, 30303), t0.Add(2*time.Second)) // unknown address
+	m.Attempt(addr, true, t0.Add(3*time.Second))
+	if got := m.Lookup(addr).Attempts; got != 2 {
+		t.Errorf("Attempts after Good-miss re-opened the gate = %d, want 2", got)
+	}
+}
+
 // TestGoodPromotesNewToTried — Good() on a new entry moves it into tried.
 func TestGoodPromotesNewToTried(t *testing.T) {
 	m := newTestMan(t)

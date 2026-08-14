@@ -260,9 +260,10 @@ func (m *AddrMan) addSingleLocked(e Entry, lastSeen time.Time, source NetAddr, s
 	id, pinfo := m.findLocked(addr)
 	if pinfo != nil {
 		// Periodically refresh LastSeen. The update cadence is 1h if
-		// the entry looks currently-online, 24h otherwise. See
-		// src/addrman.cpp:567-571.
-		currentlyOnline := now.Sub(pinfo.LastSeen) < 24*time.Hour
+		// the entry looks currently-online, 24h otherwise. Freshness is
+		// judged from the INCOMING claim (addr.nTime in Core), not the
+		// stored entry. See src/addrman.cpp:567-571.
+		currentlyOnline := now.Sub(lastSeen) < 24*time.Hour
 		updateInterval := 24 * time.Hour
 		if currentlyOnline {
 			updateInterval = time.Hour
@@ -352,6 +353,10 @@ func (m *AddrMan) Good(addr NetAddr, now time.Time) bool {
 }
 
 func (m *AddrMan) goodLocked(addr NetAddr, testBeforeEvict bool, now time.Time) bool {
+	// lastGood advances even when the address is unknown — Core sets
+	// m_last_good before the Find (src/addrman.cpp:632), and Attempt's
+	// counting gate keys off it.
+	m.lastGood = now
 	id, pinfo := m.findLocked(addr)
 	if pinfo == nil {
 		logging.Trace("pip6: Good miss", "addr", addr.String())
@@ -368,7 +373,6 @@ func (m *AddrMan) goodLocked(addr NetAddr, testBeforeEvict bool, now time.Time) 
 			"refCount", pinfo.RefCount)
 	}()
 
-	m.lastGood = now
 	pinfo.LastSuccess = now
 	pinfo.LastTry = now
 	pinfo.Attempts = 0

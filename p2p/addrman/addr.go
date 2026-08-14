@@ -262,7 +262,7 @@ func (a NetAddr) isRoutableIPv4() bool {
 		return false
 	case ip[0] == 192 && ip[1] == 0 && ip[2] == 2: // TEST-NET-1
 		return false
-	case ip[0] == 198 && ip[1] == 18: // RFC 2544
+	case ip[0] == 198 && (ip[1] == 18 || ip[1] == 19): // RFC 2544 (198.18.0.0/15)
 		return false
 	case ip[0] == 198 && ip[1] == 51 && ip[2] == 100: // TEST-NET-2
 		return false

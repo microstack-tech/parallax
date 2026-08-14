@@ -2135,6 +2135,22 @@ func (srv *Server) addrmanAttempt(p *Peer) {
 	srv.addrbook.Attempt(addr, true, time.Now())
 }
 
+// addrmanConnected refreshes the addrman entry's LastSeen for a peer
+// whose full outbound session just ended — Core's FinalizeNode →
+// AddrMan::Connected discipline (only at disconnect, never per
+// keep-alive, to avoid leaking currently-connected topology).
+// No-op when ExperimentalAddrMan is off.
+func (srv *Server) addrmanConnected(p *Peer) {
+	if srv.addrbook == nil {
+		return
+	}
+	addr, ok := peerRemoteAddr(p)
+	if !ok {
+		return
+	}
+	srv.addrbook.Connected(addr, time.Now())
+}
+
 // peerRemoteAddr extracts the addrman.NetAddr form of a Peer's
 // RemoteAddr. Returns ok=false for non-TCP or unresolvable connections
 // (test pipes, Unix sockets, etc.).
@@ -2434,6 +2450,18 @@ running:
 			// the feeler just verified.
 			if pd.err != nil && !pd.Inbound() && !pd.rw.is(feelerConn) {
 				srv.addrmanAttempt(pd.Peer)
+			}
+			// addrman.Connected: refresh the entry's LastSeen at
+			// disconnect time for full outbound sessions, mirroring
+			// Core's FinalizeNode (net_processing.cpp:1738). Without
+			// it a peer we stay connected to for weeks is never
+			// re-stamped and ages across the 30-day IsTerrible
+			// horizon despite being demonstrably alive. Outbound
+			// non-feeler only: inbound advertised endpoints are
+			// unverified, and feelers deliberately disconnect
+			// moments after Good already stamped them.
+			if !pd.Inbound() && !pd.rw.is(feelerConn) {
+				srv.addrmanConnected(pd.Peer)
 			}
 			// Discourage hook: if the peer was flagged for
 			// misbehavior during the session, add its source IP to
