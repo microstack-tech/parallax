@@ -14,8 +14,6 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build gofuzz
-
 package bls
 
 import (
@@ -32,7 +30,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-func FuzzCrossPairing(data []byte) int {
+func fuzzCrossPairing(data []byte) int {
 	input := bytes.NewReader(data)
 
 	// get random G1 points
@@ -66,7 +64,7 @@ func FuzzCrossPairing(data []byte) int {
 	return 1
 }
 
-func FuzzCrossG1Add(data []byte) int {
+func fuzzCrossG1Add(data []byte) int {
 	input := bytes.NewReader(data)
 
 	// get random G1 points
@@ -99,7 +97,7 @@ func FuzzCrossG1Add(data []byte) int {
 	return 1
 }
 
-func FuzzCrossG2Add(data []byte) int {
+func fuzzCrossG2Add(data []byte) int {
 	input := bytes.NewReader(data)
 
 	// get random G2 points
@@ -132,7 +130,7 @@ func FuzzCrossG2Add(data []byte) int {
 	return 1
 }
 
-func FuzzCrossG1MultiExp(data []byte) int {
+func fuzzCrossG1MultiExp(data []byte) int {
 	var (
 		input        = bytes.NewReader(data)
 		gethScalars  []*big.Int
