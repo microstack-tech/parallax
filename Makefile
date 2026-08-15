@@ -58,6 +58,15 @@ ios:
 test: all
 	$(GORUN) build/ci.go test
 
+test-short: all ## Run tests with -short, skipping stress and other slow tests.
+	$(GORUN) build/ci.go test -short
+
+test-race: all ## Run tests under the race detector.
+	$(GORUN) build/ci.go test -race
+
+test-cover: all ## Run tests with coverage, writing coverage.out.
+	$(GORUN) build/ci.go test -coverage
+
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 

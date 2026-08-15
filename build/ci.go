@@ -324,6 +324,7 @@ func doTest(cmdline []string) {
 		coverage = flag.Bool("coverage", false, "Whether to record code coverage")
 		verbose  = flag.Bool("v", false, "Whether to log verbosely")
 		race     = flag.Bool("race", false, "Execute the race detector")
+		short    = flag.Bool("short", false, "Pass -short to go test, skipping stress and other slow tests")
 	)
 	flag.CommandLine.Parse(cmdline)
 
@@ -339,13 +340,16 @@ func doTest(cmdline []string) {
 	// and some tests run into timeouts under load.
 	gotest.Args = append(gotest.Args, "-p", "1")
 	if *coverage {
-		gotest.Args = append(gotest.Args, "-covermode=atomic", "-cover")
+		gotest.Args = append(gotest.Args, "-covermode=atomic", "-cover", "-coverprofile=coverage.out")
 	}
 	if *verbose {
 		gotest.Args = append(gotest.Args, "-v")
 	}
 	if *race {
 		gotest.Args = append(gotest.Args, "-race")
+	}
+	if *short {
+		gotest.Args = append(gotest.Args, "-short")
 	}
 
 	packages := []string{"./..."}

@@ -49,3 +49,96 @@ jobs:
         run: |
           go clean -testcache
           make test
+
+  race-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-race-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-race-
+
+      # p2p/simulations is excluded: its timing-heavy event stream tests are
+      # known to flake under the race detector.
+      - name: Race Test
+        run: go test -race -p 1 $(go list ./... | grep -v p2p/simulations)
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Coverage Test
+        run: go run build/ci.go test -coverage
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # The fixture tree is ~2GB; cache it keyed on the pinned submodule
+      # commit (update the key when repinning tests/testdata).
+      - name: Cache conformance fixtures
+        id: fixtures-cache
+        uses: actions/cache@v4
+        with:
+          path: tests/testdata
+          key: ethereum-tests-a380655e5ffab1a5ea0f4d860224bdb19013f06a
+
+      - name: Fetch conformance fixtures
+        if: steps.fixtures-cache.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 tests/testdata
+
+      - name: Conformance Test
+        run: go test ./tests/ -count=1 -timeout 30m
