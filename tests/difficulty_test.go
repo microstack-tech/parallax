@@ -37,6 +37,14 @@ var mainnetChainConfig = chainparams.ChainConfig{
 func TestDifficulty(t *testing.T) {
 	t.Parallel()
 
+	// The upstream BasicTests difficulty fixtures encode the ethash
+	// per-block difficulty adjustment. Parallax replaces that with epoch
+	// based Nakamoto/ASERT retargeting (difficulty is flat within a
+	// retarget epoch), so these vectors cannot apply. The native retarget
+	// algorithm has its own vector suite in kernel/xhash (see
+	// testdata/aserti3-2d and difficulty_test.go there).
+	t.Skip("upstream ethash difficulty fixtures do not apply to nakamoto/asert retargeting")
+
 	dt := new(testMatcher)
 	// Not difficulty-tests
 	dt.skipLoad("hexencodetest.*")
