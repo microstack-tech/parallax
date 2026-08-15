@@ -349,7 +349,7 @@ func newTestAction(addr util.Address, r *rand.Rand) testAction {
 		nameargs = append(nameargs, addr.Hex())
 	}
 	for i := range action.args {
-		action.args[i] = rand.Int63n(100)
+		action.args[i] = r.Int63n(100)
 		nameargs = append(nameargs, fmt.Sprint(action.args[i]))
 	}
 	action.name += strings.Join(nameargs, ", ")
