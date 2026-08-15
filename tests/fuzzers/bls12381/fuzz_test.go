@@ -22,24 +22,26 @@ import (
 	"github.com/ParallaxProtocol/parallax/tests/fuzzers/fuzzutil"
 )
 
-func FuzzG1Add(f *testing.F)      { wrap(f, fuzzG1Add) }
-func FuzzG1Mul(f *testing.F)      { wrap(f, fuzzG1Mul) }
-func FuzzG1MultiExp(f *testing.F) { wrap(f, fuzzG1MultiExp) }
-func FuzzG2Add(f *testing.F)      { wrap(f, fuzzG2Add) }
-func FuzzG2Mul(f *testing.F)      { wrap(f, fuzzG2Mul) }
-func FuzzG2MultiExp(f *testing.F) { wrap(f, fuzzG2MultiExp) }
-func FuzzPairing(f *testing.F)    { wrap(f, fuzzPairing) }
-func FuzzMapG1(f *testing.F)      { wrap(f, fuzzMapG1) }
-func FuzzMapG2(f *testing.F)      { wrap(f, fuzzMapG2) }
+func FuzzG1Add(f *testing.F)      { wrapZip(f, fuzzG1Add, "fuzz_g1_add") }
+func FuzzG1Mul(f *testing.F)      { wrapZip(f, fuzzG1Mul, "fuzz_g1_mul") }
+func FuzzG1MultiExp(f *testing.F) { wrapZip(f, fuzzG1MultiExp, "fuzz_g1_multiexp") }
+func FuzzG2Add(f *testing.F)      { wrapZip(f, fuzzG2Add, "fuzz_g2_add") }
+func FuzzG2Mul(f *testing.F)      { wrapZip(f, fuzzG2Mul, "fuzz_g2_mul") }
+func FuzzG2MultiExp(f *testing.F) { wrapZip(f, fuzzG2MultiExp, "fuzz_g2_multiexp") }
+func FuzzPairing(f *testing.F)    { wrapZip(f, fuzzPairing, "fuzz_pairing") }
+func FuzzMapG1(f *testing.F)      { wrapZip(f, fuzzMapG1, "fuzz_map_g1") }
+func FuzzMapG2(f *testing.F)      { wrapZip(f, fuzzMapG2, "fuzz_map_g2") }
 
-func FuzzCrossPairing(f *testing.F)    { wrap(f, fuzzCrossPairing) }
-func FuzzCrossG1Add(f *testing.F)      { wrap(f, fuzzCrossG1Add) }
-func FuzzCrossG2Add(f *testing.F)      { wrap(f, fuzzCrossG2Add) }
-func FuzzCrossG1MultiExp(f *testing.F) { wrap(f, fuzzCrossG1MultiExp) }
+// The cross targets consume the same precompile input encodings as their
+// primary counterparts, so they reuse the matching seed corpora.
+func FuzzCrossPairing(f *testing.F)    { wrapZip(f, fuzzCrossPairing, "fuzz_pairing") }
+func FuzzCrossG1Add(f *testing.F)      { wrapZip(f, fuzzCrossG1Add, "fuzz_g1_add") }
+func FuzzCrossG2Add(f *testing.F)      { wrapZip(f, fuzzCrossG2Add, "fuzz_g2_add") }
+func FuzzCrossG1MultiExp(f *testing.F) { wrapZip(f, fuzzCrossG1MultiExp, "fuzz_g1_multiexp") }
 
-func wrap(f *testing.F, fn func([]byte) int) {
+func wrapZip(f *testing.F, fn func([]byte) int, corpus string) {
 	f.Helper()
-	fuzzutil.SeedFromDir(f, "corpus")
+	fuzzutil.SeedFromZip(f, "testdata/"+corpus+"_seed_corpus.zip")
 	f.Fuzz(func(t *testing.T, data []byte) {
 		fn(data)
 	})

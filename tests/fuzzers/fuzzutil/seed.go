@@ -19,6 +19,8 @@
 package fuzzutil
 
 import (
+	"archive/zip"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,6 +46,34 @@ func SeedFromDir(f *testing.F, dir string) {
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			f.Fatalf("reading corpus file %s: %v", entry.Name(), err)
+		}
+		f.Add(data)
+	}
+}
+
+// SeedFromZip adds every file inside the given zip archive as a raw byte
+// seed for f, the layout used by the go-fuzz/oss-fuzz seed_corpus archives.
+// A missing archive is an error: a wired-up corpus silently going missing
+// should fail loudly rather than quietly fuzz from nothing.
+func SeedFromZip(f *testing.F, path string) {
+	f.Helper()
+	archive, err := zip.OpenReader(path)
+	if err != nil {
+		f.Fatalf("opening seed corpus %s: %v", path, err)
+	}
+	defer archive.Close()
+	for _, file := range archive.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		r, err := file.Open()
+		if err != nil {
+			f.Fatalf("opening corpus entry %s: %v", file.Name, err)
+		}
+		data, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			f.Fatalf("reading corpus entry %s: %v", file.Name, err)
 		}
 		f.Add(data)
 	}
