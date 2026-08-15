@@ -361,13 +361,26 @@ func getKDFKey(cryptoJSON CryptoJSON, auth string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// scrypt.Key validates the parameter relationships (power-of-two n,
+		// r*p bound) but not resource cost. Bound the work so a hostile key
+		// file cannot drive an arbitrary allocation or CPU burn: scrypt uses
+		// 128*n*r bytes, capped here at 1 GiB, which leaves ample headroom
+		// over StandardScryptN/StandardScryptP (256 MiB).
+		if n <= 0 || r <= 0 || p <= 0 || p > 128 {
+			return nil, fmt.Errorf("invalid KDF params: scrypt n/r/p out of range")
+		}
+		if int64(n)*int64(r) > (1<<30)/128 {
+			return nil, fmt.Errorf("invalid KDF params: scrypt memory cost too high")
+		}
 		return scrypt.Key(authArray, salt, n, r, p, dkLen)
 	} else if cryptoJSON.KDF == "pbkdf2" {
 		c, err := ensureInt(cryptoJSON.KDFParams, "c")
 		if err != nil {
 			return nil, err
 		}
-		if c <= 0 {
+		// The web3 secret storage standard iteration count is 262144; cap at
+		// 2^24 so a hostile c cannot spin the KDF for minutes.
+		if c <= 0 || c > 1<<24 {
 			return nil, fmt.Errorf("invalid KDF params: c %d out of range", c)
 		}
 		prf, ok := cryptoJSON.KDFParams["prf"].(string)

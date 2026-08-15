@@ -31,11 +31,13 @@ import (
 // value produced by the encoder, so nothing legitimate is excluded.
 const maxFuzzScryptN = 1 << 18
 
-// scryptCostOK reports whether the scrypt N parameter (if any) is within
-// maxFuzzScryptN. This is the only pre-filter: malformed structure must NOT be
-// filtered here, since DecryptKey is required to reject it with an error
-// rather than panic.
-func scryptCostOK(keyjson []byte) bool {
+// kdfCostOK reports whether the KDF cost parameters (if any) are cheap enough
+// for productive fuzzing. Production getKDFKey bounds them too, but its caps
+// (1 GiB scrypt memory, 2^24 pbkdf2 iterations) still allow a single
+// iteration to take seconds; this pre-filter keeps the fuzz body fast.
+// Malformed structure must NOT be filtered here, since DecryptKey is required
+// to reject it with an error rather than panic.
+func kdfCostOK(keyjson []byte) bool {
 	// Struct field matching in encoding/json is case-insensitive, so a single
 	// lowercase-tagged probe matches both v3 ("crypto") and v1 ("Crypto") files.
 	var probe struct {
@@ -47,11 +49,35 @@ func scryptCostOK(keyjson []byte) bool {
 	if err := json.Unmarshal(keyjson, &probe); err != nil {
 		return true
 	}
-	if probe.Crypto.KDF != "scrypt" {
+	num := func(field string) (float64, bool) {
+		v, ok := probe.Crypto.KDFParams[field].(float64)
+		return v, ok
+	}
+	// Inputs the production bounds in getKDFKey reject are cheap (the error
+	// fires before any KDF work) and must stay fuzzable; only inputs that
+	// production would accept but that imply seconds of KDF work per
+	// iteration are skipped.
+	switch probe.Crypto.KDF {
+	case "scrypt":
+		n, okN := num("n")
+		r, okR := num("r")
+		p, okP := num("p")
+		if !okN || !okR || !okP {
+			return true // malformed: rejected cheaply
+		}
+		if n <= 0 || r <= 0 || p <= 0 || p > 128 || n*r > (1<<30)/128 {
+			return true // beyond production bounds: rejected cheaply
+		}
+		return n <= maxFuzzScryptN && n*r <= (1<<26)/128 && p <= 4
+	case "pbkdf2":
+		c, ok := num("c")
+		if !ok || c <= 0 || c > 1<<24 {
+			return true // malformed or beyond production bounds: rejected cheaply
+		}
+		return c <= 1<<20
+	default:
 		return true
 	}
-	n, ok := probe.Crypto.KDFParams["n"].(float64)
-	return !ok || n <= maxFuzzScryptN
 }
 
 // FuzzDecryptKeyJSON drives DecryptKey with arbitrary key JSON and passwords.
@@ -83,7 +109,7 @@ func FuzzDecryptKeyJSON(f *testing.F) {
 	f.Add([]byte{0x6e, 0x73, 0xa9, 0x9b, 0x2c, 0xb2, 0xd4}, "pass")
 
 	f.Fuzz(func(t *testing.T, keyjson []byte, pass string) {
-		if !scryptCostOK(keyjson) {
+		if !kdfCostOK(keyjson) {
 			return
 		}
 		key, err := DecryptKey(keyjson, pass)
