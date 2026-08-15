@@ -235,10 +235,18 @@ func runBenchmark(b *testing.B, t *StateTest) {
 			sender := script.NewContract(script.AccountRef(msg.From()), script.AccountRef(msg.From()),
 				nil, 0)
 
+			rules := config.Rules(context.BlockNumber, false)
+
 			b.ResetTimer()
 			for n := 0; n < b.N; n++ {
-				// Execute the message.
 				snapshot := statedb.Snapshot()
+				// pvm.Call bypasses ApplyMessage, so the access list must be
+				// initialised here or Berlin+ ACL gas functions will find
+				// touched addresses missing from it.
+				if rules.IsBerlin {
+					statedb.PrepareAccessList(msg.From(), msg.To(), script.ActivePrecompiles(rules), msg.AccessList())
+				}
+				// Execute the message.
 				_, _, err = pvm.Call(sender, *msg.To(), msg.Data(), msg.Gas(), msg.Value())
 				if err != nil {
 					b.Error(err)
