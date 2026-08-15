@@ -135,6 +135,13 @@ func (api *API) GetCirculatingSupply() string {
 	}
 	height := header.Number.Uint64()
 
+	// Maturity comes from the same config field Finalize uses to schedule
+	// payouts, so the reported figure always agrees with consensus. In
+	// particular a chain whose xhash config omits coinbaseMaturityBlocks
+	// (zero value) genuinely pays out immediately, and circulating supply
+	// equalling total supply is then correct, not a fallthrough. The 100
+	// fallback only covers a missing xhash section entirely, where this API
+	// should not be reachable.
 	maturity := uint64(100)
 	if cfg := api.chain.Config(); cfg != nil && cfg.XHash != nil {
 		maturity = cfg.XHash.CoinbaseMaturityBlocks
