@@ -49,7 +49,6 @@ func FuzzForkIDValidation(f *testing.F) {
 	heads := []uint64{0, 1, 100000, math.MaxUint64 / 2}
 	filters := make([]Filter, len(heads))
 	for i, head := range heads {
-		head := head
 		filters[i] = newFilter(chainparams.MainnetChainConfig, chainparams.MainnetGenesisHash, func() uint64 { return head })
 	}
 
