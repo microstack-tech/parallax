@@ -75,7 +75,7 @@ func parseElementaryType(unescapedSelector string) (string, string, error) {
 			rest = rest[1:]
 		}
 		if len(rest) == 0 || rest[0] != ']' {
-			return "", "", fmt.Errorf("failed to parse array: expected ']', got %c", unescapedSelector[0])
+			return "", "", fmt.Errorf("failed to parse array: expected ']', got %q", rest)
 		}
 		parsedType = parsedType + string(rest[0])
 		rest = rest[1:]
@@ -85,7 +85,7 @@ func parseElementaryType(unescapedSelector string) (string, string, error) {
 
 func parseCompositeType(unescapedSelector string) ([]any, string, error) {
 	if len(unescapedSelector) == 0 || unescapedSelector[0] != '(' {
-		return nil, "", fmt.Errorf("expected '(', got %c", unescapedSelector[0])
+		return nil, "", fmt.Errorf("expected '(', got %q", unescapedSelector)
 	}
 	parsedType, rest, err := parseType(unescapedSelector[1:])
 	if err != nil {
@@ -164,6 +164,14 @@ func ParseSelector(unescapedSelector string) (SelectorMarshaling, error) {
 	}
 	if len(rest) > 0 {
 		return SelectorMarshaling{}, fmt.Errorf("failed to parse selector '%s': unexpected string '%s'", unescapedSelector, rest)
+	}
+	// parseCompositeType marks a tuple array with a trailing "[]" sentinel.
+	// Nested tuples consume it in assembleArgs, but an array suffix on the
+	// top-level argument list is not a valid selector.
+	if len(args) > 0 {
+		if s, ok := args[len(args)-1].(string); ok && s == "[]" {
+			return SelectorMarshaling{}, fmt.Errorf("failed to parse selector '%s': unexpected array suffix on argument list", unescapedSelector)
+		}
 	}
 
 	// Reassemble the fake ABI and constuct the JSON
