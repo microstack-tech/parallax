@@ -125,42 +125,7 @@ func (api *API) GetTotalSupply() string {
 	if header == nil {
 		return "0"
 	}
-
-	// Number of blocks including genesis
-	n := header.Number.Uint64()
-
-	const halvingInterval uint64 = 210_000
-	emissions := new(big.Int)
-	tmp := new(big.Int)
-
-	fullEras := n / halvingInterval
-	remainder := n % halvingInterval
-
-	// Full eras
-	for era := range fullEras {
-		// pick a representative block *in* this era
-		sampleBlock := era * halvingInterval
-		reward := calcBlockReward(sampleBlock)
-
-		tmp.SetUint64(halvingInterval)
-		tmp.Mul(tmp, reward)
-		emissions.Add(emissions, tmp)
-	}
-
-	// Partial current era
-	if remainder > 0 {
-		sampleBlock := fullEras * halvingInterval
-		if sampleBlock == 0 {
-			sampleBlock = 1
-		}
-		reward := calcBlockReward(sampleBlock)
-
-		tmp.SetUint64(remainder)
-		tmp.Mul(tmp, reward)
-		emissions.Add(emissions, tmp)
-	}
-
-	return emissions.String()
+	return cumulativeEmissionThrough(header.Number.Uint64()).String()
 }
 
 func (api *API) GetCirculatingSupply() string {
@@ -168,57 +133,47 @@ func (api *API) GetCirculatingSupply() string {
 	if header == nil {
 		return "0"
 	}
-
 	height := header.Number.Uint64()
 
-	const (
-		halvingInterval  uint64 = 210_000
-		coinbaseMaturity uint64 = 100
-	)
-
-	// No matured rewards yet
-	if height <= coinbaseMaturity {
-		return "0"
+	maturity := uint64(100)
+	if cfg := api.chain.Config(); cfg != nil && cfg.XHash != nil {
+		maturity = cfg.XHash.CoinbaseMaturityBlocks
 	}
 
-	// Highest block whose coinbase is spendable
-	maturedHeight := height - coinbaseMaturity
+	// No matured rewards yet
+	if height <= maturity {
+		return "0"
+	}
+	// Emission of all blocks whose coinbase has matured.
+	return cumulativeEmissionThrough(height - maturity).String()
+}
 
-	// Number of rewarded & matured blocks (1..maturedHeight)
-	n := maturedHeight
-
+// cumulativeEmissionThrough returns the exact sum of block rewards for blocks
+// 1..height. Genesis carries no subsidy and every era boundary block belongs
+// to the new (halved) era, matching calcBlockReward.
+func cumulativeEmissionThrough(height uint64) *big.Int {
 	emissions := new(big.Int)
 	tmp := new(big.Int)
 
-	fullEras := n / halvingInterval
-	remainder := n % halvingInterval
-
-	// Full eras
-	for era := range fullEras {
-		// pick a representative block in this era
-		sampleBlock := era * halvingInterval
-		if sampleBlock == 0 {
-			sampleBlock = 1 // avoid genesis if it has no reward
+	lastEra := height / HalvingIntervalBlocks
+	if lastEra > 63 {
+		lastEra = 63 // calcBlockReward is zero beyond 63 halvings
+	}
+	for era := uint64(0); era <= lastEra; era++ {
+		first := era * HalvingIntervalBlocks
+		last := first + HalvingIntervalBlocks - 1
+		if last > height {
+			last = height
 		}
-		reward := calcBlockReward(sampleBlock)
-
-		tmp.SetUint64(halvingInterval)
-		tmp.Mul(tmp, reward)
+		if first == 0 {
+			first = 1 // genesis has no reward
+		}
+		if last < first {
+			continue
+		}
+		tmp.SetUint64(last - first + 1)
+		tmp.Mul(tmp, calcBlockReward(first))
 		emissions.Add(emissions, tmp)
 	}
-
-	// Partial current era
-	if remainder > 0 {
-		sampleBlock := fullEras * halvingInterval
-		if sampleBlock == 0 {
-			sampleBlock = 1
-		}
-		reward := calcBlockReward(sampleBlock)
-
-		tmp.SetUint64(remainder)
-		tmp.Mul(tmp, reward)
-		emissions.Add(emissions, tmp)
-	}
-
-	return emissions.String()
+	return emissions
 }
