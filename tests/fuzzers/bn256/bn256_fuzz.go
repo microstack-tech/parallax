@@ -14,9 +14,6 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the parallax library. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build gofuzz
-// +build gofuzz
-
 package bn256
 
 import (
@@ -64,8 +61,8 @@ func getG2Points(input io.Reader) (*cloudflare.G2, *google.G2, *bn254.G2Affine) 
 	return xc, xg, xs
 }
 
-// FuzzAdd fuzzez bn256 addition between the Google and Cloudflare libraries.
-func FuzzAdd(data []byte) int {
+// fuzzAdd fuzzes bn256 addition between the Google and Cloudflare libraries.
+func fuzzAdd(data []byte) int {
 	input := bytes.NewReader(data)
 	xc, xg, xs := getG1Points(input)
 	if xc == nil {
@@ -97,9 +94,9 @@ func FuzzAdd(data []byte) int {
 	return 1
 }
 
-// FuzzMul fuzzez bn256 scalar multiplication between the Google and Cloudflare
+// fuzzMul fuzzes bn256 scalar multiplication between the Google and Cloudflare
 // libraries.
-func FuzzMul(data []byte) int {
+func fuzzMul(data []byte) int {
 	input := bytes.NewReader(data)
 	pc, pg, ps := getG1Points(input)
 	if pc == nil {
@@ -139,7 +136,7 @@ func FuzzMul(data []byte) int {
 	return 1
 }
 
-func FuzzPair(data []byte) int {
+func fuzzPair(data []byte) int {
 	input := bytes.NewReader(data)
 	pc, pg, ps := getG1Points(input)
 	if pc == nil {
@@ -161,9 +158,34 @@ func FuzzPair(data []byte) int {
 	if err != nil {
 		panic(fmt.Sprintf("gnark/bn254 encountered error: %v", err))
 	}
-	if !bytes.Equal(clPair, cPair.Marshal()) {
+	if !bytes.Equal(normalizeGTToGnark(clPair).Marshal(), cPair.Marshal()) {
 		panic("pairing mismatch: cloudflare/gnark")
 	}
 
 	return 1
+}
+
+// normalizeGTToGnark scales a Cloudflare/Google GT element by s so that it can
+// be compared against a gnark GT element. The implementations apply different
+// (but equally valid) hard parts of the final exponentiation, so their pairing
+// results differ by the fixed exponent s = 2*x0*(6*x0^2 + 3*x0 + 1), where x0
+// is the BN254 curve seed. Pairing checks (result == 1) are unaffected by the
+// scaling, so the precompiles agree even though the raw GT elements do not.
+func normalizeGTToGnark(cloudflareOrGoogleGT []byte) *bn254.GT {
+	// Compute s = 2*x0*(6*x0^2 + 3*x0 + 1)
+	x0 := new(big.Int).SetUint64(4965661367192848881)
+	exp := new(big.Int).Mul(x0, x0)
+	exp.Mul(exp, big.NewInt(6))
+	exp.Add(exp, new(big.Int).Mul(x0, big.NewInt(3)))
+	exp.Add(exp, big.NewInt(1))
+	exp.Mul(exp, x0)
+	exp.Mul(exp, big.NewInt(2))
+
+	// Scale the Cloudflare/Google result by s
+	res := new(bn254.GT)
+	if err := res.SetBytes(cloudflareOrGoogleGT); err != nil {
+		panic(fmt.Sprintf("could not unmarshal cloudflare GT into gnark: %v", err))
+	}
+	res.Exp(*res, exp)
+	return res
 }
