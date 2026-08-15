@@ -17,27 +17,11 @@
 package fourbyte
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
 )
-
-// selectorParseSafe reports whether a custom method selector can be fed to the
-// validator without tripping a known production panic.
-//
-// NOTE: abi.ParseSelector (script/abi/selector_parser.go) panics with an
-// index-out-of-range when a selector is a bare identifier with no argument list
-// (e.g. "transfer" or "A"): parseCompositeType is handed an empty remainder and
-// formats unescapedSelector[0] on a zero-length string. That is reported
-// separately as a production bug; skipping such shapes here lets the fuzzer
-// keep exercising the call-data validation logic instead of re-hitting the same
-// crash. A selector containing a parenthesised argument list is safe (malformed
-// contents return an error rather than panicking).
-func selectorParseSafe(selector string) bool {
-	return strings.Contains(selector, "(") && strings.Contains(selector, ")")
-}
 
 // FuzzFourbyteValidateCallData drives Database.ValidateCallData with arbitrary
 // call data and an optional custom method selector. It checks that validation
@@ -69,9 +53,6 @@ func FuzzFourbyteValidateCallData(f *testing.F) {
 		messages := new(apitypes.ValidationMessages)
 		var sel *string
 		if selector != "" {
-			if !selectorParseSafe(selector) {
-				return
-			}
 			sel = &selector
 		}
 		db.ValidateCallData(sel, data, messages)
