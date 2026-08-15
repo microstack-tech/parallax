@@ -9,6 +9,13 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Targets are split across shards so a cold cache (schedule-triggered
+        # runs cannot restore PR caches) cannot push a single job past its
+        # timeout and silently skip the tail of the target list.
+        shard: [0, 1, 2, 3]
     steps:
       - name: Install Go
         uses: actions/setup-go@v5
@@ -30,22 +37,41 @@ jobs:
       # go test accepts a single -fuzz pattern per invocation, hence the loop.
       # build/fuzz-targets.txt lists one "package-dir fuzz-func" pair per line;
       # update it in the same commit that adds or removes a fuzz target.
-      - name: Run native fuzz targets
+      - name: Run native fuzz targets (shard ${{ matrix.shard }})
         run: |
           set -e
           failed=0
+          i=0
           while read -r pkg name; do
             case "$pkg" in ""|\#*) continue ;; esac
-            echo "=== $pkg $name"
-            if ! go test "./$pkg" -run '^$' -fuzz "^${name}\$" -fuzztime 30s -fuzzminimizetime 5s; then
-              failed=1
+            if [ $((i % 4)) -eq ${{ matrix.shard }} ]; then
+              echo "=== $pkg $name"
+              if ! go test "./$pkg" -run '^$' -fuzz "^${name}\$" -fuzztime 30s -fuzzminimizetime 5s; then
+                failed=1
+              fi
             fi
+            i=$((i + 1))
           done < build/fuzz-targets.txt
           exit $failed
+
+      # Crashing inputs are written into the source tree under
+      # testdata/fuzz/<FuzzName>/; collect only files git does not already
+      # track, so the artifact contains the new reproducers and not the
+      # committed regression corpus.
+      - name: Collect new crashers
+        if: failure()
+        run: |
+          mkdir -p /tmp/fuzz-failures
+          git ls-files --others --exclude-standard -- '*testdata/fuzz/*' | while read -r p; do
+            mkdir -p "/tmp/fuzz-failures/$(dirname "$p")"
+            cp "$p" "/tmp/fuzz-failures/$p"
+          done
+          find /tmp/fuzz-failures -type f | sed 's|^/tmp/fuzz-failures/||'
 
       - name: Upload new crashers
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-failures
-          path: "**/testdata/fuzz/**"
+          name: fuzz-failures-shard-${{ matrix.shard }}
+          path: /tmp/fuzz-failures
+          if-no-files-found: ignore
