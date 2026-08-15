@@ -1,6 +1,7 @@
 # Native fuzz targets run by the nightly fuzz-smoke workflow.
 # Format: <package dir> <fuzz function>, one per line.
 # Update this file in the same commit that adds or removes a fuzz target.
+crypto/blake2b FuzzF
 kernel/xhash FuzzASERTNextTarget
 p2p/addrman FuzzOpsInterleaved
 p2p/addrman FuzzPersistDecode
