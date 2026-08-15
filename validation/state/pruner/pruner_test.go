@@ -59,16 +59,16 @@ func TestIsBloomFilterRejectsJunk(t *testing.T) {
 		"foo",
 		"statebloom",
 		"bf.gz",
-		"statebloom.0xdeadbeef",           // missing suffix
-		"statebloombf.gz",                 // abutting prefix and suffix
-		"statebloom.bf.gz",                // overlapping prefix and suffix
-		"statebloom..bf.gz",               // empty hash segment
-		"statebloom.deadbeef.bf.gz",       // hash without 0x prefix
-		"statebloom.0xdead.bf.gz",         // hash too short
+		"statebloom.0xdeadbeef",     // missing suffix
+		"statebloombf.gz",           // abutting prefix and suffix
+		"statebloom.bf.gz",          // overlapping prefix and suffix
+		"statebloom..bf.gz",         // empty hash segment
+		"statebloom.deadbeef.bf.gz", // hash without 0x prefix
+		"statebloom.0xdead.bf.gz",   // hash too short
 		"statebloom.0xG" + strings.Repeat("0", 63) + ".bf.gz", // non-hex hash
 		"statebloom.0x" + strings.Repeat("A", 64) + ".bf.gz",  // non-canonical uppercase hex
-		"foo.0xdeadbeef.bf.gz",            // wrong prefix
-		"statebloom.0xdeadbeef.bf.gz.tmp", // in-flight temp file
+		"foo.0xdeadbeef.bf.gz",                                // wrong prefix
+		"statebloom.0xdeadbeef.bf.gz.tmp",                     // in-flight temp file
 		"chaindata",
 		"LOCK",
 		"nodekey",

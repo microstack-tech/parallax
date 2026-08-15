@@ -18,17 +18,14 @@ package state
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
 	"github.com/ParallaxProtocol/parallax/util"
 	"github.com/ParallaxProtocol/parallax/validation/rawdb"
 )
@@ -36,126 +33,14 @@ import (
 // stressSnapshotTest is a heavier variant of snapshotTest (statedb_test.go):
 // ~500 journal operations per sequence, 20-50 nested snapshots, and reverts to
 // a random strictly decreasing chain of snapshot depths instead of unwinding
-// every snapshot. All randomness is drawn from a locally seeded source so that
-// sequences are fully deterministic (newTestAction in statedb_test.go pulls
-// action arguments from the global math/rand source, so it is deliberately not
-// reused here).
+// every snapshot. All randomness is drawn from a locally seeded source so
+// that sequences are fully deterministic; actions come from the shared
+// newTestAction catalogue in statedb_test.go.
 type stressSnapshotTest struct {
 	addrs     []util.Address // all account addresses actions may touch
 	actions   []testAction   // modifications applied to the state
 	snapshots []int          // action indexes at which a snapshot is taken
 	reverts   []int          // snapshot ordinals to revert to, strictly decreasing
-}
-
-// newStressAction mirrors the action set of newTestAction (statedb_test.go)
-// but derives every argument from the supplied deterministic source.
-func newStressAction(addr util.Address, r *rand.Rand) testAction {
-	actions := []testAction{
-		{
-			name: "SetBalance",
-			fn: func(a testAction, s *StateDB) {
-				s.SetBalance(addr, big.NewInt(a.args[0]))
-			},
-			args: make([]int64, 1),
-		},
-		{
-			name: "AddBalance",
-			fn: func(a testAction, s *StateDB) {
-				s.AddBalance(addr, big.NewInt(a.args[0]))
-			},
-			args: make([]int64, 1),
-		},
-		{
-			name: "SetNonce",
-			fn: func(a testAction, s *StateDB) {
-				s.SetNonce(addr, uint64(a.args[0]))
-			},
-			args: make([]int64, 1),
-		},
-		{
-			name: "SetState",
-			fn: func(a testAction, s *StateDB) {
-				var key, val util.Hash
-				binary.BigEndian.PutUint16(key[:], uint16(a.args[0]))
-				binary.BigEndian.PutUint16(val[:], uint16(a.args[1]))
-				s.SetState(addr, key, val)
-			},
-			args: make([]int64, 2),
-		},
-		{
-			name: "SetCode",
-			fn: func(a testAction, s *StateDB) {
-				code := make([]byte, 16)
-				binary.BigEndian.PutUint64(code, uint64(a.args[0]))
-				binary.BigEndian.PutUint64(code[8:], uint64(a.args[1]))
-				s.SetCode(addr, code)
-			},
-			args: make([]int64, 2),
-		},
-		{
-			name: "CreateAccount",
-			fn: func(a testAction, s *StateDB) {
-				s.CreateAccount(addr)
-			},
-		},
-		{
-			name: "Suicide",
-			fn: func(a testAction, s *StateDB) {
-				s.Suicide(addr)
-			},
-		},
-		{
-			name: "AddRefund",
-			fn: func(a testAction, s *StateDB) {
-				s.AddRefund(uint64(a.args[0]))
-			},
-			args:   make([]int64, 1),
-			noAddr: true,
-		},
-		{
-			name: "AddLog",
-			fn: func(a testAction, s *StateDB) {
-				data := make([]byte, 2)
-				binary.BigEndian.PutUint16(data, uint16(a.args[0]))
-				s.AddLog(&types.Log{Address: addr, Data: data})
-			},
-			args: make([]int64, 1),
-		},
-		{
-			name: "AddPreimage",
-			fn: func(a testAction, s *StateDB) {
-				preimage := []byte{byte(a.args[0])}
-				hash := util.BytesToHash(preimage)
-				s.AddPreimage(hash, preimage)
-			},
-			args: make([]int64, 1),
-		},
-		{
-			name: "AddAddressToAccessList",
-			fn: func(a testAction, s *StateDB) {
-				s.AddAddressToAccessList(addr)
-			},
-		},
-		{
-			name: "AddSlotToAccessList",
-			fn: func(a testAction, s *StateDB) {
-				s.AddSlotToAccessList(addr,
-					util.Hash{byte(a.args[0])})
-			},
-			args: make([]int64, 1),
-		},
-	}
-	action := actions[r.Intn(len(actions))]
-	var nameargs []string
-	if !action.noAddr {
-		nameargs = append(nameargs, addr.Hex())
-	}
-	for i := range action.args {
-		action.args[i] = r.Int63n(100)
-		nameargs = append(nameargs, fmt.Sprint(action.args[i]))
-	}
-	action.name += strings.Join(nameargs, ", ")
-	return action
 }
 
 // generateStressSnapshotTest builds one deterministic heavy sequence from r.
@@ -169,7 +54,7 @@ func generateStressSnapshotTest(r *rand.Rand) *stressSnapshotTest {
 	actions := make([]testAction, nactions)
 	for i := range actions {
 		addr := addrs[r.Intn(len(addrs))]
-		actions[i] = newStressAction(addr, r)
+		actions[i] = newTestAction(addr, r)
 	}
 	// Place 20-50 snapshots at distinct random action indexes. None of them
 	// is popped while the actions run, so up to 50 revisions are nested at
