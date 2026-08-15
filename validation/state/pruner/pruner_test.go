@@ -59,6 +59,8 @@ func TestIsBloomFilterRejectsJunk(t *testing.T) {
 		"statebloom",
 		"bf.gz",
 		"statebloom.0xdeadbeef",           // missing suffix
+		"statebloombf.gz",                 // abutting prefix and suffix
+		"statebloom.bf.gz",                // overlapping prefix and suffix
 		"foo.0xdeadbeef.bf.gz",            // wrong prefix
 		"statebloom.0xdeadbeef.bf.gz.tmp", // in-flight temp file
 		"chaindata",
