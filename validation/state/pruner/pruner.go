@@ -459,13 +459,23 @@ func bloomFilterName(datadir string, hash util.Hash) string {
 
 func isBloomFilter(filename string) (bool, util.Hash) {
 	filename = filepath.Base(filename)
-	// The length guard keeps overlapping prefix/suffix matches (e.g. a stray
-	// "statebloom.bf.gz") from slicing out of bounds below.
-	if len(filename) >= len(stateBloomFilePrefix)+len(stateBloomFileSuffix)+2 &&
-		strings.HasPrefix(filename, stateBloomFilePrefix) && strings.HasSuffix(filename, stateBloomFileSuffix) {
-		return true, util.HexToHash(filename[len(stateBloomFilePrefix)+1 : len(filename)-len(stateBloomFileSuffix)-1])
+	middle, ok := strings.CutPrefix(filename, stateBloomFilePrefix+".")
+	if !ok {
+		return false, util.Hash{}
 	}
-	return false, util.Hash{}
+	middle, ok = strings.CutSuffix(middle, "."+stateBloomFileSuffix)
+	if !ok {
+		return false, util.Hash{}
+	}
+	// Only accept names that bloomFilterName itself would have produced:
+	// util.HexToHash accepts arbitrary strings, so require the exact
+	// canonical spelling round-trips, rejecting stray near-miss files whose
+	// mangled hash would otherwise be trusted as the pruning root.
+	hash := util.HexToHash(middle)
+	if middle != hash.Hex() {
+		return false, util.Hash{}
+	}
+	return true, hash
 }
 
 func findBloomFilter(datadir string) (string, util.Hash, error) {
