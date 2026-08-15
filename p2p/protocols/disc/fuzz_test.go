@@ -18,6 +18,7 @@ package disc
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
@@ -92,5 +93,48 @@ func FuzzYourAddrDecode(f *testing.F) {
 		var y YourAddr
 		_ = rlp.DecodeBytes(data, &y)
 		_, _ = y.Validate()
+	})
+}
+
+// FuzzMessagesRoundTrip — covers the disc messages the fuzzers above do
+// not: Hello is the only one with a payload (GetPeers is empty on the
+// wire). Arbitrary bytes fed to rlp.Decode(Hello) must never panic;
+// Validate on the half-decoded state must never panic; and any Hello
+// that decoded successfully must re-encode and decode back to an equal
+// value, Tail included.
+func FuzzMessagesRoundTrip(f *testing.F) {
+	ok := Hello{ProtoVersion: 1, Nonce: 0xdeadbeef, ListenPort: 30303, Services: ServiceNodeNetwork | ServiceRelayTx}
+	var okbuf bytes.Buffer
+	_ = rlp.Encode(&okbuf, &ok)
+	f.Add(okbuf.Bytes())
+	tailed := Hello{ProtoVersion: 2, Nonce: 1, ListenPort: 0, Services: 0,
+		Tail: []rlp.RawValue{{0x01}, {0x83, 0xaa, 0xbb, 0xcc}}}
+	var tbuf bytes.Buffer
+	_ = rlp.Encode(&tbuf, &tailed)
+	f.Add(tbuf.Bytes())
+	f.Add([]byte{})
+	f.Add([]byte{0xc0})                        // empty RLP list
+	f.Add([]byte{0xff, 0xff, 0xff})            // malformed
+	f.Add(bytes.Repeat([]byte{0x80}, 10_000))  // oversize tail spam
+	f.Add(bytes.Repeat([]byte{0x00}, 100_000)) // all-zero mega-input
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var h Hello
+		if err := rlp.DecodeBytes(data, &h); err != nil {
+			return
+		}
+		_ = h.Validate()
+		var buf bytes.Buffer
+		if err := rlp.Encode(&buf, &h); err != nil {
+			t.Fatalf("re-encode of successfully decoded Hello failed: %v", err)
+		}
+		var back Hello
+		if err := rlp.DecodeBytes(buf.Bytes(), &back); err != nil {
+			t.Fatalf("re-decode of re-encoded Hello failed: %v", err)
+		}
+		if !reflect.DeepEqual(h, back) {
+			t.Fatalf("Hello round-trip mismatch:\n first=%+v\nsecond=%+v", h, back)
+		}
+		_ = back.Validate()
 	})
 }
