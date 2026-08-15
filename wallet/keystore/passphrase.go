@@ -32,6 +32,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -329,20 +330,50 @@ func decryptKeyV1(keyProtected *encryptedKeyJSONV1, auth string) (keyBytes []byt
 
 func getKDFKey(cryptoJSON CryptoJSON, auth string) ([]byte, error) {
 	authArray := []byte(auth)
-	salt, err := hex.DecodeString(cryptoJSON.KDFParams["salt"].(string))
+	saltStr, ok := cryptoJSON.KDFParams["salt"].(string)
+	if !ok {
+		return nil, errors.New("invalid KDF params: missing or non-string salt")
+	}
+	salt, err := hex.DecodeString(saltStr)
 	if err != nil {
 		return nil, err
 	}
-	dkLen := ensureInt(cryptoJSON.KDFParams["dklen"])
+	dkLen, err := ensureInt(cryptoJSON.KDFParams, "dklen")
+	if err != nil {
+		return nil, err
+	}
+	// The MAC derivation slices derivedKey[16:32]; anything shorter is
+	// malformed, and absurd lengths only serve as an allocation vector.
+	if dkLen < 32 || dkLen > 1<<16 {
+		return nil, fmt.Errorf("invalid KDF params: dklen %d out of range", dkLen)
+	}
 
 	if cryptoJSON.KDF == keyHeaderKDF {
-		n := ensureInt(cryptoJSON.KDFParams["n"])
-		r := ensureInt(cryptoJSON.KDFParams["r"])
-		p := ensureInt(cryptoJSON.KDFParams["p"])
+		n, err := ensureInt(cryptoJSON.KDFParams, "n")
+		if err != nil {
+			return nil, err
+		}
+		r, err := ensureInt(cryptoJSON.KDFParams, "r")
+		if err != nil {
+			return nil, err
+		}
+		p, err := ensureInt(cryptoJSON.KDFParams, "p")
+		if err != nil {
+			return nil, err
+		}
 		return scrypt.Key(authArray, salt, n, r, p, dkLen)
 	} else if cryptoJSON.KDF == "pbkdf2" {
-		c := ensureInt(cryptoJSON.KDFParams["c"])
-		prf := cryptoJSON.KDFParams["prf"].(string)
+		c, err := ensureInt(cryptoJSON.KDFParams, "c")
+		if err != nil {
+			return nil, err
+		}
+		if c <= 0 {
+			return nil, fmt.Errorf("invalid KDF params: c %d out of range", c)
+		}
+		prf, ok := cryptoJSON.KDFParams["prf"].(string)
+		if !ok {
+			return nil, errors.New("invalid KDF params: missing or non-string prf")
+		}
 		if prf != "hmac-sha256" {
 			return nil, fmt.Errorf("unsupported PBKDF2 PRF: %s", prf)
 		}
@@ -353,13 +384,17 @@ func getKDFKey(cryptoJSON CryptoJSON, auth string) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported KDF: %s", cryptoJSON.KDF)
 }
 
-// TODO: can we do without this when unmarshalling dynamic JSON?
-// why do integers in KDF params end up as float64 and not int after
-// unmarshal?
-func ensureInt(x any) int {
-	res, ok := x.(int)
-	if !ok {
-		res = int(x.(float64))
+// ensureInt reads a KDF parameter as an integer. Integers arrive as float64
+// from encoding/json's generic unmarshalling; a missing or non-numeric value
+// is reported as an error rather than a panic since key files are
+// user-supplied input.
+func ensureInt(params map[string]any, field string) (int, error) {
+	switch v := params[field].(type) {
+	case int:
+		return v, nil
+	case float64:
+		return int(v), nil
+	default:
+		return 0, fmt.Errorf("invalid KDF params: missing or non-numeric %s", field)
 	}
-	return res
 }

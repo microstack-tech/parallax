@@ -107,6 +107,9 @@ func aesCTRXOR(key, inText, iv []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(iv) != aesBlock.BlockSize() {
+		return nil, errors.New("invalid IV length")
+	}
 	stream := cipher.NewCTR(aesBlock, iv)
 	outText := make([]byte, len(inText))
 	stream.XORKeyStream(outText, inText)
@@ -117,6 +120,12 @@ func aesCBCDecrypt(key, cipherText, iv []byte) ([]byte, error) {
 	aesBlock, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
+	}
+	if len(iv) != aesBlock.BlockSize() {
+		return nil, errors.New("invalid IV length")
+	}
+	if len(cipherText) == 0 || len(cipherText)%aesBlock.BlockSize() != 0 {
+		return nil, errors.New("invalid ciphertext length")
 	}
 	decrypter := cipher.NewCBCDecrypter(aesBlock, iv)
 	paddedPlaintext := make([]byte, len(cipherText))
