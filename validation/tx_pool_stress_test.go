@@ -89,7 +89,7 @@ func stressKey(t *testing.T, rng *rand.Rand) (*ecdsa.PrivateKey, util.Address) {
 // and any queued transactions sit strictly above the account's highest pending
 // nonce. Note that the queue itself may legitimately contain nonce gaps (that
 // is what the future queue is for), so no contiguity is asserted there.
-func stressCheckNonceCoherence(t *testing.T, pending, queued map[util.Address]types.Transactions) {
+func stressCheckNonceCoherence(t *testing.T, pool *TxPool, pending, queued map[util.Address]types.Transactions) {
 	t.Helper()
 	for addr, txs := range pending {
 		for i := 1; i < len(txs); i++ {
@@ -103,10 +103,23 @@ func stressCheckNonceCoherence(t *testing.T, pending, queued map[util.Address]ty
 			}
 		}
 	}
-	for addr, txs := range queued {
-		for i := 1; i < len(txs); i++ {
-			if txs[i].Nonce() <= txs[i-1].Nonce() {
-				t.Fatalf("account %x: queued nonces not strictly ascending: %d then %d", addr, txs[i-1].Nonce(), txs[i].Nonce())
+	// Content() flattens through txSortedMap, which sorts by nonce and holds
+	// one tx per nonce key, so ordering checks on its output are vacuous.
+	// Assert the underlying bookkeeping instead: every tx in the internal
+	// pending and queue maps must be stored under its own nonce key.
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	for addr, list := range pool.pending {
+		for nonce, tx := range list.txs.items {
+			if tx.Nonce() != nonce {
+				t.Fatalf("account %x: pending tx with nonce %d stored under key %d", addr, tx.Nonce(), nonce)
+			}
+		}
+	}
+	for addr, list := range pool.queue {
+		for nonce, tx := range list.txs.items {
+			if tx.Nonce() != nonce {
+				t.Fatalf("account %x: queued tx with nonce %d stored under key %d", addr, tx.Nonce(), nonce)
 			}
 		}
 	}
@@ -227,7 +240,7 @@ func TestStressPoolConcurrentIngest(t *testing.T) {
 			t.Fatalf("account %x: pending does not start at base nonce: %d", addr, txs[0].Nonce())
 		}
 	}
-	stressCheckNonceCoherence(t, pendingMap, queuedMap)
+	stressCheckNonceCoherence(t, pool, pendingMap, queuedMap)
 	if err := validateTxPoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
@@ -310,7 +323,7 @@ func TestStressPoolEvictionUnderPressure(t *testing.T) {
 	// Verify the per account nonce invariants and that nothing below the
 	// injected price minimum materialized out of thin air.
 	pendingMap, queuedMap := pool.Content()
-	stressCheckNonceCoherence(t, pendingMap, queuedMap)
+	stressCheckNonceCoherence(t, pool, pendingMap, queuedMap)
 	for _, m := range []map[util.Address]types.Transactions{pendingMap, queuedMap} {
 		for addr, txs := range m {
 			for _, tx := range txs {
@@ -553,7 +566,7 @@ func TestStressPoolReorgChurn(t *testing.T) {
 				t.Fatalf("flip %d: account %x: pending starts at %d, state nonce %d", flip, addr, txs[0].Nonce(), nonce)
 			}
 		}
-		stressCheckNonceCoherence(t, pendingMap, queuedMap)
+		stressCheckNonceCoherence(t, pool, pendingMap, queuedMap)
 
 		if flip%stressReorgSampleEvery == 0 {
 			if err := validateTxPoolInternals(pool); err != nil {
