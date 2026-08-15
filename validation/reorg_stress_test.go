@@ -207,14 +207,25 @@ func TestStressDeepReorg(t *testing.T) {
 	if canon := blockchain.GetCanonicalHash(uint64(forkAt+sideLen) + 1); canon != (util.Hash{}) {
 		t.Fatalf("height beyond head still canonical: %x", canon)
 	}
-	// Tx lookups and receipts of the dropped chain must be gone; the side
-	// chain's must exist.
+	// Tx lookups of the dropped chain must be gone; the side chain's must
+	// exist. Note ReadReceipt cannot be used to probe the dropped side: it
+	// resolves through the tx lookup entry whose deletion is asserted first,
+	// so it would pass vacuously. The reorg deletes lookups and canonical
+	// mappings only; receipt data of dropped blocks stays stored under the
+	// block hash so a later reorg back does not need re-execution. Pin that
+	// retention directly.
 	for i, tx := range canonTxs {
 		if txn, _, _, _ := rawdb.ReadTransaction(db, tx.Hash()); txn != nil {
 			t.Errorf("dropped tx %d: lookup still present after reorg", i)
 		}
-		if rcpt, _, _, _ := rawdb.ReadReceipt(db, tx.Hash(), blockchain.Config()); rcpt != nil {
-			t.Errorf("dropped tx %d: receipt still present after reorg", i)
+	}
+	for _, block := range canonChain {
+		if block.NumberU64() <= uint64(forkAt) || len(block.Transactions()) == 0 {
+			continue
+		}
+		if rcpts := rawdb.ReadRawReceipts(db, block.Hash(), block.NumberU64()); len(rcpts) != len(block.Transactions()) {
+			t.Errorf("dropped block %d: raw receipts lost after reorg: have %d, want %d",
+				block.NumberU64(), len(rcpts), len(block.Transactions()))
 		}
 	}
 	for i, tx := range sideTxs {
@@ -289,17 +300,19 @@ func TestStressRepeatedShallowReorgs(t *testing.T) {
 	checkChainInvariants(t, blockchain, "shallow reorgs")
 	blockchain.Stop()
 
-	// Goroutine count must settle back near the starting level. Retry in
-	// small bounded steps instead of one long sleep.
+	// Goroutine count must settle back near the starting level. The count is
+	// process global and other package tests may still be winding down, so
+	// give shutdown a generous bounded budget (5s in 10ms steps, far beyond
+	// what Stop needs even under the race detector) before declaring a leak.
 	const tolerance = 4
 	var final int
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 500; i++ {
 		final = runtime.NumGoroutine()
 		if final <= startGoroutines+tolerance {
 			break
 		}
 		runtime.GC()
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	if final > startGoroutines+tolerance {
 		t.Errorf("goroutine leak: started with %d, ended with %d (tolerance %d)", startGoroutines, final, tolerance)
