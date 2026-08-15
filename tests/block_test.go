@@ -23,6 +23,14 @@ import (
 func TestBlockchain(t *testing.T) {
 	t.Parallel()
 
+	// The upstream ethereum/tests BlockchainTests fixtures encode expected
+	// block hashes, but the Parallax header format diverges from Ethereum's
+	// (EpochStartTime field, no uncle hash), so no upstream fixture's hashes
+	// can ever match. The state transition rules themselves are covered by
+	// TestState, which runs the full GeneralStateTests corpus natively. The
+	// harness below is kept for future Parallax-generated block fixtures.
+	t.Skip("upstream block fixtures are incompatible with the parallax header format; state rules are covered by TestState")
+
 	bt := new(testMatcher)
 	// General state tests are 'exported' as blockchain tests, but we can run them natively.
 	// For speedier CI-runs, the line below can be uncommented, so those are skipped.
