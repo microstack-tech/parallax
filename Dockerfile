@@ -4,7 +4,7 @@ ARG VERSION=""
 ARG BUILDNUM=""
 
 # Build Prlx in a stock Go builder container
-FROM golang:1.25-alpine as builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev linux-headers git
 
@@ -14,7 +14,7 @@ COPY go.sum /parallax/
 RUN cd /parallax && go mod download
 
 ADD . /parallax
-RUN cd /parallax && go run build/ci.go install ./cmd/parallaxd ./cmd/parallax-cli ./cmd/parallax
+RUN cd /parallax && go run build/ci.go install ./cmd/parallaxd ./cmd/parallax-cli ./cmd/parallax-wallet ./cmd/parallax
 
 # Pull Prlx into a second stage deploy alpine container
 FROM alpine:latest
@@ -22,6 +22,7 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /parallax/build/bin/parallaxd /usr/local/bin/
 COPY --from=builder /parallax/build/bin/parallax-cli /usr/local/bin/
+COPY --from=builder /parallax/build/bin/parallax-wallet /usr/local/bin/
 COPY --from=builder /parallax/build/bin/parallax /usr/local/bin/
 
 EXPOSE 8545 8546 32110 32110/udp
