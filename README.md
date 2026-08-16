@@ -103,6 +103,31 @@ source build/completion/parallax.bash
 
 Or install under `~/.local/share/bash-completion/completions/` (bash) or any directory on `$fpath` (zsh) for persistence.
 
+### Docker
+
+Official multi-arch images (amd64/arm64) are published to
+[Docker Hub](https://hub.docker.com/r/parallaxprotocol/parallax) on every
+release. The entrypoint is the `parallax` multi-call wrapper, so the
+familiar subcommands work directly:
+
+```bash
+docker run -d --name parallax \
+  -v parallax-data:/home/parallax/.parallax \
+  -p 32110:32110 -p 32110:32110/udp \
+  parallaxprotocol/parallax node
+
+docker exec parallax parallax rpc info   # query it over IPC
+docker stop -t 60 parallax               # allow a clean database shutdown
+```
+
+The container runs as an unprivileged user (uid 1000) and keeps all
+state under `/home/parallax/.parallax` — mount a volume there for
+persistence. To serve HTTP RPC, pass `--http --http.addr 0.0.0.0` and
+publish port 8545 bound to localhost (`-p 127.0.0.1:8545:8545`); never
+expose an unauthenticated RPC port to the public internet. See
+[README.docker.md](README.docker.md) for the full reference, or build
+the image locally with `docker build -t parallax .`
+
 ### Hardware Requirements
 
 | | Minimum | Recommended |
