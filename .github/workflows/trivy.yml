@@ -1,0 +1,87 @@
+name: Trivy
+
+# Scans the node image for vulnerabilities on every push to main, plus a
+# weekly re-scan so CVEs published against an unchanged main still get
+# surfaced. Complements Dependabot: this scans the *built image* (Go
+# module versions actually linked into the binaries plus the Alpine base
+# packages), which catches advisories Dependabot's manifest view misses.
+#
+# Two passes over the same image:
+#   1. SARIF upload to the repository Security tab (never fails the job,
+#      includes unfixed findings for visibility).
+#   2. A gating table scan that fails the job on fixable CRITICAL/HIGH
+#      findings — the same bar the Docker release workflow enforces, so
+#      a red main is an early warning that the next release would be
+#      blocked.
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Weekly re-scan, Monday 06:27 UTC (odd minute to avoid the
+    # on-the-hour thundering herd on shared runners).
+    - cron: "27 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+# GitHub is deprecating Node.js 20 for JS-based actions; the official
+# replacements (actions/checkout v5, setup-go v6, etc.) haven't shipped
+# yet, so opt into the Node 24 runtime via the documented env var until
+# they do. Drop this once every action used here advertises Node 24
+# support natively.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  scan:
+    name: Scan node image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Shares the layer cache with the Docker release workflow, so on a
+      # typical push only the changed layers rebuild.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: parallax:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan (SARIF for the Security tab)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: parallax:scan
+          version: v0.74.0
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image
+
+      - name: Gate on fixable CRITICAL/HIGH findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: parallax:scan
+          version: v0.74.0
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          # The vulnerability DB was already pulled by the SARIF pass.
+          skip-setup-trivy: true
