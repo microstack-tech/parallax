@@ -29,7 +29,54 @@ The standalone bundles can be downloaded from the [Parallax client Releases](htt
 
 ## Docker container
 
-Not yet available in Docker Hub.
+Official images are published to [Docker Hub](https://hub.docker.com/r/parallaxprotocol/parallax) for `linux/amd64` and `linux/arm64` on every release, with SBOM and provenance attestations. Each image bundles the full client suite — `parallaxd` (full-node daemon), `parallax-cli` (JSON-RPC client), `parallax-wallet` (offline wallet tool) and the `parallax` multi-call wrapper, which is the image entrypoint — so the familiar subcommands work directly. The container runs as an unprivileged user (uid/gid 1000) and keeps all state under `/home/parallax/.parallax`.
+
+Three kinds of tags are available: `latest` always points at the most recent stable release, version lines such as `2.0` track the newest patch release of that line, and exact versions such as `2.0.0` never move. Prerelease tags (e.g. `2.0.0-rc4`) are published but never move `latest`.
+
+To run a full node with persistent chain data, mount a volume at the datadir and publish the P2P port:
+
+```sh
+docker run -d --name parallax \
+  -v parallax-data:/home/parallax/.parallax \
+  -p 32110:32110 -p 32110:32110/udp \
+  parallaxprotocol/parallax node
+```
+
+The running node can be queried through the bundled RPC client, which connects over the IPC socket inside the container — no HTTP configuration is required:
+
+```sh
+docker exec parallax parallax rpc info
+docker exec parallax parallax rpc blockcount
+```
+
+To serve JSON-RPC over HTTP, the server must be bound to the container's external interface, and the published port should stay on loopback (or inside a private Docker network) — an unauthenticated RPC port must never be exposed to the public internet:
+
+```sh
+docker run -d --name parallax \
+  -v parallax-data:/home/parallax/.parallax \
+  -p 32110:32110 -p 32110:32110/udp \
+  -p 127.0.0.1:8545:8545 \
+  parallaxprotocol/parallax node --http --http.addr 0.0.0.0
+```
+
+When stopping the node, give the database time to close cleanly rather than accepting Docker's 10-second default kill:
+
+```sh
+docker stop -t 60 parallax
+```
+
+To update an existing installation, pull the newer image and recreate the container; chain data survives in the named volume:
+
+```sh
+docker pull parallaxprotocol/parallax
+docker stop -t 60 parallax && docker rm parallax
+docker run -d --name parallax \
+  -v parallax-data:/home/parallax/.parallax \
+  -p 32110:32110 -p 32110:32110/udp \
+  parallaxprotocol/parallax node
+```
+
+When mining, the XHash DAGs under `/home/parallax/.xhash` are worth mounting as a second volume so they are not regenerated on every container recreation. The image can also be built locally from the repository root with `docker build -t parallax .`; a `Dockerfile.alltools` variant additionally bundles the developer tools (abigen, clef, devp2p, pvm, rlpdump and friends).
 
 ## Build from source code
 
