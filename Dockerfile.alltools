@@ -16,11 +16,24 @@ RUN cd /parallax && go mod download
 ADD . /parallax
 RUN cd /parallax && go run build/ci.go install
 
-# Pull all binaries into a second stage deploy alpine container
-FROM alpine:latest
+# Pull all binaries into a second stage deploy alpine container. The tag
+# is pinned (not :latest) so rebuilding a released version yields the
+# same base; bump it deliberately alongside the Go builder image.
+FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+  && addgroup -g 1000 parallax \
+  && adduser -D -u 1000 -G parallax parallax \
+  # Pre-create the mount points owned by the runtime user; a named
+  # volume inherits the ownership baked into the image, and a root-owned
+  # mount point would make the unprivileged daemon fail at startup.
+  && mkdir -p /home/parallax/.parallax /home/parallax/.xhash \
+  && chown -R parallax:parallax /home/parallax
+
 COPY --from=builder /parallax/build/bin/* /usr/local/bin/
+
+USER parallax
+VOLUME ["/home/parallax/.parallax"]
 
 EXPOSE 8545 8546 32110 32110/udp
 
@@ -29,4 +42,11 @@ ARG COMMIT=""
 ARG VERSION=""
 ARG BUILDNUM=""
 
-LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"
+LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM" \
+      org.opencontainers.image.title="Parallax (all tools)" \
+      org.opencontainers.image.description="Parallax client suite plus developer tools (abigen, clef, devp2p, pvm, rlpdump, ...)" \
+      org.opencontainers.image.source="https://github.com/ParallaxProtocol/parallax" \
+      org.opencontainers.image.documentation="https://docs.parallaxprotocol.org" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      org.opencontainers.image.revision="$COMMIT" \
+      org.opencontainers.image.version="$VERSION"
