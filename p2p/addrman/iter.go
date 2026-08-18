@@ -29,18 +29,18 @@ import (
 
 // V2Candidate is a v2-native dial target emitted by V2Iter. Unlike
 // NodeIter (which wraps KeyType=0x01 entries in enode.Node), the v2
-// path has no persistent identity, so we expose a bare net.TCPAddr.
+// path has no persistent identity, so we expose the bare NetAddr.
 // The Server's v2 dial goroutine reads from a channel of these and
 // calls Server.DialV2 for each.
 type V2Candidate struct {
-	Addr NetAddr // IPv4/IPv6 routable, port != 0
+	Addr NetAddr // routable (IP or Tor v3), port != 0
 }
 
 // IsSelfFunc reports whether addr matches the local node's own
 // advertised endpoint. V2Iter calls it for each candidate before
 // emit; matching entries are skipped so the v2 dialer doesn't
 // burn cycles on a guarded self-dial. nil disables the check.
-type IsSelfFunc func(addr *net.TCPAddr) bool
+type IsSelfFunc func(addr NetAddr) bool
 
 // V2Iter iterates addrman entries with KeyType=0x00 (v2-native). It
 // draws candidates via Select() and skips non-v2 entries. Blocks
@@ -85,35 +85,24 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
-				// Candidates must be representable as IP:port — the
-				// v2 dialer can't use anything else, and skipping
-				// here also guarantees the self-check below can
-				// never be bypassed by an unparseable address.
-				ap, apOk := addr.AddrPort()
-				if !apOk {
-					logging.Trace("pip6: V2Iter skip (no ip:port form)", "addr", addr.String())
-					skips++
-					if skips >= maxSkipsBeforeBackoff {
-						goto idleBackoff
-					}
-					continue
-				}
+				// Valid() admits IP and Tor v3 candidates alike; the
+				// dial path routes each network through its configured
+				// connector and refuses the ones without a route
+				// (PIP-0007).
+				//
 				// Skip the local node's own endpoint. The
 				// disc-protocol quorum can ingest our own
 				// observed external IP into addrman; without
 				// this gate the iterator re-emits it every
 				// cycle and the v2 dial guard burns cycles
 				// rejecting it. Cheap to test, cheap to skip.
-				if it.isSelf != nil {
-					tcp := &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
-					if it.isSelf(tcp) {
-						logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
-						skips++
-						if skips >= maxSkipsBeforeBackoff {
-							goto idleBackoff
-						}
-						continue
+				if it.isSelf != nil && it.isSelf(addr) {
+					logging.Trace("pip6: V2Iter skip (self)", "addr", addr.String())
+					skips++
+					if skips >= maxSkipsBeforeBackoff {
+						goto idleBackoff
 					}
+					continue
 				}
 				// Skip entries addrman already considers dead.
 				// Without this gate a single stale KeyType=0x00

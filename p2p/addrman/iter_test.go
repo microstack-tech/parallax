@@ -187,9 +187,8 @@ func TestV2IterSkipsSelf(t *testing.T) {
 		t.Fatal("AddOne other failed")
 	}
 
-	selfTCP := &net.TCPAddr{IP: net.IPv4(45, 236, 49, 58), Port: 32110}
-	isSelf := func(addr *net.TCPAddr) bool {
-		return addr.Port == selfTCP.Port && addr.IP.Equal(selfTCP.IP)
+	isSelf := func(addr NetAddr) bool {
+		return addr.Equal(selfAddr)
 	}
 
 	it := NewV2Iter(m, 10*time.Millisecond, isSelf)

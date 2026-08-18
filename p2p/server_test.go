@@ -863,7 +863,7 @@ func TestDialV2RejectsSelfEndpoint(t *testing.T) {
 	}
 	addr := &net.TCPAddr{IP: self.IP(), Port: self.TCP()}
 
-	err := srv.DialV2(addr)
+	err := srv.DialV2(testNetAddr(t, addr))
 	if err == nil {
 		t.Fatalf("DialV2(%v) returned nil error", addr)
 	}

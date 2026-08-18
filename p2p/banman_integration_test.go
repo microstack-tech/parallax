@@ -84,10 +84,10 @@ func TestDialV2RejectsBannedIP(t *testing.T) {
 	}
 	srv.log = logging.Root()
 
-	if err := srv.DialV2(&net.TCPAddr{IP: bannedIP, Port: 32110}); !errors.Is(err, errV2DialBanned) {
+	if err := srv.DialV2(testNetAddr(t, &net.TCPAddr{IP: bannedIP, Port: 32110})); !errors.Is(err, errV2DialBanned) {
 		t.Fatalf("DialV2 to banned IP = %v, want errV2DialBanned", err)
 	}
-	if err := srv.DialV2(&net.TCPAddr{IP: discouragedIP, Port: 32110}); !errors.Is(err, errV2DialBanned) {
+	if err := srv.DialV2(testNetAddr(t, &net.TCPAddr{IP: discouragedIP, Port: 32110})); !errors.Is(err, errV2DialBanned) {
 		t.Fatalf("DialV2 to discouraged IP = %v, want errV2DialBanned", err)
 	}
 }

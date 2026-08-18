@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
@@ -207,7 +208,7 @@ type dialConfig struct {
 	// callback invoked for such nodes; both are nil for unit tests
 	// that don't want the v2 branch.
 	v2Predicate func(*enode.Node) bool
-	v2Dial      func(*net.TCPAddr) error
+	v2Dial      func(addrman.NetAddr) error
 
 	// maxBlockRelay is the count of block-relay-only outbound slots
 	// reserved within maxDialPeers. Bitcoin Core defaults to 2
@@ -907,9 +908,12 @@ type dialError struct {
 
 func (t *dialTask) run(d *dialScheduler) {
 	if t.v2 {
-		tcp := &net.TCPAddr{IP: t.dest.IP(), Port: t.dest.TCP()}
-		if err := d.v2Dial(tcp); err != nil {
-			d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", tcp, "err", err)
+		na, ok := netAddrFromTCP(&net.TCPAddr{IP: t.dest.IP(), Port: t.dest.TCP()})
+		if !ok {
+			return
+		}
+		if err := d.v2Dial(na); err != nil {
+			d.log.Trace("v2 dial (from v1 scheduler) failed", "addr", na, "err", err)
 		}
 		return
 	}

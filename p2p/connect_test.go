@@ -156,6 +156,76 @@ func TestNetConnectorUnreachable(t *testing.T) {
 	}
 }
 
+func TestNetConnectorOnionViaProxy(t *testing.T) {
+	proxy := startFakeSocksProxy(t)
+	pol, err := newNetPolicy(&Config{OnionProxyAddr: proxy.ln.Addr().String(), ProxyNoRandomize: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &netConnector{policy: pol, timeout: 5 * time.Second}
+
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := c.Connect(context.Background(), onion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	select {
+	case dest := <-proxy.destC:
+		if dest != "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion" {
+			t.Errorf("proxy saw target %q, want the onion hostname", dest)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy never saw the onion CONNECT")
+	}
+
+	// Without an onion route the same target is refused before any
+	// socket opens.
+	direct := &netConnector{timeout: time.Second}
+	if _, err := direct.Connect(context.Background(), onion); !errors.Is(err, errUnreachableNetwork) {
+		t.Errorf("onion without route: got %v, want errUnreachableNetwork", err)
+	}
+}
+
+// TestDialV2OnionEndToEnd drives a started Server's DialV2 at an onion
+// target and asserts the CONNECT reaches the proxy with the hostname —
+// the full path: reachability policy → cooldown → connector → SOCKS5.
+func TestDialV2OnionEndToEnd(t *testing.T) {
+	proxy := startFakeSocksProxy(t)
+	srv := &Server{Config: Config{
+		Name:             "onion-dialer",
+		MaxPeers:         10,
+		NoDial:           true,
+		PrivateKey:       newkey(),
+		OnionProxyAddr:   proxy.ln.Addr().String(),
+		ProxyNoRandomize: true,
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The dial reaches the proxy and then fails at the v2 handshake
+	// (the fake proxy connects nowhere) — the assertion is the
+	// CONNECT target.
+	_ = srv.DialV2(onion)
+	select {
+	case dest := <-proxy.destC:
+		if dest != onion.OnionHostname() {
+			t.Errorf("proxy saw %q, want %q", dest, onion.OnionHostname())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DialV2 never sent a CONNECT through the proxy")
+	}
+}
+
 func TestDialCountsAsFailure(t *testing.T) {
 	if dialCountsAsFailure(errUnreachableNetwork) {
 		t.Error("unreachable network must not count against the address")

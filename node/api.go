@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -98,24 +99,49 @@ func (api *privateAdminAPI) AddPeer(url string) (bool, error) {
 		server.AddPeer(node)
 		return true, nil
 	}
-	// ip:port → v2 dial (single-shot; use admin_addnode for persistence).
-	host, portStr, err := net.SplitHostPort(url)
+	// ip:port / onion:port → v2 dial (single-shot; use admin_addnode
+	// for persistence).
+	na, err := parseV2Target(url)
 	if err != nil {
-		return false, fmt.Errorf("invalid address %q: expected enode://… or ip:port", url)
+		return false, fmt.Errorf("invalid address %q: expected enode://…, ip:port or <addr>.onion:port (%v)", url, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false, fmt.Errorf("invalid ip %q", host)
-	}
-	port, err := parsePort(portStr)
-	if err != nil {
-		return false, err
-	}
-	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2Manual(tcp); err != nil {
+	if err := server.DialV2Manual(na); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// parseV2Target parses an operator-supplied v2 dial target: "ip:port"
+// or "<base32>.onion:port" (PIP-0007 — onion targets dial through the
+// configured Tor proxy; the dial fails with "no route to network" when
+// none is configured).
+func parseV2Target(address string) (addrman.NetAddr, error) {
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return addrman.NetAddr{}, err
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return addrman.NetAddr{}, err
+	}
+	na, err := addrman.ParseOnion(host, port)
+	switch {
+	case err == nil:
+		return na, nil
+	case !errors.Is(err, addrman.ErrNotOnion):
+		// It named a .onion but a malformed one — surface that
+		// instead of a confusing "invalid ip".
+		return addrman.NetAddr{}, err
+	}
+	ip, perr := netip.ParseAddr(host)
+	if perr != nil {
+		return addrman.NetAddr{}, fmt.Errorf("invalid host %q", host)
+	}
+	na, ok := addrman.FromAddrPort(netip.AddrPortFrom(ip.Unmap(), port))
+	if !ok {
+		return addrman.NetAddr{}, fmt.Errorf("invalid host %q", host)
+	}
+	return na, nil
 }
 
 // RemovePeer disconnects from a remote node. Symmetric with AddPeer:
@@ -240,20 +266,11 @@ func (api *privateAdminAPI) DialV2(address string) (bool, error) {
 	if server == nil {
 		return false, ErrNodeStopped
 	}
-	host, portStr, err := net.SplitHostPort(address)
+	na, err := parseV2Target(address)
 	if err != nil {
 		return false, fmt.Errorf("invalid address %q: %w", address, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false, fmt.Errorf("invalid ip %q", host)
-	}
-	port, err := parsePort(portStr)
-	if err != nil {
-		return false, err
-	}
-	tcp := &net.TCPAddr{IP: ip, Port: int(port)}
-	if err := server.DialV2Manual(tcp); err != nil {
+	if err := server.DialV2Manual(na); err != nil {
 		return false, err
 	}
 	return true, nil

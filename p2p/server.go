@@ -1200,7 +1200,7 @@ func (srv *Server) setupDialScheduler() {
 		// when the addrbook has none (e.g., a freshly-installed
 		// v1.x-only network), the goroutine idles on its internal
 		// backoff.
-		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.IsSelfEndpoint)
+		srv.v2Iter = addrman.NewV2Iter(srv.addrbook, 250*time.Millisecond, srv.isSelfNetAddr)
 		srv.loopWG.Add(1)
 		go srv.runV2Dialer()
 
@@ -1306,17 +1306,20 @@ func (srv *Server) runV2Dialer() {
 			continue
 		}
 		cand := srv.v2Iter.Candidate()
-		addrPort, ok := cand.Addr.AddrPort()
-		if !ok {
+		// Skip networks the policy has no route to. Entries on such
+		// networks can sit in the addrbook legitimately — persisted
+		// from a session that had a Tor route, or ingested before a
+		// restart changed the flags — and Core's ThreadOpenConnections
+		// skips them at selection time the same way.
+		if !srv.NetworkReachable(cand.Addr.Network) {
 			continue
 		}
-		tcp := &net.TCPAddr{IP: addrPort.Addr().AsSlice(), Port: int(addrPort.Port())}
 		now := time.Now()
 		var sincePrev time.Duration
 		if !prev.IsZero() {
 			sincePrev = now.Sub(prev)
 		}
-		srv.log.Trace("pip6: runV2Dialer iter", "addr", tcp.String(), "sincePrev", sincePrev)
+		srv.log.Trace("pip6: runV2Dialer iter", "addr", cand.Addr.String(), "sincePrev", sincePrev)
 		prev = now
 		// Fill full-relay slots first; the block-relay-only bucket
 		// fills once the full-relay target (total outbound budget
@@ -1332,8 +1335,8 @@ func (srv *Server) runV2Dialer() {
 			srv.maxDialedConns(), srv.maxBlockRelayDial()) {
 			dial = srv.DialV2BlockRelay
 		}
-		if err := dial(tcp); err != nil {
-			srv.log.Trace("v2 dial failed", "addr", tcp, "err", err)
+		if err := dial(cand.Addr); err != nil {
+			srv.log.Trace("v2 dial failed", "addr", cand.Addr, "err", err)
 			if errors.Is(err, errV2DialCooldown) {
 				select {
 				case <-srv.quit:
@@ -1372,8 +1375,9 @@ func v2DialWantsBlockRelay(dialedOutbound, blockRelayOutbound, maxDialed, maxBlo
 // keys, so the Server's node.ID-keyed peer map can't dedupe on its
 // own — short-circuit here before the TCP connection spends kernel
 // resources on a duplicate handshake.
-func (srv *Server) DialV2(addr *net.TCPAddr) error {
-	return srv.dialV2WithFlags(addr, 0)
+func (srv *Server) DialV2(addr addrman.NetAddr) error {
+	_, err := srv.dialV2WithFlags(addr, 0)
+	return err
 }
 
 // DialV2Manual is DialV2 for operator-initiated dials (admin_dialV2
@@ -1387,8 +1391,9 @@ func (srv *Server) DialV2(addr *net.TCPAddr) error {
 // The operator ban check still applies, the same documented
 // divergence from Core as the v1 static path: setban is an explicit
 // operator statement that outranks a dial request.
-func (srv *Server) DialV2Manual(addr *net.TCPAddr) error {
-	return srv.dialV2WithFlags(addr, staticDialedConn)
+func (srv *Server) DialV2Manual(addr addrman.NetAddr) error {
+	_, err := srv.dialV2WithFlags(addr, staticDialedConn)
+	return err
 }
 
 // DialV2BlockRelay opens a v2-handshake TCP connection like DialV2
@@ -1396,8 +1401,9 @@ func (srv *Server) DialV2Manual(addr *net.TCPAddr) error {
 // at startup to replay anchors.dat — anchor peers are persisted
 // outbound block-relay-only peers, so they should reattach in the
 // same role.
-func (srv *Server) DialV2BlockRelay(addr *net.TCPAddr) error {
-	return srv.dialV2WithFlags(addr, blockRelayConn)
+func (srv *Server) DialV2BlockRelay(addr addrman.NetAddr) error {
+	_, err := srv.dialV2WithFlags(addr, blockRelayConn)
+	return err
 }
 
 // DialV2Feeler opens a v2-handshake TCP connection like DialV2 but
@@ -1405,7 +1411,12 @@ func (srv *Server) DialV2BlockRelay(addr *net.TCPAddr) error {
 // from the dial scheduler's slot and network-group budget and never
 // record an addrman failure on their deliberate short-lived
 // disconnect. Used by the feeler and addrfetch loops.
-func (srv *Server) DialV2Feeler(addr *net.TCPAddr) error {
+//
+// Returns the underlying conn so callers can tear the probe down by
+// closing it after the feeler lifetime — the one teardown that works
+// on every network: a proxied onion peer has no observable (IP,
+// listen-port) an address-keyed disconnect could match.
+func (srv *Server) DialV2Feeler(addr addrman.NetAddr) (net.Conn, error) {
 	return srv.dialV2WithFlags(addr, feelerConn)
 }
 
@@ -1413,17 +1424,24 @@ func (srv *Server) DialV2Feeler(addr *net.TCPAddr) error {
 // the standard (dynDialedConn|v2DialedConn) flag set so the caller
 // can request block-relay-only or other future variants without
 // duplicating the cooldown / self-endpoint / dedup checks.
-func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
-	if addr == nil {
-		return errors.New("v2 dial: nil address")
+func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Conn, error) {
+	if len(addr.Bytes()) == 0 || addr.Port == 0 {
+		return nil, errors.New("v2 dial: invalid address")
 	}
+	// tcp is the IP:port projection, nil for onion targets. The
+	// IP-keyed guards below (netrestrict, banlist, self-endpoint,
+	// dedup, netgroup) apply to it; their onion-side behavior is
+	// annotated case by case.
+	tcp := tcpFromNetAddr(addr)
 	// NetRestrict: the operator's allowlist confines every dial,
 	// exactly as checkDial enforces it on the scheduler path and
 	// checkInboundConn on accept. Without this, a node locked to a
 	// private range still dials arbitrary public IPs from addrman
-	// and DNS seeds.
-	if srv.NetRestrict != nil && addr.IP != nil && !srv.NetRestrict.Contains(addr.IP) {
-		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialRestricted)
+	// and DNS seeds. The list is CIDR-based, so setting it implies
+	// IP-only outbound: non-IP networks are refused outright
+	// (PIP-0007 §4, netrestrict semantics).
+	if srv.NetRestrict != nil && (tcp == nil || !srv.NetRestrict.Contains(tcp.IP)) {
+		return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialRestricted)
 	}
 	// Never make an automatic outbound connection to a banned or
 	// discouraged address. Bitcoin Core gates outbound candidate
@@ -1439,32 +1457,40 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	// strand the dial until restart — same exemption as the v1
 	// static path in checkDial. The ban check stays: setban is an
 	// explicit operator statement.
-	if srv.BanList != nil && addr.IP != nil {
-		banned := srv.BanList.IsBanned(addr.IP) ||
-			(!extraHas(extra, staticDialedConn) && srv.BanList.IsDiscouraged(addr.IP))
+	// Ban / discourage gating is IP-keyed until PIP-0007 phase 4
+	// generalizes banman; onion dials pass through it unchecked.
+	if srv.BanList != nil && tcp != nil {
+		banned := srv.BanList.IsBanned(tcp.IP) ||
+			(!extraHas(extra, staticDialedConn) && srv.BanList.IsDiscouraged(tcp.IP))
 		if banned {
-			srv.addrmanAttemptByTCP(addr, false)
-			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)
+			srv.addrmanAttemptAddr(addr, false)
+			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)
 		}
 	}
 	if !srv.v2DialCooldownCheckAndMark(addr) {
-		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
+		return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)
 	}
-	if srv.IsSelfEndpoint(addr) {
-		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
-		return fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
+	// Self and duplicate detection are (IP, listen-port)-keyed. An
+	// onion target can be neither matched against our own endpoint
+	// (we have no onion identity until phase 3 creates the service)
+	// nor deduped against connected peers (a proxied peer's remote
+	// addr is the proxy); both checks pass onion targets through, and
+	// the cooldown above is what bounds re-dials meanwhile.
+	if tcp != nil {
+		if srv.IsSelfEndpoint(tcp) {
+			srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
+			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
+		}
+		if srv.alreadyConnectedTo(tcp) {
+			// Refresh LastTry without counting a failure. addrman's
+			// Select chance weighting drops ~100x for 10 min once
+			// LastTry is recent, so the iterator stops burning cycles
+			// re-picking an endpoint we already peer with via v1.
+			srv.addrmanAttemptAddr(addr, false)
+			return nil, fmt.Errorf("v2 dial %s: already connected", addr)
+		}
 	}
-	already := srv.alreadyConnectedTo(addr)
-	peerCount := len(srv.Peers())
-	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "alreadyConnected", already, "peers", peerCount, "extra", extra)
-	if already {
-		// Refresh LastTry without counting a failure. addrman's
-		// Select chance weighting drops ~100x for 10 min once
-		// LastTry is recent, so the iterator stops burning cycles
-		// re-picking an endpoint we already peer with via v1.
-		srv.addrmanAttemptByTCP(addr, false)
-		return fmt.Errorf("v2 dial %s: already connected", addr)
-	}
+	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "peers", len(srv.Peers()), "extra", extra)
 	// Network-group diversity for outbound dials. Refuse a second
 	// outbound peer in the same /16 (IPv4) or /32 (IPv6) group so an
 	// attacker can't fill our outbound slots from one network.
@@ -1477,10 +1503,14 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	// The v1/v2 dial scheduler enforces the same rule in checkDial;
 	// this covers runV2Dialer and the anchor replay, which dial
 	// without going through the scheduler.
-	if v2DialSubjectToGroupLimit(extra) {
-		if g := ipNetworkGroupKey(addr.IP); g != "" && srv.outboundGroupOccupied(g) {
-			srv.addrmanAttemptByTCP(addr, false)
-			return fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
+	// Onion targets carry no IP and skip the group rule until the
+	// server-side netgroup learns onion groups in phase 4 — addrman's
+	// own bucket-level group() already limits onion concentration in
+	// candidate selection meanwhile.
+	if v2DialSubjectToGroupLimit(extra) && tcp != nil {
+		if g := ipNetworkGroupKey(tcp.IP); g != "" && srv.outboundGroupOccupied(g) {
+			srv.addrmanAttemptAddr(addr, false)
+			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
 		}
 	}
 	// Dial under quitCtx so Stop interrupts an in-flight connect
@@ -1490,17 +1520,13 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	na, ok := netAddrFromTCP(addr)
-	if !ok {
-		return fmt.Errorf("v2 dial %s: %w", addr, errNoEndpoint)
-	}
-	fd, err := srv.dialConnector().Connect(ctx, na)
+	fd, err := srv.dialConnector().Connect(ctx, addr)
 	if err != nil {
 		// Routing problems on our side (no route to the network, the
 		// proxy leg failed) carry no evidence about the destination
 		// and must not push it toward IsTerrible.
-		srv.addrmanAttemptByTCP(addr, dialCountsAsFailure(err))
-		return fmt.Errorf("v2 dial %s: %w", addr, err)
+		srv.addrmanAttemptAddr(addr, dialCountsAsFailure(err))
+		return nil, fmt.Errorf("v2 dial %s: %w", addr, err)
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
 	// v2DialedConn so pickHandshakeVariant picks the v2 transport.
@@ -1531,14 +1557,14 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 		if !extraHas(extra, feelerConn) {
 			var reason DiscReason
 			if errors.As(err, &reason) {
-				srv.addrmanAttemptByTCP(addr, false)
+				srv.addrmanAttemptAddr(addr, false)
 			} else {
-				srv.addrmanAttemptByTCP(addr, true)
+				srv.addrmanAttemptAddr(addr, true)
 			}
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return fd, nil
 }
 
 // extraHas reports whether the extra flag set includes f.
@@ -1658,28 +1684,17 @@ func blockRelayOutboundCountIn(peers map[enode.ID]*Peer) int {
 	return n
 }
 
-// addrmanAttemptByTCP records a dial attempt in addrman, keyed by
-// (IP, port). countFailure=true bumps the failure counter so
-// IsTerrible can eventually evict unreachable entries; pass false to
-// update only LastTry (throttles re-selection without signalling
-// unreachability — used when we short-circuit a dial because we're
-// already peered with the endpoint via a different transport).
-func (srv *Server) addrmanAttemptByTCP(addr *net.TCPAddr, countFailure bool) {
-	if srv.addrbook == nil || addr == nil || addr.IP == nil {
+// addrmanAttempt records a dial attempt in addrman. countFailure=true
+// bumps the failure counter so IsTerrible can eventually evict
+// unreachable entries; pass false to update only LastTry (throttles
+// re-selection without signalling unreachability — used when we
+// short-circuit a dial because we're already peered with the
+// endpoint via a different transport).
+func (srv *Server) addrmanAttemptAddr(addr addrman.NetAddr, countFailure bool) {
+	if srv.addrbook == nil {
 		return
 	}
-	var netID addrman.NetID
-	var bytes []byte
-	if v4 := addr.IP.To4(); v4 != nil {
-		netID, bytes = addrman.NetIPv4, v4
-	} else {
-		netID, bytes = addrman.NetIPv6, addr.IP.To16()
-	}
-	na, err := addrman.NewNetAddr(netID, bytes, uint16(addr.Port))
-	if err != nil {
-		return
-	}
-	srv.addrbook.Attempt(na, countFailure, time.Now())
+	srv.addrbook.Attempt(addr, countFailure, time.Now())
 }
 
 // v2DialCooldown is the minimum interval between successive v2 dial
@@ -1724,7 +1739,7 @@ var errV2DialGroupOccupied = errors.New("v2 dial network group occupied")
 // timestamp if the cooldown has elapsed; returns false otherwise.
 // Serialized so concurrent callers (runV2Dialer, dial-scheduler v2
 // branch, admin RPC) agree on the decision.
-func (srv *Server) v2DialCooldownCheckAndMark(addr *net.TCPAddr) bool {
+func (srv *Server) v2DialCooldownCheckAndMark(addr addrman.NetAddr) bool {
 	key := addr.String()
 	now := time.Now()
 	srv.v2DialRecentMu.Lock()
@@ -1800,6 +1815,18 @@ func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	// Same port: self if the IP matches the advertised one OR is
 	// loopback (127.0.0.1 -> own listener regardless of advertised IP).
 	return addr.IP.Equal(n.IP()) || addr.IP.IsLoopback()
+}
+
+// isSelfNetAddr adapts IsSelfEndpoint to addrman.NetAddr candidates
+// (the V2Iter self-gate). Onion targets never match: the node has no
+// onion identity to compare against until phase 3 creates the service,
+// and a self-dial through the proxy is caught by the Hello nonce
+// self-connect check like any other v2 session.
+func (srv *Server) isSelfNetAddr(addr addrman.NetAddr) bool {
+	if tcp := tcpFromNetAddr(addr); tcp != nil {
+		return srv.IsSelfEndpoint(tcp)
+	}
+	return false
 }
 
 // peerListenAddr returns the peer's effective (IP, listen-port) for
@@ -2177,11 +2204,15 @@ func (srv *Server) replayAnchors() {
 	}
 	srv.log.Info("anchors: replaying block-relay-only peers", "count", len(addrs))
 	for _, a := range addrs {
+		na, ok := netAddrFromTCP(a)
+		if !ok {
+			continue
+		}
 		srv.loopWG.Add(1)
 		go func() {
 			defer srv.loopWG.Done()
-			if err := srv.DialV2BlockRelay(a); err != nil {
-				srv.log.Trace("anchor dial failed", "addr", a, "err", err)
+			if err := srv.DialV2BlockRelay(na); err != nil {
+				srv.log.Trace("anchor dial failed", "addr", na, "err", err)
 			}
 		}()
 	}

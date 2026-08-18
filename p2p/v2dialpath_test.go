@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -44,16 +45,37 @@ func TestDialV2RejectsNetRestrict(t *testing.T) {
 	}
 	srv.log = logging.Root()
 
-	outside := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 50), Port: 32110}
+	outside := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(192, 0, 2, 50), Port: 32110})
 	if err := srv.DialV2(outside); !errors.Is(err, errV2DialRestricted) {
 		t.Fatalf("DialV2 outside netrestrict = %v, want errV2DialRestricted", err)
 	}
 	if err := srv.DialV2BlockRelay(outside); !errors.Is(err, errV2DialRestricted) {
 		t.Fatalf("DialV2BlockRelay outside netrestrict = %v, want errV2DialRestricted", err)
 	}
-	if err := srv.DialV2Feeler(outside); !errors.Is(err, errV2DialRestricted) {
+	if _, err := srv.DialV2Feeler(outside); !errors.Is(err, errV2DialRestricted) {
 		t.Fatalf("DialV2Feeler outside netrestrict = %v, want errV2DialRestricted", err)
 	}
+
+	// Netrestrict is CIDR-based, so setting it implies IP-only
+	// outbound: onion targets are refused outright (PIP-0007 §4).
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.DialV2(onion); !errors.Is(err, errV2DialRestricted) {
+		t.Fatalf("DialV2 onion under netrestrict = %v, want errV2DialRestricted", err)
+	}
+}
+
+// testNetAddr converts a *net.TCPAddr into the addrman.NetAddr form
+// the DialV2 family takes.
+func testNetAddr(t *testing.T, tcp *net.TCPAddr) addrman.NetAddr {
+	t.Helper()
+	na, ok := netAddrFromTCP(tcp)
+	if !ok {
+		t.Fatalf("netAddrFromTCP(%v) failed", tcp)
+	}
+	return na
 }
 
 // TestDialedOutboundCountIn — the v2 dialer's budget counts live
@@ -182,20 +204,21 @@ func TestDialV2ManualSkipsDiscourage(t *testing.T) {
 	}
 	defer srv.Stop()
 
+	targetNA := testNetAddr(t, target)
 	// Automatic dial: rejected by the discourage filter.
-	if err := srv.DialV2(target); !errors.Is(err, errV2DialBanned) {
+	if err := srv.DialV2(targetNA); !errors.Is(err, errV2DialBanned) {
 		t.Fatalf("automatic DialV2 to discouraged = %v, want errV2DialBanned", err)
 	}
 	// Manual dial: passes the filter (and then fails at TCP connect,
 	// which is fine — the gate under test is before the dial).
-	if err := srv.DialV2Manual(target); errors.Is(err, errV2DialBanned) {
+	if err := srv.DialV2Manual(targetNA); errors.Is(err, errV2DialBanned) {
 		t.Fatalf("manual DialV2 to discouraged = %v, want the ban gate skipped", err)
 	}
 	// An explicit ban still blocks the manual path.
 	if err := banlist.Ban(target.IP, time.Hour, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.DialV2Manual(target); !errors.Is(err, errV2DialBanned) {
+	if err := srv.DialV2Manual(targetNA); !errors.Is(err, errV2DialBanned) {
 		t.Fatalf("manual DialV2 to banned = %v, want errV2DialBanned", err)
 	}
 }

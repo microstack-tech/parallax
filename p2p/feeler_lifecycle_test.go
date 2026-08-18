@@ -9,9 +9,9 @@ import (
 // TestFeelerDialLifecycle — end-to-end feeler probe: DialV2Feeler
 // performs a real v2 handshake against a listening server, the
 // resulting peer attaches carrying the feeler flag, and
-// disconnectFeelerAfter tears it down once the feeler lifetime
-// elapses. This is the probe cycle runOneFeeler drives in production
-// (address selection is unit-tested separately via pickFeelerAddr).
+// closeFeelerAfter tears it down once the feeler lifetime elapses.
+// This is the probe cycle runOneFeeler drives in production (address
+// selection is unit-tested separately via pickFeelerAddr).
 func TestFeelerDialLifecycle(t *testing.T) {
 	target := startTestServer(t, &newkey().PublicKey, nil)
 	defer target.Stop()
@@ -22,9 +22,13 @@ func TestFeelerDialLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatalf("target listener addr is %T", target.listener.Addr())
 	}
-	tcp := &net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: addr.Port}
+	na, ok := netAddrFromTCP(&net.TCPAddr{IP: net.IP{127, 0, 0, 1}, Port: addr.Port})
+	if !ok {
+		t.Fatal("netAddrFromTCP failed")
+	}
 
-	if err := dialer.DialV2Feeler(tcp); err != nil {
+	fd, err := dialer.DialV2Feeler(na)
+	if err != nil {
 		t.Fatalf("DialV2Feeler: %v", err)
 	}
 	// The peer must be attached and flagged as a feeler.
@@ -47,8 +51,8 @@ func TestFeelerDialLifecycle(t *testing.T) {
 		t.Fatal("feeler peer classified as inbound")
 	}
 
-	// The timed teardown must find and drop exactly the feeler peer.
-	dialer.disconnectFeelerAfter(tcp, 50*time.Millisecond)
+	// The timed teardown must drop the feeler peer.
+	dialer.closeFeelerAfter(fd, 50*time.Millisecond)
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if len(dialer.Peers()) == 0 {
 			return

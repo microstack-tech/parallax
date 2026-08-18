@@ -29,6 +29,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 	"github.com/ParallaxProtocol/parallax/util/mclock"
@@ -657,7 +658,7 @@ func TestDialSchedV2HandoffAccounting(t *testing.T) {
 		rand:           rand.New(rand.NewSource(0x2222)),
 		dialer:         newDialTestDialer(),
 		v2Predicate:    func(*enode.Node) bool { return true },
-		v2Dial: func(addr *net.TCPAddr) error {
+		v2Dial: func(addr addrman.NetAddr) error {
 			started <- addr.String()
 			return <-release
 		},

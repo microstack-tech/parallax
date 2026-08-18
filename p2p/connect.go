@@ -84,9 +84,17 @@ func (c *netConnector) Connect(ctx context.Context, addr addrman.NetAddr) (net.C
 		}
 		d := &net.Dialer{Timeout: c.timeout}
 		return d.DialContext(ctx, "tcp", ap.String())
+	case addrman.NetTorV3:
+		// Onion targets only ever dial as hostnames through a SOCKS5
+		// proxy — the Tor daemon performs the rendezvous, and the v3
+		// address's embedded ed25519 key authenticates the endpoint.
+		pr := c.policy.proxyFor(addrman.NetTorV3)
+		if pr == nil {
+			return nil, fmt.Errorf("%w: %s", errUnreachableNetwork, addr.Network)
+		}
+		return c.proxyDial(ctx, pr, addr.OnionHostname(), addr.Port)
 	}
-	// Tor v3 dialing arrives with PIP-0007 phase 2; I2P/CJDNS are
-	// out of scope entirely.
+	// I2P/CJDNS are out of PIP-0007's scope entirely.
 	return nil, fmt.Errorf("%w: %s", errUnreachableNetwork, addr.Network)
 }
 

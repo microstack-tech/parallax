@@ -117,19 +117,21 @@ func (srv *Server) runOneFeeler() {
 	if !ok {
 		return
 	}
-
-	tcp := tcpFromNetAddr(addr)
-	if tcp == nil {
+	// Skip networks the proxy policy has no route to — Core's feeler
+	// also draws again when Select hands it an unreachable address.
+	if !srv.NetworkReachable(addr.Network) {
 		return
 	}
-	if srv.IsSelfEndpoint(tcp) {
-		return
-	}
-	if srv.alreadyConnectedTo(tcp) {
-		// Refresh LastTry without counting a failure: we already
-		// peer with this endpoint.
-		srv.addrbook.Attempt(addr, false, time.Now())
-		return
+	if tcp := tcpFromNetAddr(addr); tcp != nil {
+		if srv.IsSelfEndpoint(tcp) {
+			return
+		}
+		if srv.alreadyConnectedTo(tcp) {
+			// Refresh LastTry without counting a failure: we already
+			// peer with this endpoint.
+			srv.addrbook.Attempt(addr, false, time.Now())
+			return
+		}
 	}
 
 	// DialV2Feeler handles the full v2 handshake, runs the
@@ -138,18 +140,19 @@ func (srv *Server) runOneFeeler() {
 	// The feeler flag excludes the resulting peer from the dial
 	// budget and suppresses the false addrman failure that its
 	// deliberate disconnect would otherwise record.
-	if err := srv.DialV2Feeler(tcp); err != nil {
+	fd, err := srv.DialV2Feeler(addr)
+	if err != nil {
 		// Feeler dial failure isn't a hard error from the operator's
 		// POV — the whole point is to probe addrs that may be
 		// unreachable. Trace-level only.
 		if !errors.Is(err, errV2DialCooldown) && !errors.Is(err, errV2DialSelf) {
-			srv.log.Trace("feeler dial failed", "addr", tcp, "err", err)
+			srv.log.Trace("feeler dial failed", "addr", addr, "err", err)
 		}
 		return
 	}
 	// Successful peer-attach already invoked addrmanGood. Schedule
-	// a disconnect so the feeler doesn't squat on an outbound slot.
-	go srv.disconnectFeelerAfter(tcp, feelerLifetime)
+	// a teardown so the feeler doesn't squat on an outbound slot.
+	srv.closeFeelerAfter(fd, feelerLifetime)
 }
 
 // pickFeelerAddr returns one address to feeler-dial. Prefers
@@ -166,34 +169,22 @@ func pickFeelerAddr(book *addrman.AddrMan) (addrman.NetAddr, bool) {
 	return addrman.NetAddr{}, false
 }
 
-// disconnectFeelerAfter waits for the feeler lifetime then asks the
-// matching feeler peer to drop. Best-effort: if the peer already
-// disconnected (handshake refusal, peer eviction) the lookup just
-// returns nothing.
-//
-// The match requires the feelerConn flag in addition to the
-// endpoint: if the same endpoint has meanwhile been connected via a
-// real dial (dyn, static, or an inbound from the same host), that
-// legitimate peer must not be torn down by the feeler's timer.
-func (srv *Server) disconnectFeelerAfter(target *net.TCPAddr, after time.Duration) {
-	select {
-	case <-srv.quit:
-		return
-	case <-time.After(after):
-	}
-	for _, p := range srv.Peers() {
-		if !p.rw.is(feelerConn) {
-			continue
+// closeFeelerAfter tears a feeler probe down after its lifetime by
+// closing its transport conn. Closing the fd is the one teardown that
+// works on every network: a proxied onion peer exposes no (IP,
+// listen-port) an address-keyed disconnect could match, and the
+// feelerConn flag already suppresses the addrman failure the abrupt
+// close would otherwise record. Cancelled on server stop (the peer
+// teardown path owns the conn then).
+func (srv *Server) closeFeelerAfter(fd net.Conn, after time.Duration) {
+	timer := time.AfterFunc(after, func() { fd.Close() })
+	go func() {
+		select {
+		case <-srv.quit:
+			timer.Stop()
+		case <-time.After(after):
 		}
-		la, ok := srv.peerListenAddr(p)
-		if !ok {
-			continue
-		}
-		if la.IP.Equal(target.IP) && la.Port == target.Port {
-			p.Disconnect(DiscRequested)
-			return
-		}
-	}
+	}()
 }
 
 // feelerJitter returns a small random offset added to feelerInterval
@@ -205,9 +196,10 @@ func feelerJitter() time.Duration {
 	return time.Duration(mrand.Int63n(int64(30 * time.Second)))
 }
 
-// tcpFromNetAddr projects an addrman NetAddr onto a *net.TCPAddr
-// for dial-API consumption. Returns nil for non-IP networks (Tor /
-// I2P / CJDNS — Parallax doesn't dial those today).
+// tcpFromNetAddr projects an addrman NetAddr onto a *net.TCPAddr for
+// the IP-keyed helper surface (netrestrict, banlist, self-endpoint,
+// dedup, netgroup). Returns nil for non-IP networks — callers treat
+// nil as "this check does not apply".
 func tcpFromNetAddr(addr addrman.NetAddr) *net.TCPAddr {
 	switch addr.Network {
 	case addrman.NetIPv4:
@@ -257,16 +249,21 @@ func (srv *Server) runAddrFetch() {
 		if srv.alreadyConnectedTo(tcp) {
 			continue
 		}
+		na, ok := netAddrFromTCP(tcp)
+		if !ok {
+			continue
+		}
 		// Best-effort: ignore errors. Each successful dial yields
 		// a Peers exchange via the disc protocol's outbound
 		// greeting (RequestPeers), which warms addrbook. Tagged as a
 		// feeler so it neither occupies a real outbound slot nor
 		// records a false addrman failure on its short-lived
 		// disconnect.
-		if err := srv.DialV2Feeler(tcp); err != nil {
-			srv.log.Trace("addrfetch dial failed", "addr", tcp, "err", err)
+		fd, err := srv.DialV2Feeler(na)
+		if err != nil {
+			srv.log.Trace("addrfetch dial failed", "addr", na, "err", err)
 			continue
 		}
-		go srv.disconnectFeelerAfter(tcp, addrFetchLifetime)
+		srv.closeFeelerAfter(fd, addrFetchLifetime)
 	}
 }
