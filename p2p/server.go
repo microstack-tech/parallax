@@ -796,11 +796,10 @@ func (srv *Server) Stop() {
 		return
 	}
 	srv.running = false
-	if srv.torControl != nil {
-		// Tor drops the ephemeral onion service with the control
-		// connection; nothing else to unwind.
-		srv.torControl.Stop()
-	}
+	// Captured here, stopped after the lock is released: the
+	// controller's shutdown is prompt and deterministic, but nothing
+	// that waits on another goroutine belongs under srv.lock.
+	torControl := srv.torControl
 	if srv.listener != nil {
 		// this unblocks listener Accept
 		srv.listener.Close()
@@ -816,6 +815,11 @@ func (srv *Server) Stop() {
 		srv.quitCancel()
 	}
 	srv.lock.Unlock()
+	if torControl != nil {
+		// Tor drops the ephemeral onion service with the control
+		// connection; nothing else to unwind.
+		torControl.Stop()
+	}
 	srv.loopWG.Wait()
 
 	// Persist addrbook on shutdown. Done after loopWG so no inflight

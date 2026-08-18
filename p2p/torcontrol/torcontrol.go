@@ -18,6 +18,7 @@ package torcontrol
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	crand "crypto/rand"
 	"crypto/sha256"
@@ -116,11 +117,15 @@ type Controller struct {
 	once sync.Once
 	wg   sync.WaitGroup
 
-	// dialFunc is a test seam defaulting to net.DialTimeout.
-	dialFunc func(addr string, timeout time.Duration) (net.Conn, error)
+	// ctx is cancelled by Stop. It aborts an in-flight dial and,
+	// through a per-session watcher, closes the live control
+	// connection — the only way to interrupt the deadline-less hold
+	// loop.
+	ctx    context.Context
+	cancel context.CancelFunc
 
-	mu   sync.Mutex
-	conn net.Conn // live control connection, closed on Stop
+	// dialFunc is a test seam defaulting to a context-aware dial.
+	dialFunc func(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error)
 }
 
 // New builds a Controller; call Start to begin.
@@ -134,12 +139,16 @@ func New(cfg Config) *Controller {
 	if cfg.initialBackoff <= 0 {
 		cfg.initialBackoff = reconnectStart
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Controller{
-		cfg:  cfg,
-		log:  cfg.Log,
-		quit: make(chan struct{}),
-		dialFunc: func(addr string, timeout time.Duration) (net.Conn, error) {
-			return net.DialTimeout("tcp", addr, timeout)
+		cfg:    cfg,
+		log:    cfg.Log,
+		quit:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
+		dialFunc: func(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+			d := &net.Dialer{Timeout: timeout}
+			return d.DialContext(ctx, "tcp", addr)
 		},
 	}
 }
@@ -154,12 +163,16 @@ func (c *Controller) Start() {
 // onion service disappears with the control connection (Tor discards
 // ephemeral services), matching Core's shutdown behavior.
 func (c *Controller) Stop() {
-	c.once.Do(func() { close(c.quit) })
-	c.mu.Lock()
-	if c.conn != nil {
-		c.conn.Close()
-	}
-	c.mu.Unlock()
+	// Cancelling first aborts any in-flight dial and, via each
+	// session's watcher, closes the live connection — so a session
+	// parked in the deadline-less hold loop always unblocks. There is
+	// no window in which Stop can find "no connection yet" and leave
+	// a session running: the watcher is armed from the cancellable
+	// context, not from state Stop has to observe.
+	c.once.Do(func() {
+		c.cancel()
+		close(c.quit)
+	})
 	c.wg.Wait()
 }
 
@@ -209,19 +222,22 @@ func (c *Controller) stopping() bool {
 // whether the TCP connect succeeded; established whether ADD_ONION
 // succeeded before the session ended.
 func (c *Controller) session() (connected, established bool, err error) {
-	conn, err := c.dialFunc(c.cfg.ControlAddr, commandTimeout)
+	conn, err := c.dialFunc(c.ctx, c.cfg.ControlAddr, commandTimeout)
 	if err != nil {
 		return false, false, fmt.Errorf("connect %s: %w", c.cfg.ControlAddr, err)
 	}
-	c.mu.Lock()
-	c.conn = conn
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		c.conn = nil
-		c.mu.Unlock()
-		conn.Close()
+	// Watcher: closing the conn is what unblocks reads that carry no
+	// deadline (the hold loop below). Torn down with the session.
+	sessionDone := make(chan struct{})
+	defer close(sessionDone)
+	go func() {
+		select {
+		case <-c.ctx.Done():
+			conn.Close()
+		case <-sessionDone:
+		}
 	}()
+	defer conn.Close()
 	br := bufio.NewReaderSize(conn, 4096)
 
 	if err := c.authenticate(conn, br); err != nil {

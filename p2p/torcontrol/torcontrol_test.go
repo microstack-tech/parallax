@@ -18,6 +18,7 @@ package torcontrol
 
 import (
 	"bufio"
+	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -445,5 +446,53 @@ func TestParseMapping(t *testing.T) {
 	got = parseMapping(`ServiceID=` + testServiceID)
 	if got["ServiceID"] != testServiceID {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// TestStopDuringHoldLoop — Stop must return promptly while a session
+// sits in the deadline-less hold loop after ADD_ONION. Regression: the
+// loop's reads carry no deadline, so only closing the connection can
+// unblock them.
+func TestStopDuringHoldLoop(t *testing.T) {
+	f := newFakeControl(t, "NULL")
+	f.serve(false)
+	cfg, services := testConfig(t, f)
+
+	c := New(cfg)
+	c.Start()
+	waitFor(t, "service", func() bool { return services.count() == 1 })
+
+	done := make(chan struct{})
+	go func() { c.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop deadlocked while the session held the control connection")
+	}
+}
+
+// TestStopDuringDial — Stop must return promptly when it lands while
+// the session is still connecting, including the window before any
+// connection exists to close. Regression: Stop used to close only a
+// stored conn, so a session mid-dial ran on and parked in the hold
+// loop forever, deadlocking node shutdown.
+func TestStopDuringDial(t *testing.T) {
+	c := New(Config{ControlAddr: "127.0.0.1:1", initialBackoff: time.Millisecond})
+	dialing := make(chan struct{})
+	var once sync.Once
+	c.dialFunc = func(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+		once.Do(func() { close(dialing) })
+		<-ctx.Done() // block exactly as a black-holed TCP connect would
+		return nil, ctx.Err()
+	}
+	c.Start()
+	<-dialing
+
+	done := make(chan struct{})
+	go func() { c.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop deadlocked while the session was dialing")
 	}
 }
