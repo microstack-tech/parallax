@@ -53,17 +53,35 @@ type V2Iter struct {
 	closeOnce  sync.Once
 	maxBackoff time.Duration
 	isSelf     IsSelfFunc
+	reachable  ReachableFunc
 }
+
+// ReachableFunc reports whether the local node has an outbound route
+// to a BIP155 network. V2Iter skips candidates on networks it cannot
+// dial, counting them against the same idle-backoff budget as any
+// other skip — without that, an addrbook full of undialable entries
+// (onion entries on a node with no Tor route) makes Next() return
+// instantly forever and burns a core. nil treats every network as
+// reachable.
+type ReachableFunc func(NetID) bool
 
 // NewV2Iter builds an iterator yielding only KeyType=0x00 entries.
 // Parallels NewNodeIter. isSelf may be nil when the caller has no
 // notion of self (e.g., unit tests against a bare AddrMan); when
 // supplied, candidates that match are silently skipped.
-func NewV2Iter(m *AddrMan, maxBackoff time.Duration, isSelf IsSelfFunc) *V2Iter {
+// reachable may be nil, in which case every network is considered
+// dialable.
+func NewV2Iter(m *AddrMan, maxBackoff time.Duration, isSelf IsSelfFunc, reachable ReachableFunc) *V2Iter {
 	if maxBackoff <= 0 {
 		maxBackoff = 250 * time.Millisecond
 	}
-	return &V2Iter{m: m, closed: make(chan struct{}), maxBackoff: maxBackoff, isSelf: isSelf}
+	return &V2Iter{
+		m:          m,
+		closed:     make(chan struct{}),
+		maxBackoff: maxBackoff,
+		isSelf:     isSelf,
+		reachable:  reachable,
+	}
 }
 
 // Next advances to the next v2 dial candidate. Blocks until one is
@@ -85,11 +103,20 @@ func (it *V2Iter) Next() bool {
 		if ok {
 			info := it.m.Lookup(addr)
 			if info != nil && info.KeyType == 0x00 && info.Addr.Valid() {
-				// Valid() admits IP and Tor v3 candidates alike; the
-				// dial path routes each network through its configured
-				// connector and refuses the ones without a route
-				// (PIP-0007).
-				//
+				// Valid() admits IP and Tor v3 candidates alike, so
+				// candidates on networks this node cannot route are
+				// skipped here — counting against the backoff budget,
+				// because Select keeps offering them at full weight
+				// (no dial means no Attempt, so LastTry never ages
+				// them down) and a bare retry would spin.
+				if it.reachable != nil && !it.reachable(addr.Network) {
+					logging.Trace("pip6: V2Iter skip (unreachable network)", "addr", addr.String())
+					skips++
+					if skips >= maxSkipsBeforeBackoff {
+						goto idleBackoff
+					}
+					continue
+				}
 				// Skip the local node's own endpoint. The
 				// disc-protocol quorum can ingest our own
 				// observed external IP into addrman; without

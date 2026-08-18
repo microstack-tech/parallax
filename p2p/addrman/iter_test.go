@@ -191,7 +191,7 @@ func TestV2IterSkipsSelf(t *testing.T) {
 		return addr.Equal(selfAddr)
 	}
 
-	it := NewV2Iter(m, 10*time.Millisecond, isSelf)
+	it := NewV2Iter(m, 10*time.Millisecond, isSelf, nil)
 	defer it.Close()
 
 	got := make(chan NetAddr, 1)
@@ -232,7 +232,7 @@ func TestV2IterNilSelfFn(t *testing.T) {
 		t.Fatal("AddOne failed")
 	}
 
-	it := NewV2Iter(m, 10*time.Millisecond, nil)
+	it := NewV2Iter(m, 10*time.Millisecond, nil, nil)
 	defer it.Close()
 
 	got := make(chan NetAddr, 1)
@@ -251,5 +251,61 @@ func TestV2IterNilSelfFn(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("V2Iter did not yield with nil isSelf")
+	}
+}
+
+// TestV2IterUnreachableBacksOff — candidates on networks the node
+// cannot route must count against the idle-backoff budget, not spin.
+// Regression: without a dial they never get an Attempt, so LastTry
+// never ages them down and Select keeps returning them at full
+// weight; a bare retry pegged a core forever.
+func TestV2IterUnreachableBacksOff(t *testing.T) {
+	m, err := New(Deterministic(21))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An addrbook holding only onion entries.
+	for i := range 8 {
+		var pub [32]byte
+		// Vary the top nibble: onion netgroups are the first 4 bits,
+		// so same-nibble keys would collide into one bucket.
+		pub[0] = byte(i << 4)
+		onion, err := NewNetAddr(NetTorV3, pub[:], 32110)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.AddOne(onion, 0x00, nil, time.Now(), onion, SourceTCPGossip, 0) {
+			t.Fatalf("AddOne %d failed", i)
+		}
+	}
+	// No Tor route: every candidate is unreachable.
+	it := NewV2Iter(m, 20*time.Millisecond, nil, func(n NetID) bool { return n != NetTorV3 })
+	defer it.Close()
+
+	done := make(chan bool, 1)
+	go func() { done <- it.Next() }()
+	select {
+	case <-done:
+		t.Fatal("Next returned a candidate on an unreachable network")
+	case <-time.After(150 * time.Millisecond):
+		// Blocked in backoff, as intended.
+	}
+
+	// With the route present the same entries are emitted.
+	it2 := NewV2Iter(m, 20*time.Millisecond, nil, func(NetID) bool { return true })
+	defer it2.Close()
+	got := make(chan NetAddr, 1)
+	go func() {
+		if it2.Next() {
+			got <- it2.Candidate().Addr
+		}
+	}()
+	select {
+	case a := <-got:
+		if a.Network != NetTorV3 {
+			t.Fatalf("emitted %v, want a Tor v3 candidate", a)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reachable onion candidate never emitted")
 	}
 }
