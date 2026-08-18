@@ -19,6 +19,8 @@ package p2p
 import (
 	"bytes"
 	"net"
+
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 )
 
 // Network-group prefix lengths. Mirrors Bitcoin Core's
@@ -38,6 +40,7 @@ const (
 const (
 	netGroupTagIPv4    byte = 0x01
 	netGroupTagIPv6    byte = 0x02
+	netGroupTagOnion   byte = 0x04 // matches the BIP155 network id
 	netGroupTagUnknown byte = 0x00
 )
 
@@ -96,6 +99,29 @@ func tunneledIPv4(v6 net.IP) net.IP {
 	return nil
 }
 
+// networkGroupForOnion returns the group bytes for a Tor v3 address:
+// the top 4 bits of the service pubkey, mirroring addrman's group()
+// (Bitcoin netgroup.cpp:52-53). Onion addresses are cheap to mint, so
+// the grouping is weaker than IP space — the same trade-off Core
+// accepts.
+func networkGroupForOnion(a addrman.NetAddr) []byte {
+	return []byte{netGroupTagOnion, a.Addr[0] | 0x0F}
+}
+
+// groupKeyForNetAddr renders the dial-target network-group key used
+// by the outbound diversity accounting. IP targets share
+// ipNetworkGroupKey's loopback/link-local exemption; onion targets
+// use the top-4-bits rule. Empty for exempt or ungroupable targets.
+func groupKeyForNetAddr(a addrman.NetAddr) string {
+	if tcp := tcpFromNetAddr(a); tcp != nil {
+		return ipNetworkGroupKey(tcp.IP)
+	}
+	if a.Network == addrman.NetTorV3 {
+		return string(networkGroupForOnion(a))
+	}
+	return ""
+}
+
 // NetworkGroup returns this peer's cached network-group bytes,
 // computed once at attach time from the peer's RemoteAddr.IP.
 // Returns nil for peers without a TCP RemoteAddr (test pipes,
@@ -113,7 +139,27 @@ func (p *Peer) NetworkGroup() []byte {
 // Called from server.launchPeer after the conn's RemoteAddr is
 // known. Idempotent: a second call with the same address is a
 // no-op (the field stores the same bytes).
+//
+// Outbound conns prefer the dialed target over the socket's
+// RemoteAddr: a proxied conn's socket peer is the SOCKS5 proxy, and
+// without this every proxied peer would collapse into the proxy's
+// group — Core computes eviction/diversity groups from CNode::addr
+// (the target) for the same reason. Onion targets group by the
+// top-4-bits rule; inbound onion streams keep the loopback group the
+// Tor daemon delivers them from, as in Core.
 func (p *Peer) computeAndCacheNetworkGroup() {
+	if t := p.rw.dialedTarget; t.Network != 0 {
+		var g []byte
+		if t.Network == addrman.NetTorV3 {
+			g = networkGroupForOnion(t)
+		} else if tcp := tcpFromNetAddr(t); tcp != nil {
+			g = NetworkGroupForIP(tcp.IP)
+		}
+		if g != nil {
+			p.networkGroup.Store(&g)
+			return
+		}
+	}
 	pra, ok := p.rw.fd.RemoteAddr().(*net.TCPAddr)
 	if !ok {
 		return

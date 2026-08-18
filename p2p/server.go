@@ -533,6 +533,12 @@ type conn struct {
 	caps  []Cap      // valid after the protocol handshake
 	name  string     // valid after the protocol handshake
 
+	// dialedTarget is the address an outbound v2 dial was aimed at
+	// (zero for inbound and legacy dials). Group-diversity accounting
+	// prefers it over fd.RemoteAddr, which for proxied conns is the
+	// SOCKS5 proxy rather than the peer. PIP-0007 §4.
+	dialedTarget addrman.NetAddr
+
 	// evicted records that this connection already triggered a
 	// successful inbound eviction at an earlier checkpoint. The
 	// admission checks run twice per connection (post-handshake and
@@ -1581,12 +1587,11 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	// The v1/v2 dial scheduler enforces the same rule in checkDial;
 	// this covers runV2Dialer and the anchor replay, which dial
 	// without going through the scheduler.
-	// Onion targets carry no IP and skip the group rule until the
-	// server-side netgroup learns onion groups in phase 4 — addrman's
-	// own bucket-level group() already limits onion concentration in
-	// candidate selection meanwhile.
-	if v2DialSubjectToGroupLimit(extra) && tcp != nil {
-		if g := ipNetworkGroupKey(tcp.IP); g != "" && srv.outboundGroupOccupied(g) {
+	// The group key comes from the dial target — onion targets group
+	// by the top-4-bits rule, and proxied IP targets keep their real
+	// group rather than the proxy's.
+	if v2DialSubjectToGroupLimit(extra) {
+		if g := groupKeyForNetAddr(addr); g != "" && srv.outboundGroupOccupied(g) {
 			srv.addrmanAttemptAddr(addr, false)
 			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialGroupOccupied)
 		}
@@ -1627,7 +1632,7 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	if srv.netpol.proxyFor(addr.Network) != nil {
 		flags |= proxiedConn
 	}
-	if err := srv.SetupConn(fd, flags, nil); err != nil {
+	if err := srv.setupConnTarget(fd, flags, nil, addr); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
 		// object was constructed, so the delpeer path never runs
 		// and addrman never learns the entry is unreachable. Record
@@ -1691,6 +1696,14 @@ func (srv *Server) outboundGroupOccupied(group string) bool {
 func outboundGroupOccupiedIn(peers map[enode.ID]*Peer, group string) bool {
 	for _, p := range peers {
 		if p.rw.is(inboundConn) || p.rw.is(feelerConn) {
+			continue
+		}
+		// Prefer the dialed target: a proxied peer's RemoteAddr is
+		// the SOCKS5 proxy, and an onion peer has no IP at all.
+		if t := p.rw.dialedTarget; t.Network != 0 {
+			if groupKeyForNetAddr(t) == group {
+				return true
+			}
 			continue
 		}
 		ra, ok := p.RemoteAddr().(*net.TCPAddr)
@@ -3095,8 +3108,16 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
+	return srv.setupConnTarget(fd, flags, dialDest, addrman.NetAddr{})
+}
+
+// setupConnTarget is SetupConn carrying the outbound dial target so
+// group-diversity accounting can use the real destination instead of
+// a proxied socket's RemoteAddr. The v2 dial path is its only caller
+// with a non-zero target.
+func (srv *Server) setupConnTarget(fd net.Conn, flags connFlag, dialDest *enode.Node, target addrman.NetAddr) error {
 	flags = srv.classifyInboundNetwork(fd, flags)
-	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
+	c := &conn{fd: fd, flags: flags, cont: make(chan error), dialedTarget: target}
 	variant := srv.pickHandshakeVariant(fd, flags, dialDest)
 	switch variant {
 	case handshakeVariantV2:
