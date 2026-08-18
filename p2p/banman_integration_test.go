@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/banman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
@@ -89,6 +90,20 @@ func TestDialV2RejectsBannedIP(t *testing.T) {
 	}
 	if err := srv.DialV2(testNetAddr(t, &net.TCPAddr{IP: discouragedIP, Port: 32110})); !errors.Is(err, errV2DialBanned) {
 		t.Fatalf("DialV2 to discouraged IP = %v, want errV2DialBanned", err)
+	}
+
+	// Onion targets hit the exact-host ban gate before any socket
+	// opens (PIP-0007 §4).
+	const bannedOnion = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion"
+	if err := bm.BanHost(bannedOnion, 0, banman.ReasonManual); err != nil {
+		t.Fatalf("BanHost: %v", err)
+	}
+	onionAddr, err := addrman.ParseOnion(bannedOnion, 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.DialV2(onionAddr); !errors.Is(err, errV2DialBanned) {
+		t.Fatalf("DialV2 to banned onion = %v, want errV2DialBanned", err)
 	}
 }
 

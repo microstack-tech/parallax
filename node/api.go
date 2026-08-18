@@ -301,6 +301,38 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 	if bm == nil {
 		return false, errors.New("ban subsystem is not initialized")
 	}
+	// Onion targets (PIP-0007 §4): exact-host bans on the bare
+	// "<base32>.onion" name. No subnet form exists, and no live-peer
+	// kick is possible — inbound onion streams arrive from the local
+	// Tor daemon and can't be attributed to an onion address; the ban
+	// is enforced at the outbound dial gate.
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(subnet)), ".onion") {
+		host := strings.TrimSpace(subnet)
+		switch command {
+		case "add":
+			if bm.IsBannedHost(host) {
+				return false, errors.New("onion address already banned")
+			}
+			duration, err := banDurationFrom(bantime, absolute)
+			if err != nil {
+				return false, err
+			}
+			if err := bm.BanHost(host, duration, banman.ReasonManual); err != nil {
+				return false, err
+			}
+			return true, nil
+		case "remove":
+			ok, err := bm.UnbanHost(host)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				return false, fmt.Errorf("onion address %s is not currently banned", host)
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("invalid command %q (want add|remove)", command)
+	}
 	netw, err := parseBanSubnet(subnet)
 	if err != nil {
 		return false, err
@@ -322,41 +354,10 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 		if alreadyBanned {
 			return false, errors.New("IP/subnet already banned")
 		}
-		duration := time.Duration(0) // banman.New default
-		if absolute != nil && *absolute {
-			// With absolute set, bantime IS the expiry — including
-			// an omitted or zero bantime, which resolves to the
-			// epoch and errors, matching Core's "Error: Absolute
-			// timestamp is in the past" rather than silently falling
-			// back to the 24h default.
-			var ts int64
-			if bantime != nil {
-				ts = *bantime
-			}
-			until := time.Unix(ts, 0)
-			if !until.After(time.Now()) {
-				return false, errors.New("absolute bantime must be in the future")
-			}
-			duration = time.Until(until)
-		} else if bantime != nil && *bantime > 0 {
-			// time.Duration counts int64 nanoseconds, so seconds
-			// above ~292 years overflow the multiplication to a
-			// negative value — which BanSubnet would then silently
-			// replace with the 24h default while the RPC reports
-			// success. Clamp so the huge relative bantimes Bitcoin
-			// operators use as "permanent" (e.g. 9999999999) keep
-			// their intent. Core adds the offset in whole seconds
-			// and is immune (src/banman.cpp BanMan::Ban).
-			secs := *bantime
-			if maxSecs := math.MaxInt64 / int64(time.Second); secs > maxSecs {
-				secs = maxSecs
-			}
-			duration = time.Duration(secs) * time.Second
+		duration, err := banDurationFrom(bantime, absolute)
+		if err != nil {
+			return false, err
 		}
-		// A zero, omitted, or negative relative bantime leaves
-		// duration 0, which BanSubnet resolves to the 24h default —
-		// matching BanMan::Ban's ban_time_offset <= 0 normalization
-		// (src/banman.cpp).
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err
 		}
@@ -382,6 +383,46 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 		return true, nil
 	}
 	return false, fmt.Errorf("invalid command %q (want add|remove)", command)
+}
+
+// banDurationFrom resolves setban's (bantime, absolute) argument pair
+// into a duration, shared by the subnet and onion branches. A zero,
+// omitted, or negative relative bantime yields 0, which the BanMan
+// layer resolves to the 24h default — matching BanMan::Ban's
+// ban_time_offset <= 0 normalization (src/banman.cpp).
+func banDurationFrom(bantime *int64, absolute *bool) (time.Duration, error) {
+	if absolute != nil && *absolute {
+		// With absolute set, bantime IS the expiry — including an
+		// omitted or zero bantime, which resolves to the epoch and
+		// errors, matching Core's "Error: Absolute timestamp is in
+		// the past" rather than silently falling back to the 24h
+		// default.
+		var ts int64
+		if bantime != nil {
+			ts = *bantime
+		}
+		until := time.Unix(ts, 0)
+		if !until.After(time.Now()) {
+			return 0, errors.New("absolute bantime must be in the future")
+		}
+		return time.Until(until), nil
+	}
+	if bantime != nil && *bantime > 0 {
+		// time.Duration counts int64 nanoseconds, so seconds above
+		// ~292 years overflow the multiplication to a negative value
+		// — which the ban layer would then silently replace with the
+		// 24h default while the RPC reports success. Clamp so the
+		// huge relative bantimes Bitcoin operators use as
+		// "permanent" (e.g. 9999999999) keep their intent. Core adds
+		// the offset in whole seconds and is immune (src/banman.cpp
+		// BanMan::Ban).
+		secs := *bantime
+		if maxSecs := math.MaxInt64 / int64(time.Second); secs > maxSecs {
+			secs = maxSecs
+		}
+		return time.Duration(secs) * time.Second, nil
+	}
+	return 0, nil
 }
 
 // Listbanned returns the active (non-expired) entries from the ban

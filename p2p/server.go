@@ -1526,11 +1526,20 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	// strand the dial until restart — same exemption as the v1
 	// static path in checkDial. The ban check stays: setban is an
 	// explicit operator statement.
-	// Ban / discourage gating is IP-keyed until PIP-0007 phase 4
-	// generalizes banman; onion dials pass through it unchecked.
-	if srv.BanList != nil && tcp != nil {
-		banned := srv.BanList.IsBanned(tcp.IP) ||
-			(!extraHas(extra, staticDialedConn) && srv.BanList.IsDiscouraged(tcp.IP))
+	// Never make an automatic outbound connection to a banned or
+	// discouraged target. IP targets check ban + discourage; onion
+	// targets check the exact-host ban list (there is no discourage
+	// tier for onion — the filter is IP-keyed and inbound onion
+	// streams can't be attributed to an onion address anyway).
+	if srv.BanList != nil {
+		banned := false
+		switch {
+		case tcp != nil:
+			banned = srv.BanList.IsBanned(tcp.IP) ||
+				(!extraHas(extra, staticDialedConn) && srv.BanList.IsDiscouraged(tcp.IP))
+		case addr.Network == addrman.NetTorV3:
+			banned = srv.BanList.IsBannedHost(addr.OnionHostname())
+		}
 		if banned {
 			srv.addrmanAttemptAddr(addr, false)
 			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)

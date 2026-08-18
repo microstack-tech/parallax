@@ -106,7 +106,10 @@ type BanMan struct {
 func (b *BanMan) markDirtyLocked() { b.dirty = true }
 
 // bannedNet pairs a banlist row with its parsed subnet so the
-// accept/dial hot path (IsBanned) never re-parses CIDR strings.
+// accept/dial hot path (IsBanned) never re-parses CIDR strings. A nil
+// ipnet marks an exact-host row (a Tor v3 onion address, PIP-0007 §4)
+// — matched by key in IsBannedHost, never by IP containment. Core's
+// CSubNet holds single non-IP addresses the same way.
 type bannedNet struct {
 	entry banEntry
 	ipnet *net.IPNet
@@ -281,7 +284,7 @@ func (b *BanMan) IsBanned(addr net.IP) bool {
 			b.markDirtyLocked()
 			continue
 		}
-		if bn.ipnet.Contains(addr) {
+		if bn.ipnet != nil && bn.ipnet.Contains(addr) {
 			return true
 		}
 	}
@@ -507,6 +510,21 @@ func (b *BanMan) Load() error {
 	defer b.mu.Unlock()
 	for _, e := range body.BannedNets {
 		if e.BannedTill <= now {
+			continue
+		}
+		// Onion rows are exact-host entries, keyed by the canonical
+		// (validated, lowercased) hostname.
+		if isOnionKey(e.Subnet) {
+			host, err := normalizeOnionHost(e.Subnet)
+			if err != nil {
+				b.log.Warn("banman: dropping invalid banlist entry", "subnet", e.Subnet, "err", err)
+				continue
+			}
+			e.Subnet = host
+			if old, ok := b.banned[host]; ok && old.entry.BannedTill >= e.BannedTill {
+				continue
+			}
+			b.banned[host] = bannedNet{entry: e}
 			continue
 		}
 		// Reject malformed CIDR; the file is operator-edited so
