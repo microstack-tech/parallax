@@ -559,14 +559,6 @@ func pubkeyToNodeID(pub *ecdsa.PublicKey) []byte {
 	return b[1:]
 }
 
-func parsePort(s string) (uint16, error) {
-	var p uint16
-	if _, err := fmt.Sscanf(s, "%d", &p); err != nil || p == 0 {
-		return 0, fmt.Errorf("invalid port %q", s)
-	}
-	return p, nil
-}
-
 // RemoveTrustedPeer removes a remote node from the trusted peer set, but it
 // does not disconnect it automatically.
 func (api *privateAdminAPI) RemoveTrustedPeer(url string) (bool, error) {
