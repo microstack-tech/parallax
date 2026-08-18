@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/script/abi"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // decodedCallData is an internal type to represent a method call parsed according

@@ -40,7 +40,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 const SizeLimit = 300 // maximum encoded size of a node record in bytes

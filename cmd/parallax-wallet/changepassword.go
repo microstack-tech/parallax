@@ -21,8 +21,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 	"gopkg.in/urfave/cli.v1"
 )
 

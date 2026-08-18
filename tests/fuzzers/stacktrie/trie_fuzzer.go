@@ -25,9 +25,9 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/trie"
 	"golang.org/x/crypto/sha3"
 )
 

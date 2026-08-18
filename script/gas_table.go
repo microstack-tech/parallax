@@ -19,9 +19,9 @@ package script
 import (
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 )
 
 // memoryGasCost calculates the quadratic gas for memory expansion. It does so

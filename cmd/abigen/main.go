@@ -24,12 +24,12 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/internal/flags"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/script/abi/bind"
-	"github.com/ParallaxProtocol/parallax/util/compiler"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/internal/flags"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/v2/util/compiler"
 	"gopkg.in/urfave/cli.v1"
 )
 

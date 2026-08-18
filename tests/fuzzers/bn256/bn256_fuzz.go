@@ -22,8 +22,8 @@ import (
 	"io"
 	"math/big"
 
-	cloudflare "github.com/ParallaxProtocol/parallax/crypto/bn256/cloudflare"
-	google "github.com/ParallaxProtocol/parallax/crypto/bn256/google"
+	cloudflare "github.com/ParallaxProtocol/parallax/v2/crypto/bn256/cloudflare"
+	google "github.com/ParallaxProtocol/parallax/v2/crypto/bn256/google"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 )
 

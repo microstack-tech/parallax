@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/dbstore/leveldb"
-	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/leveldb"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/olekukonko/tablewriter"
 )
 

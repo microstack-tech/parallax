@@ -19,7 +19,7 @@ package kernel
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // StateAccessor defines the minimal state interface needed by consensus engines

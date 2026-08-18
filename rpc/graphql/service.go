@@ -20,8 +20,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ParallaxProtocol/parallax/internal/api"
-	"github.com/ParallaxProtocol/parallax/node"
+	"github.com/ParallaxProtocol/parallax/v2/internal/api"
+	"github.com/ParallaxProtocol/parallax/v2/node"
 	"github.com/graph-gophers/graphql-go"
 )
 

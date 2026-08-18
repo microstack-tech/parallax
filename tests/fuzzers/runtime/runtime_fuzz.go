@@ -17,7 +17,7 @@
 package runtime
 
 import (
-	"github.com/ParallaxProtocol/parallax/script/runtime"
+	"github.com/ParallaxProtocol/parallax/v2/script/runtime"
 )
 
 // Fuzz is the basic entry point for the go-fuzz tool

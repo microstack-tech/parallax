@@ -20,7 +20,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // PVMLogger is used to collect execution traces from an PVM transaction

@@ -21,8 +21,8 @@ import (
 	"container/heap"
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // Iterator is a key-value trie iterator that traverses a Trie.

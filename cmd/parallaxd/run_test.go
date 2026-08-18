@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/internal/cmdtest"
-	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/internal/cmdtest"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
 	"github.com/moby/sys/reexec"
 )
 

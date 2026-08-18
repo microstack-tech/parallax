@@ -24,14 +24,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script/abi"
-	"github.com/ParallaxProtocol/parallax/script/abi/bind"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
 	"github.com/stretchr/testify/assert"
 )
 

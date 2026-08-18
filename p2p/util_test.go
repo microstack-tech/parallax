@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 func TestExpHeap(t *testing.T) {

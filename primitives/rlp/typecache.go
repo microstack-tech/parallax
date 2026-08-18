@@ -22,7 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp/internal/rlpstruct"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp/internal/rlpstruct"
 )
 
 // typeinfo is an entry in the type cache.

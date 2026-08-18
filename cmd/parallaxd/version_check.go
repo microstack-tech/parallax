@@ -26,7 +26,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 	"github.com/jedisct1/go-minisign"
 	"gopkg.in/urfave/cli.v1"
 )

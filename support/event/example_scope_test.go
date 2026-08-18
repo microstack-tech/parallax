@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
 )
 
 // This example demonstrates how SubscriptionScope can be used to control the lifetime of

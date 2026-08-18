@@ -19,7 +19,7 @@ package console
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/internal/jsre"
+	"github.com/ParallaxProtocol/parallax/v2/internal/jsre"
 	"github.com/dop251/goja"
 )
 

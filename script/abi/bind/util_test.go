@@ -23,12 +23,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script/abi/bind"
-	"github.com/ParallaxProtocol/parallax/script/abi/bind/backends"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind/backends"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 var testKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")

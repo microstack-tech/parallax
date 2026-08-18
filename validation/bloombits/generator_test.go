@@ -21,7 +21,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 )
 
 // Tests that batched bloom bits are correctly rotated from the input bloom

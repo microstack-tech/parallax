@@ -19,9 +19,9 @@ package downloader
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // headerQueue implements typedQueue and is a type adapter between the generic

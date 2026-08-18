@@ -21,15 +21,15 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/kernel/xhash"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 )
 
 func BenchmarkInsertChain_empty_memdb(b *testing.B) {

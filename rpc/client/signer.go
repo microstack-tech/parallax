@@ -20,8 +20,8 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // senderFromServer is a types.Signer that remembers the sender address returned by the RPC

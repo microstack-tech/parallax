@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 func TestNetPolicyDefaults(t *testing.T) {

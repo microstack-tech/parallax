@@ -25,8 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // nonceHeap is a heap.Interface implementation over 64bit unsigned integers for

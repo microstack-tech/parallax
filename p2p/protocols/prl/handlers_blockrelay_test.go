@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // trackingDecoder records whether Decode was called. handleTransactions

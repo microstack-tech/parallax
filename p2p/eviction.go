@@ -24,8 +24,8 @@ import (
 	"net"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 // Protection counts. Mirrors Bitcoin Core's eviction.cpp constants

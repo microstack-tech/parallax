@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/validation/asm"
+	"github.com/ParallaxProtocol/parallax/v2/validation/asm"
 )
 
 func Compile(fn string, src []byte, debug bool) (string, error) {

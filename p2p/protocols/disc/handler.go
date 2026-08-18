@@ -24,9 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // Backend is the host-integration surface. The handler calls into Backend

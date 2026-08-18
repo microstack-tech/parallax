@@ -19,7 +19,7 @@ package abi
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 type packUnpackTest struct {

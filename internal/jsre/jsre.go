@@ -27,7 +27,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/dop251/goja"
 )
 

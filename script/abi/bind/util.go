@@ -21,10 +21,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // WaitMined waits for tx to be mined on the blockchain.

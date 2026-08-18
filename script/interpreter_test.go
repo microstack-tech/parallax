@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
 )
 
 var loopInterruptTests = []string{

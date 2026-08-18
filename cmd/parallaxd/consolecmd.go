@@ -21,10 +21,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/console"
-	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/node"
+	"github.com/ParallaxProtocol/parallax/v2/node/console"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
 	"gopkg.in/urfave/cli.v1"
 )
 

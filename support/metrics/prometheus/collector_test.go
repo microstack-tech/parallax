@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
 )
 
 func TestMain(m *testing.M) {

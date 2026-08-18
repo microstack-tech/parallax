@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 // TestPickFeelerAddrPrefersTriedCollision — when SelectTriedCollision

@@ -25,11 +25,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
 )
 
 // filter is a helper struct that holds meta information over the filter type

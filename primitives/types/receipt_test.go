@@ -23,10 +23,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 var (

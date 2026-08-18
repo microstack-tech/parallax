@@ -27,14 +27,14 @@ import (
 	"testing"
 	"time"
 
-	parallax "github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script/abi"
-	"github.com/ParallaxProtocol/parallax/script/abi/bind"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 func TestSimulatedBackend(t *testing.T) {

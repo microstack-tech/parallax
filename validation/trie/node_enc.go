@@ -17,7 +17,7 @@
 package trie
 
 import (
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 func nodeToBytes(n node) []byte {

@@ -19,7 +19,7 @@ package snap
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/tests/fuzzers/fuzzutil"
+	"github.com/ParallaxProtocol/parallax/v2/tests/fuzzers/fuzzutil"
 )
 
 func FuzzGetAccountRange(f *testing.F) {

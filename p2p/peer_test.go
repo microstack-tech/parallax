@@ -28,9 +28,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
 )
 
 var discard = Protocol{

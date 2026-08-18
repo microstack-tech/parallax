@@ -19,8 +19,8 @@ package fourbyte
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
 )
 
 // FuzzFourbyteValidateCallData drives Database.ValidateCallData with arbitrary

@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 // Subscription represents a stream of events. The carrier of the events is typically a

@@ -19,11 +19,11 @@ package validation
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/kernel"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/validation/state"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+	"github.com/ParallaxProtocol/parallax/v2/kernel"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/validation/trie"
 )
 
 // BlockValidator is responsible for validating block headers, uncles and

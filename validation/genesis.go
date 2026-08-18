@@ -24,17 +24,17 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/validation/trie"
 )
 
 //go:generate go run github.com/fjl/gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go

@@ -26,14 +26,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/support/event"
-	"github.com/ParallaxProtocol/parallax/support/metrics"
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 var ErrShuttingDown = errors.New("shutting down")

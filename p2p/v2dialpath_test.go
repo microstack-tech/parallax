@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/banman"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/banman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/netutil"
 )
 
 // TestDialV2RejectsNetRestrict — the shared v2 dial path enforces the

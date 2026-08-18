@@ -25,15 +25,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/internal/jsre"
-	"github.com/ParallaxProtocol/parallax/kernel/xhash"
-	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/node/console/prompt"
-	protocol "github.com/ParallaxProtocol/parallax/node/fullnode"
-	"github.com/ParallaxProtocol/parallax/node/miner"
-	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/v2/internal/jsre"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/xhash"
+	"github.com/ParallaxProtocol/parallax/v2/node"
+	"github.com/ParallaxProtocol/parallax/v2/node/console/prompt"
+	protocol "github.com/ParallaxProtocol/parallax/v2/node/fullnode"
+	"github.com/ParallaxProtocol/parallax/v2/node/miner"
+	"github.com/ParallaxProtocol/parallax/v2/node/nodeconfig"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 const (

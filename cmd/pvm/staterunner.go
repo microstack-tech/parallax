@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/tests"
-	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/tests"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
 
 	"gopkg.in/urfave/cli.v1"
 )

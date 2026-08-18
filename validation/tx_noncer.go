@@ -19,8 +19,8 @@ package validation
 import (
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
 )
 
 // txNoncer is a tiny virtual state database to manage the executable nonces of

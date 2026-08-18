@@ -20,7 +20,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 var (

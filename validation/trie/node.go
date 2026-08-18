@@ -21,8 +21,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}

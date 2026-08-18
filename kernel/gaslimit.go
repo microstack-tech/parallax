@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
 )
 
 // VerifyGaslimit verifies the header gas limit according increase/decrease

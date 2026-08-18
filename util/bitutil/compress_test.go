@@ -21,7 +21,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
 )
 
 // Tests that data bitset encoding and decoding works and is bijective.

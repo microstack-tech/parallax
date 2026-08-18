@@ -21,8 +21,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
 )
 
 // StartHTTPEndpoint starts the HTTP RPC endpoint.

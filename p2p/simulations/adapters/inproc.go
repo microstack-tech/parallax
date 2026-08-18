@@ -24,14 +24,14 @@ import (
 	"net"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/simulations/pipes"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/node"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/simulations/pipes"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
 	"github.com/gorilla/websocket"
 )
 

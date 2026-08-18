@@ -19,7 +19,7 @@ package bls
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/tests/fuzzers/fuzzutil"
+	"github.com/ParallaxProtocol/parallax/v2/tests/fuzzers/fuzzutil"
 )
 
 func FuzzG1Add(f *testing.F)      { wrapZip(f, fuzzG1Add, "fuzz_g1_add") }

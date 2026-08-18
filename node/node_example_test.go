@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ParallaxProtocol/parallax/node"
+	"github.com/ParallaxProtocol/parallax/v2/node"
 )
 
 // SampleLifecycle is a trivial network service that can be attached to a node for

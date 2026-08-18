@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 	"github.com/golang/snappy"
 )
 

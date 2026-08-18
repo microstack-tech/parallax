@@ -19,8 +19,8 @@ package downloader
 import (
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // syncState starts downloading state with the given root hash.

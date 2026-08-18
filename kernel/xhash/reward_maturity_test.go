@@ -4,9 +4,9 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
 )
 
 // newTestStateDB creates a blank in-memory StateDB.

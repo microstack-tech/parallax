@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 )
 
 // AddrMan is the Bitcoin-style stochastic address manager. See doc.go for

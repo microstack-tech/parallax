@@ -24,12 +24,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script/abi"
-	"github.com/ParallaxProtocol/parallax/support/event"
-	"github.com/ParallaxProtocol/parallax/util"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // SignerFn is a signer function callback when a contract requires a method to

@@ -20,7 +20,7 @@ import (
 	"math/bits"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
 )
 
 func TestJumpDestAnalysis(t *testing.T) {

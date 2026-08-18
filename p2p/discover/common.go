@@ -20,11 +20,11 @@ import (
 	"crypto/ecdsa"
 	"net"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/p2p/netutil"
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/netutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 // UDPConn is a network connection on which discovery can operate.

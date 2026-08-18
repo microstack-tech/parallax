@@ -10,18 +10,17 @@ The Parallax client reusable Go libraries focus on three main usage areas:
 * Remote node interfacing via different transports
 * Contract interactions through auto-generated bindings
 
-The libraries are updated synchronously with the Parallax client GitHub repository. The Go libraries can be viewed in full at [Go Packages](https://pkg.go.dev/github.com/ParallaxProtocol/parallax#section-directories).
+The libraries are updated synchronously with the Parallax client GitHub repository. The Go libraries can be viewed in full at [Go Packages](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2#section-directories).
 
 ## Go packages
 
 The `parallax` library is distributed as a collection of standard Go packages straight from Parallax's GitHub repository. The packages can be used directly via the official Go toolkit, without needing any third party tools.
 
-The canonical import path for the Parallax client is `github.com/ParallaxProtocol/parallax`, with all packages residing underneath. Although there are [lots of them](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/#section-directories) most developers will only care about a limited subset.
-
+The canonical import path for the Parallax client is `github.com/ParallaxProtocol/parallax/v2`, with all packages residing underneath. Although there are [lots of them](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2/#section-directories) most developers will only care about a limited subset.
 All the Parallax client packages can be downloaded using:
 
 ```sh
-go get -d github.com/ParallaxProtocol/parallax/...
+go get -d github.com/ParallaxProtocol/parallax/v2/...
 ```
 
 More Go API support for dapp developers can be found on the [Go Contract Bindings](./go-contract-bindings) and [Go Account Management](./go-account-management) pages.
@@ -47,7 +46,7 @@ _ = cl
 
 ### Interacting with the client
 
-The client can now be used to handle requests to the Parallax client using the full JSON-RPC API. For example, the function `BlockNumber()` wraps a call to the `eth_blockNumber` endpoint. The function `SendTransaction` wraps a call to `eth_sendTransaction`. The full list of client methods can be found [here](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/rpc/client#Client).
+The client can now be used to handle requests to the Parallax client using the full JSON-RPC API. For example, the function `BlockNumber()` wraps a call to the `eth_blockNumber` endpoint. The function `SendTransaction` wraps a call to `eth_sendTransaction`. The full list of client methods can be found [here](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2/rpc/client#Client).
 
 Frequently, the functions take an instance of the Context type as their leading argument. This defines context about requests sent from the application such as deadlines, cancellation signals etc. More information on this can be found in the [Go documentation](https://pkg.go.dev/golang.org/x/net/context). An empty context instance can be created using `Context.Background()`.
 
@@ -117,11 +116,11 @@ import (
  "context"
  "math/big"
 
- "github.com/ParallaxProtocol/parallax/util"
- "github.com/ParallaxProtocol/parallax/primitives/types"
- "github.com/ParallaxProtocol/parallax/crypto"
- "github.com/ParallaxProtocol/parallax/rpc/client"
- "github.com/ParallaxProtocol/parallax/kernel/chainparams"
+ "github.com/ParallaxProtocol/parallax/v2/util"
+ "github.com/ParallaxProtocol/parallax/v2/primitives/types"
+ "github.com/ParallaxProtocol/parallax/v2/crypto"
+ "github.com/ParallaxProtocol/parallax/v2/rpc/client"
+ "github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
 )
 
 // sendTransaction sends a transaction with 1 Lax to a specified address.
@@ -182,7 +181,7 @@ SubscribePendingTransactions()
 
 *Note that both `prlclient` and `prlxclient` have a `CallContract()` function - the difference is that the `prlxclient` version includes an overrides argument.*
 
-Details relating to these endpoints can be found at [pkg.go.dev](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/rpc/client) or the Parallax client [GitHub](https://github.com/ParallaxProtocol/parallax/tree/main/rpc/client).
+Details relating to these endpoints can be found at [pkg.go.dev](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2/rpc/client) or the Parallax client [GitHub](https://github.com/ParallaxProtocol/parallax/tree/main/rpc/client).
 
 ## Summary
 

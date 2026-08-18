@@ -23,8 +23,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/mattn/go-colorable"
 )
 

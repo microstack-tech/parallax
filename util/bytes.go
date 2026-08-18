@@ -21,7 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
 )
 
 // FromHex returns the bytes represented by the hexadecimal string s.

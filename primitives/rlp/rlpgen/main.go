@@ -27,7 +27,7 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-const pathOfPackageRLP = "github.com/ParallaxProtocol/parallax/primitives/rlp"
+const pathOfPackageRLP = "github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 
 func main() {
 	var (

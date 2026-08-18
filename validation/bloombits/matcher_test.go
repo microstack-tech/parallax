@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 const testSectionSize = 4096

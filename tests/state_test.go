@@ -27,11 +27,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers/logger"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/validation"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers/logger"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 )
 
 func TestState(t *testing.T) {

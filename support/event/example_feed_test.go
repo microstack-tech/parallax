@@ -19,7 +19,7 @@ package event_test
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
 )
 
 func ExampleFeed_acknowledgedEvents() {

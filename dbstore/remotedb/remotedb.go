@@ -25,9 +25,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
 )
 
 // Database is a key-value lookup for a remote database via debug_dbGet.

@@ -22,14 +22,14 @@ import (
 	"fmt"
 	"mime"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/wallet"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/clique"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/wallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
 )
 
 // sign receives a request and produces a signature

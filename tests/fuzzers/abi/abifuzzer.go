@@ -21,7 +21,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
 	fuzz "github.com/google/gofuzz"
 )
 

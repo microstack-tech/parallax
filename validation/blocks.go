@@ -16,7 +16,7 @@
 
 package validation
 
-import "github.com/ParallaxProtocol/parallax/util"
+import "github.com/ParallaxProtocol/parallax/v2/util"
 
 // BadHashes represent a set of manually tracked bad hashes (usually hard forks)
 var BadHashes = map[util.Hash]bool{

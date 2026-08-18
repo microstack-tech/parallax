@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // TestPack tests the general pack/unpack tests in packing_test.go

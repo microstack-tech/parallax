@@ -20,9 +20,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // accessList is an accumulator for the set of accounts and storage slots an PVM

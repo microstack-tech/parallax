@@ -20,8 +20,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // proxiedPeerAt builds a fake outbound peer whose socket remote is the

@@ -17,8 +17,8 @@
 package script
 
 import (
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 	"github.com/holiman/uint256"
 )
 

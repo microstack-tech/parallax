@@ -26,22 +26,22 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/tests"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/validation"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/tests"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 
 	// Force-load native and js pacakges, to trigger registration
-	_ "github.com/ParallaxProtocol/parallax/node/fullnode/tracers/js"
-	_ "github.com/ParallaxProtocol/parallax/node/fullnode/tracers/native"
+	_ "github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers/js"
+	_ "github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers/native"
 )
 
 // To generate a new callTracer test, copy paste the makeTest method below into

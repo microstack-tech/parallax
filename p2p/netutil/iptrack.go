@@ -19,7 +19,7 @@ package netutil
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util/mclock"
+	"github.com/ParallaxProtocol/parallax/v2/util/mclock"
 )
 
 // IPTracker predicts the external endpoint, i.e. IP address and port, of the local host

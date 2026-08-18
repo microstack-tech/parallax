@@ -42,7 +42,7 @@ import (
 	"fmt"
 	"hash"
 
-	prlcrypto "github.com/ParallaxProtocol/parallax/crypto"
+	prlcrypto "github.com/ParallaxProtocol/parallax/v2/crypto"
 )
 
 var (

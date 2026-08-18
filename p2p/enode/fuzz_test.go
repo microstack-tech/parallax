@@ -20,8 +20,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 // FuzzParseV4URL feeds arbitrary strings to ParseV4. Node URLs come from

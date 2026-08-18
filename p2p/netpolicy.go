@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/socks"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/socks"
 )
 
 // netPolicy resolves the operator's proxy configuration into per-network

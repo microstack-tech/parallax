@@ -26,13 +26,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/util/math"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
 )
 
 var typesStandard = apitypes.Types{

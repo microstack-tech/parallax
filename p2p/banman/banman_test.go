@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 )
 
 // TestBanRoundTripIPv4 — Ban / IsBanned / Unban / IsBanned cycle.

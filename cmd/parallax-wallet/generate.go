@@ -22,9 +22,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 	"github.com/google/uuid"
 	"gopkg.in/urfave/cli.v1"
 )

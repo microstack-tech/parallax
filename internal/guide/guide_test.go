@@ -28,9 +28,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 )
 
 // Tests that the account management snippets work correctly.

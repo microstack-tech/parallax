@@ -19,7 +19,7 @@ package snap
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/rlpx/bip324handshake"
 )
 
 // TestMaxMessageFitsV2Frame pins maxMessageSize to the v2 transport's

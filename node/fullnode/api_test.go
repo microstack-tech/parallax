@@ -24,10 +24,10 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
 	"github.com/davecgh/go-spew/spew"
 )
 

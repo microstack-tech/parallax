@@ -19,16 +19,16 @@ package validation
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/kernel"
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/support/event"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
-	"github.com/ParallaxProtocol/parallax/validation/state/snapshot"
+	"github.com/ParallaxProtocol/parallax/v2/kernel"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state/snapshot"
 )
 
 // CurrentHeader retrieves the current head header of the canonical chain. The

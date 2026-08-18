@@ -19,8 +19,8 @@ package protocol
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util/bitutil"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/util/bitutil"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 )
 
 const (

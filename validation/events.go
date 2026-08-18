@@ -17,8 +17,8 @@
 package validation
 
 import (
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // NewTxsEvent is posted when a batch of transactions enter the transaction pool.

@@ -24,11 +24,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/node/console/prompt"
-	"github.com/ParallaxProtocol/parallax/p2p/dnsdisc"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/node/console/prompt"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/dnsdisc"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 	"gopkg.in/urfave/cli.v1"
 )
 

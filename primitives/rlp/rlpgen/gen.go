@@ -23,7 +23,7 @@ import (
 	"go/types"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp/internal/rlpstruct"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp/internal/rlpstruct"
 )
 
 // buildContext keeps the data needed for make*Op.

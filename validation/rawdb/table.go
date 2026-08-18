@@ -17,7 +17,7 @@
 package rawdb
 
 import (
-	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
 )
 
 // table is a wrapper around a database that prefixes each key access with a pre-

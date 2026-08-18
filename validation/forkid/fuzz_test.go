@@ -20,7 +20,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
 )
 
 // FuzzForkIDValidation fuzzes the EIP-2124 fork ID validation filter with

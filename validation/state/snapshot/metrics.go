@@ -16,7 +16,7 @@
 
 package snapshot
 
-import "github.com/ParallaxProtocol/parallax/support/metrics"
+import "github.com/ParallaxProtocol/parallax/v2/support/metrics"
 
 // Metrics in generation
 var (

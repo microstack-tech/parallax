@@ -17,8 +17,8 @@
 package netparams
 
 import (
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // MainnetBootnodes are the enode URLs of the P2P bootstrap nodes on the

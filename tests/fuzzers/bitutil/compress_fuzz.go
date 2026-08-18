@@ -19,7 +19,7 @@ package bitutil
 import (
 	"bytes"
 
-	"github.com/ParallaxProtocol/parallax/util/bitutil"
+	"github.com/ParallaxProtocol/parallax/v2/util/bitutil"
 )
 
 // Fuzz implements a go-fuzz fuzzer method to test various encoding method

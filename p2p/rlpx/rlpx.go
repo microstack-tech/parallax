@@ -34,9 +34,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/crypto/ecies"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/crypto/ecies"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 	"github.com/golang/snappy"
 	"golang.org/x/crypto/sha3"
 )

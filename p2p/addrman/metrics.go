@@ -19,7 +19,7 @@ package addrman
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
 )
 
 // Metric names match the specification in PIP-0006 Phase 3 exactly so

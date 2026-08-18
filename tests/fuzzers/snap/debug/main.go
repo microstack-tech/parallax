@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/tests/fuzzers/snap"
+	"github.com/ParallaxProtocol/parallax/v2/tests/fuzzers/snap"
 )
 
 func main() {

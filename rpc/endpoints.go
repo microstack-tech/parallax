@@ -20,7 +20,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 )
 
 // StartIPCEndpoint starts an IPC endpoint.

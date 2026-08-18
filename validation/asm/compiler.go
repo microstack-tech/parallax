@@ -22,8 +22,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 )
 
 // Compiler contains information about the parsed source

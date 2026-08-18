@@ -19,10 +19,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/wallet"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/wallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 )
 
 // unlockAccount prompts up to three times to unlock the given account.

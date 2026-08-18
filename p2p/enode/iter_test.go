@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enr"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enr"
 )
 
 func TestReadNodes(t *testing.T) {

@@ -26,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/internal/testlog"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/nat"
+	"github.com/ParallaxProtocol/parallax/v2/internal/testlog"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/nat"
 )
 
 // TestOnionOnlyMutesClearnetSurface verifies PIP-0007 §1.4: a node

@@ -2,7 +2,7 @@
 
 package test
 
-import "github.com/ParallaxProtocol/parallax/primitives/rlp"
+import "github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 
 type Test struct {
 	RawValue          rlp.RawValue

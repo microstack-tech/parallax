@@ -19,8 +19,8 @@ package netparams_test
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/netparams"
 )
 
 // TestBootnodesV2Parse guards every hardcoded v2 bootstrap entry

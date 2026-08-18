@@ -22,7 +22,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
 )
 
 // maxFuzzScryptN caps the scrypt work factor accepted by the fuzz body. Inputs

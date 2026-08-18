@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ParallaxProtocol/parallax"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
 	"gopkg.in/urfave/cli.v1"
 )
 

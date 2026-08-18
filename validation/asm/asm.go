@@ -21,7 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/script"
+	"github.com/ParallaxProtocol/parallax/v2/script"
 )
 
 // Iterator for disassembled PVM instructions

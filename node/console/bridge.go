@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/internal/jsre"
-	"github.com/ParallaxProtocol/parallax/node/console/prompt"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/wallet/scwallet"
-	"github.com/ParallaxProtocol/parallax/wallet/usbwallet"
+	"github.com/ParallaxProtocol/parallax/v2/internal/jsre"
+	"github.com/ParallaxProtocol/parallax/v2/node/console/prompt"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/scwallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/usbwallet"
 	"github.com/dop251/goja"
 )
 

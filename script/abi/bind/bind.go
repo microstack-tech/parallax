@@ -30,7 +30,7 @@ import (
 	"text/template"
 	"unicode"
 
-	"github.com/ParallaxProtocol/parallax/script/abi"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi"
 )
 
 // Lang is a target programming language selector to generate bindings for.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 )
 
 // Enabled is checked by the constructor functions for all of the

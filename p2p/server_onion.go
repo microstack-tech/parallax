@@ -21,8 +21,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
-	"github.com/ParallaxProtocol/parallax/p2p/torcontrol"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/torcontrol"
 )
 
 // startTorControl launches the controller that maintains our onion

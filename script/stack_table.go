@@ -17,7 +17,7 @@
 package script
 
 import (
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
 )
 
 func minSwapStack(n int) int {

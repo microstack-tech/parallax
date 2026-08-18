@@ -4,7 +4,7 @@
 
 package types
 
-import "github.com/ParallaxProtocol/parallax/primitives/rlp"
+import "github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 import "io"
 
 func (obj *StateAccount) EncodeRLP(_w io.Writer) error {

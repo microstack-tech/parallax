@@ -19,7 +19,7 @@ package snap
 import (
 	"math/big"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/holiman/uint256"
 )
 

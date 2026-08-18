@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 // fakeSocksProxy is a minimal single-shot no-auth SOCKS5 responder. It

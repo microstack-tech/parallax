@@ -19,7 +19,7 @@ package snap
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // Tests that given a starting hash and a density, the hash ranger can correctly

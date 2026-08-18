@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"net"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 // Network-group prefix lengths. Mirrors Bitcoin Core's

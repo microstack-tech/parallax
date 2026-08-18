@@ -19,9 +19,9 @@ package downloader
 import (
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // fetchHeadersByHash is a blocking version of Peer.RequestHeadersByHash which

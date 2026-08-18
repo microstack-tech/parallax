@@ -26,17 +26,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/internal/api"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/wallet"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/fourbyte"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/storage"
+	"github.com/ParallaxProtocol/parallax/v2/internal/api"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/wallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/fourbyte"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/storage"
 )
 
 // Used for testing

@@ -19,7 +19,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
 	"gopkg.in/urfave/cli.v1"
 )
 

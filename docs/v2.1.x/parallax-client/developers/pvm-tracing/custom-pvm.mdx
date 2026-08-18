@@ -19,9 +19,9 @@ import (
     "sync/atomic"
     "time"
 
-    "github.com/ParallaxProtocol/parallax/util"
-    "github.com/ParallaxProtocol/parallax/script"
-    "github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
+    "github.com/ParallaxProtocol/parallax/v2/util"
+    "github.com/ParallaxProtocol/parallax/v2/script"
+    "github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers"
 )
 
 func init() {
@@ -94,7 +94,7 @@ func (t *opcounter) Stop(err error) {
 }
 ```
 
-Every method of the [EVMLogger interface](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/script#EVMLogger) needs to be implemented (even if empty). Key parts to notice are the `init()` function which registers the tracer in the Parallax client, the `CaptureState` hook where the opcode counts are incremented and `GetResult` where the result is serialized and delivered. Note that the constructor takes in a `cfg json.RawMessage`. This will be filled with a JSON object that user provides to the tracer to pass in optional config fields.
+Every method of the [EVMLogger interface](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2/script#EVMLogger) needs to be implemented (even if empty). Key parts to notice are the `init()` function which registers the tracer in the Parallax client, the `CaptureState` hook where the opcode counts are incremented and `GetResult` where the result is serialized and delivered. Note that the constructor takes in a `cfg json.RawMessage`. This will be filled with a JSON object that user provides to the tracer to pass in optional config fields.
 
 To test out this tracer the source is first compiled with `make parallax`. Then in the console it can be invoked through the usual API methods by passing in the name it was registered under:
 

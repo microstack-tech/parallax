@@ -20,8 +20,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 const freezerVersion = 1 // The initial version tag of freezer table metadata

@@ -17,8 +17,8 @@
 package runtime
 
 import (
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 func NewEnv(cfg *Config) *script.PVM {

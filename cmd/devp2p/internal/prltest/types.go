@@ -21,10 +21,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/prl"
-	"github.com/ParallaxProtocol/parallax/p2p/rlpx"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/prl"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/rlpx"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 type Message interface {

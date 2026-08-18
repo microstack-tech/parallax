@@ -22,7 +22,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
 )
 
 // TestDatabaseSuite runs a suite of tests against a KeyValueStore database

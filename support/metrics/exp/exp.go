@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/support/metrics"
-	"github.com/ParallaxProtocol/parallax/support/metrics/prometheus"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics/prometheus"
 )
 
 type exp struct {

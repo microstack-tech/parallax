@@ -21,8 +21,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/support/event"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // managerSubBufferSize determines how many incoming wallet events

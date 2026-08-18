@@ -26,7 +26,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 )
 
 type testEncoder struct {

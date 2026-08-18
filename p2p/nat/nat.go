@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 	natpmp "github.com/jackpal/go-nat-pmp"
 )
 

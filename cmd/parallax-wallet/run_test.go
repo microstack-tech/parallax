@@ -21,7 +21,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/internal/cmdtest"
+	"github.com/ParallaxProtocol/parallax/v2/internal/cmdtest"
 	"github.com/moby/sys/reexec"
 )
 

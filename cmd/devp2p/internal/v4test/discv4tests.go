@@ -23,9 +23,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/internal/utesting"
-	"github.com/ParallaxProtocol/parallax/p2p/discover/v4wire"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/internal/utesting"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/discover/v4wire"
 )
 
 const (

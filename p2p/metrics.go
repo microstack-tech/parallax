@@ -21,7 +21,7 @@ package p2p
 import (
 	"net"
 
-	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
 )
 
 const (

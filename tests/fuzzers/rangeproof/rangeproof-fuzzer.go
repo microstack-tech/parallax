@@ -23,10 +23,10 @@ import (
 	"io"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/trie"
 )
 
 type kv struct {

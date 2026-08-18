@@ -22,17 +22,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
-	"github.com/ParallaxProtocol/parallax/kernel/clique"
-	"github.com/ParallaxProtocol/parallax/node/fullnode/downloader"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/script"
-	"github.com/ParallaxProtocol/parallax/support/event"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
-	"github.com/ParallaxProtocol/parallax/validation/state"
-	"github.com/ParallaxProtocol/parallax/validation/trie"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/clique"
+	"github.com/ParallaxProtocol/parallax/v2/node/fullnode/downloader"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/script"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/validation/state"
+	"github.com/ParallaxProtocol/parallax/v2/validation/trie"
 )
 
 type mockBackend struct {

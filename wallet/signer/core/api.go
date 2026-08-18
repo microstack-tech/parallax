@@ -25,17 +25,17 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/ParallaxProtocol/parallax/internal/api"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/hexutil"
-	"github.com/ParallaxProtocol/parallax/wallet"
-	"github.com/ParallaxProtocol/parallax/wallet/keystore"
-	"github.com/ParallaxProtocol/parallax/wallet/scwallet"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/storage"
-	"github.com/ParallaxProtocol/parallax/wallet/usbwallet"
+	"github.com/ParallaxProtocol/parallax/v2/internal/api"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/hexutil"
+	"github.com/ParallaxProtocol/parallax/v2/wallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/scwallet"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/storage"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/usbwallet"
 )
 
 const (

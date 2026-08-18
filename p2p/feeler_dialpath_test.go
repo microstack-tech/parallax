@@ -20,7 +20,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // TestOutboundGroupOccupiedIn — a full-relay outbound peer occupies

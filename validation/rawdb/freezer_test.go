@@ -27,8 +27,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 	"github.com/stretchr/testify/require"
 )
 

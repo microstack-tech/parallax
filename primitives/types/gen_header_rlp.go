@@ -7,7 +7,7 @@ package types
 import (
 	"io"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 func (obj *Header) EncodeRLP(_w io.Writer) error {

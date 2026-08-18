@@ -20,9 +20,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // makeTestTrie create a sample test trie to test node-wise reconstruction.

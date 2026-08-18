@@ -26,8 +26,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/cmd/utils"
-	"github.com/ParallaxProtocol/parallax/internal/flags"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/utils"
+	"github.com/ParallaxProtocol/parallax/v2/internal/flags"
 
 	"gopkg.in/urfave/cli.v1"
 )

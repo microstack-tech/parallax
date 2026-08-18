@@ -30,9 +30,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/p2p/netparams"
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/netparams"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/disc"
 	"gopkg.in/urfave/cli.v1"
 )
 

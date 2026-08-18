@@ -19,7 +19,7 @@ package bitutil
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/tests/fuzzers/fuzzutil"
+	"github.com/ParallaxProtocol/parallax/v2/tests/fuzzers/fuzzutil"
 )
 
 // FuzzBitutilCompress is the native fuzzing entry point wrapping the legacy

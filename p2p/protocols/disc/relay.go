@@ -22,7 +22,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
 )
 
 // RelayInterval is the rotation period for the deterministic

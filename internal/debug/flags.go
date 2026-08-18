@@ -24,9 +24,9 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/support/metrics"
-	"github.com/ParallaxProtocol/parallax/support/metrics/exp"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics/exp"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"gopkg.in/urfave/cli.v1"

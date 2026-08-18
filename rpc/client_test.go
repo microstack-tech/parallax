@@ -32,7 +32,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 	"github.com/davecgh/go-spew/spew"
 )
 

@@ -19,7 +19,7 @@ package bn256
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/tests/fuzzers/fuzzutil"
+	"github.com/ParallaxProtocol/parallax/v2/tests/fuzzers/fuzzutil"
 )
 
 func FuzzAdd(f *testing.F) {

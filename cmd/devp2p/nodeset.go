@@ -24,8 +24,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 const jsonIndent = "    "

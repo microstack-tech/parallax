@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
 )
 
 const (

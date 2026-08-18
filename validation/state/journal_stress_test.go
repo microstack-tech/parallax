@@ -26,8 +26,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 )
 
 // stressSnapshotTest is a heavier variant of snapshotTest (statedb_test.go):

@@ -21,8 +21,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // TeeIter wraps an upstream enode.Iterator and, for each node it yields,

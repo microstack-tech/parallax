@@ -17,9 +17,9 @@
 package protocol
 
 import (
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/snap"
-	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/snap"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 // snapHandler implements the snap.Backend interface to handle the various network

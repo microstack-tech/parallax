@@ -20,7 +20,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 func onionAddrWithFirstByte(t *testing.T, b byte) addrman.NetAddr {

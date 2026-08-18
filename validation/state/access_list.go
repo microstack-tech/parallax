@@ -17,7 +17,7 @@
 package state
 
 import (
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 type accessList struct {

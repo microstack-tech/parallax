@@ -22,13 +22,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/node"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/util"
-	"github.com/ParallaxProtocol/parallax/util/bitutil"
-	"github.com/ParallaxProtocol/parallax/validation/bloombits"
-	"github.com/ParallaxProtocol/parallax/validation/rawdb"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/node"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/util/bitutil"
+	"github.com/ParallaxProtocol/parallax/v2/validation/bloombits"
+	"github.com/ParallaxProtocol/parallax/v2/validation/rawdb"
 )
 
 func BenchmarkBloomBits512(b *testing.B) {

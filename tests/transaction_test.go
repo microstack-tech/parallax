@@ -19,7 +19,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/kernel/chainparams"
+	"github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
 )
 
 func TestTransaction(t *testing.T) {

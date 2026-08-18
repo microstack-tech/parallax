@@ -23,8 +23,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core/apitypes"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/fourbyte"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core/apitypes"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/fourbyte"
 )
 
 func init() {

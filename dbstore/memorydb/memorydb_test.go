@@ -19,8 +19,8 @@ package memorydb
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
-	"github.com/ParallaxProtocol/parallax/dbstore/dbtest"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/dbtest"
 )
 
 func TestMemoryDB(t *testing.T) {

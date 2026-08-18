@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/ParallaxProtocol/parallax/internal/nodepaths"
+	"github.com/ParallaxProtocol/parallax/v2/internal/nodepaths"
 	"gopkg.in/urfave/cli.v1"
 )
 

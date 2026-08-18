@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // precompiledTest defines the input/output pairs for precompiled contract tests.

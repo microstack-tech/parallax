@@ -19,10 +19,10 @@ package keystore
 import (
 	"math/big"
 
-	parallax "github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/primitives/types"
-	"github.com/ParallaxProtocol/parallax/wallet"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/wallet"
 )
 
 // keystoreWallet implements the accounts.Wallet interface for the original

@@ -24,8 +24,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/cmd/pvm/internal/t8ntool"
-	"github.com/ParallaxProtocol/parallax/internal/cmdtest"
+	"github.com/ParallaxProtocol/parallax/v2/cmd/pvm/internal/t8ntool"
+	"github.com/ParallaxProtocol/parallax/v2/internal/cmdtest"
 	"github.com/moby/sys/reexec"
 )
 

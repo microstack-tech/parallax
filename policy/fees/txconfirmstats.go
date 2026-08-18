@@ -20,7 +20,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 )
 
 // txConfirmStats tracks transaction confirmation statistics for one time horizon.

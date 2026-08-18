@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/dbstore"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore"
 )
 
 func TestTableDatabase(t *testing.T)            { testTableDatabase(t, "prefix") }

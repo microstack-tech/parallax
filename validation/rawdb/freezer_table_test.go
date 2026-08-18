@@ -29,7 +29,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/require"
 )

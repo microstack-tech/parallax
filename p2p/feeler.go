@@ -22,7 +22,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 // Feeler / addrfetch defaults. Mirror Bitcoin Core constants.

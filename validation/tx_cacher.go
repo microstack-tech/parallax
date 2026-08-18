@@ -19,7 +19,7 @@ package validation
 import (
 	"runtime"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 )
 
 // senderCacher is a concurrent transaction sender recoverer and cacher.

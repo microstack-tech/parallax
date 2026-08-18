@@ -19,8 +19,8 @@ package trie
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/dbstore/memorydb"
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/dbstore/memorydb"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 // Tests that the trie database returns a missing trie node error if attempting

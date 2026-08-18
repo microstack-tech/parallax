@@ -19,7 +19,7 @@ package miner
 import (
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 )
 
 // noopChainRetriever is an implementation of headerRetriever that always

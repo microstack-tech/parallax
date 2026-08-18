@@ -1,4 +1,4 @@
-module github.com/ParallaxProtocol/parallax
+module github.com/ParallaxProtocol/parallax/v2
 
 go 1.26
 

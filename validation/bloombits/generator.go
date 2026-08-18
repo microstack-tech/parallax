@@ -19,7 +19,7 @@ package bloombits
 import (
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/primitives/types"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 )
 
 var (

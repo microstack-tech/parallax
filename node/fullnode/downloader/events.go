@@ -16,7 +16,7 @@
 
 package downloader
 
-import "github.com/ParallaxProtocol/parallax/primitives/types"
+import "github.com/ParallaxProtocol/parallax/v2/primitives/types"
 
 type DoneEvent struct {
 	Latest *types.Header

@@ -16,7 +16,7 @@
 
 package state
 
-import "github.com/ParallaxProtocol/parallax/support/metrics"
+import "github.com/ParallaxProtocol/parallax/v2/support/metrics"
 
 var (
 	accountUpdatedMeter   = metrics.NewRegisteredMeter("state/update/account", nil)

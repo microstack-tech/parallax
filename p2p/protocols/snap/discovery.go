@@ -17,7 +17,7 @@
 package snap
 
 import (
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 // enrEntry is the ENR entry which advertises `snap` protocol on the discovery.

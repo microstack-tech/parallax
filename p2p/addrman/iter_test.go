@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/crypto"
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // makeLegacyNode builds an enode.Node with a fresh secp256k1 key plus

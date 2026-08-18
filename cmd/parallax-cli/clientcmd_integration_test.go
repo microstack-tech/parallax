@@ -29,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
 )
 
 // These integration tests spin up a real parallaxd dev daemon in the
@@ -65,8 +65,8 @@ func TestMain(m *testing.M) {
 		parallaxdBin = filepath.Join(tmp, "parallaxd")
 		parallaxCliBin = filepath.Join(tmp, "parallax-cli")
 		for _, b := range []struct{ path, pkg string }{
-			{parallaxdBin, "github.com/ParallaxProtocol/parallax/cmd/parallaxd"},
-			{parallaxCliBin, "github.com/ParallaxProtocol/parallax/cmd/parallax-cli"},
+			{parallaxdBin, "github.com/ParallaxProtocol/parallax/v2/cmd/parallaxd"},
+			{parallaxCliBin, "github.com/ParallaxProtocol/parallax/v2/cmd/parallax-cli"},
 		} {
 			build := exec.Command("go", "build", "-o", b.path, b.pkg)
 			build.Stdout = os.Stdout

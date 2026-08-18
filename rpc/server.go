@@ -21,7 +21,7 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
 	mapset "github.com/deckarep/golang-set"
 )
 

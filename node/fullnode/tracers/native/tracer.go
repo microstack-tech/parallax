@@ -39,7 +39,7 @@ package native
 import (
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/node/fullnode/tracers"
+	"github.com/ParallaxProtocol/parallax/v2/node/fullnode/tracers"
 )
 
 // init registers itself this packages as a lookup for tracers.

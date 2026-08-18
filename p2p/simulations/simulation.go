@@ -20,7 +20,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/enode"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/enode"
 )
 
 // Simulation provides a framework for running actions in a simulated network

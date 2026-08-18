@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/support/metrics"
+	"github.com/ParallaxProtocol/parallax/v2/support/metrics"
 )
 
 // a regexp for extracting the unit from time.Duration.String

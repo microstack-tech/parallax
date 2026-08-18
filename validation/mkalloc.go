@@ -32,8 +32,8 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
-	"github.com/ParallaxProtocol/parallax/validation"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 )
 
 type allocItem struct{ Addr, Balance *big.Int }

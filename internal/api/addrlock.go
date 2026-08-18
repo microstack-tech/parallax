@@ -19,7 +19,7 @@ package api
 import (
 	"sync"
 
-	"github.com/ParallaxProtocol/parallax/util"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 )
 
 type AddrLocker struct {

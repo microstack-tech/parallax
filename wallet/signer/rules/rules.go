@@ -22,11 +22,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/internal/api"
-	"github.com/ParallaxProtocol/parallax/internal/jsre/deps"
-	"github.com/ParallaxProtocol/parallax/logging"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/core"
-	"github.com/ParallaxProtocol/parallax/wallet/signer/storage"
+	"github.com/ParallaxProtocol/parallax/v2/internal/api"
+	"github.com/ParallaxProtocol/parallax/v2/internal/jsre/deps"
+	"github.com/ParallaxProtocol/parallax/v2/logging"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/core"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/signer/storage"
 	"github.com/dop251/goja"
 )
 

@@ -73,14 +73,14 @@ returns data that looks like:
 ```
 INFO [11-04|16:15:54.486] Expanded filter expression               filter=enode   expanded="`enode` in Value"
 goroutine 121 [chan receive, 3 minutes]:
-github.com/ParallaxProtocol/parallax/p2p/enode.(*FairMix).nextFromAny(...)
- github.com/ParallaxProtocol/parallax/p2p/enode/iter.go:241
-github.com/ParallaxProtocol/parallax/p2p/enode.(*FairMix).Next(0xc0008c6060)
- github.com/ParallaxProtocol/parallax/p2p/enode/iter.go:215 +0x2c5
-github.com/ParallaxProtocol/parallax/p2p.(*dialScheduler).readNodes(0xc00021c2c0, {0x18149b0, 0xc0008c6060})
- github.com/ParallaxProtocol/parallax/p2p/dial.go:321 +0x9f
-created by github.com/ParallaxProtocol/parallax/p2p.newDialScheduler
- github.com/ParallaxProtocol/parallax/p2p/dial.go:179 +0x425
+github.com/ParallaxProtocol/parallax/v2/p2p/enode.(*FairMix).nextFromAny(...)
+ github.com/ParallaxProtocol/parallax/v2/p2p/enode/iter.go:241
+github.com/ParallaxProtocol/parallax/v2/p2p/enode.(*FairMix).Next(0xc0008c6060)
+ github.com/ParallaxProtocol/parallax/v2/p2p/enode/iter.go:215 +0x2c5
+github.com/ParallaxProtocol/parallax/v2/p2p.(*dialScheduler).readNodes(0xc00021c2c0, {0x18149b0, 0xc0008c6060})
+ github.com/ParallaxProtocol/parallax/v2/p2p/dial.go:321 +0x9f
+created by github.com/ParallaxProtocol/parallax/v2/p2p.newDialScheduler
+ github.com/ParallaxProtocol/parallax/v2/p2p/dial.go:179 +0x425
 ```
 
 and
@@ -94,18 +94,18 @@ returns data that looks like:
 ```
 INFO [11-04|16:16:47.141] Expanded filter expression               filter=consolecmd.go expanded="`consolecmd.go` in Value"
 goroutine 1 [chan receive]:
-github.com/ParallaxProtocol/parallax/internal/jsre.(*JSRE).Do(0xc0004223c0, 0xc0003c00f0)
- github.com/ParallaxProtocol/parallax/internal/jsre/jsre.go:230 +0xf4
-github.com/ParallaxProtocol/parallax/internal/jsre.(*JSRE).Evaluate(0xc00033eb60?, {0xc0013c00a0, 0x1e}, {0x180d720?, 0xc000010018})
- github.com/ParallaxProtocol/parallax/internal/jsre/jsre.go:289 +0xb3
-github.com/ParallaxProtocol/parallax/node/console.(*Console).Evaluate(0xc0005366e0, {0xc0013c00a0?, 0x0?})
- github.com/ParallaxProtocol/parallax/node/console/console.go:353 +0x6d
-github.com/ParallaxProtocol/parallax/node/console.(*Console).Interactive(0xc0005366e0)
- github.com/ParallaxProtocol/parallax/node/console/console.go:481 +0x691
+github.com/ParallaxProtocol/parallax/v2/internal/jsre.(*JSRE).Do(0xc0004223c0, 0xc0003c00f0)
+ github.com/ParallaxProtocol/parallax/v2/internal/jsre/jsre.go:230 +0xf4
+github.com/ParallaxProtocol/parallax/v2/internal/jsre.(*JSRE).Evaluate(0xc00033eb60?, {0xc0013c00a0, 0x1e}, {0x180d720?, 0xc000010018})
+ github.com/ParallaxProtocol/parallax/v2/internal/jsre/jsre.go:289 +0xb3
+github.com/ParallaxProtocol/parallax/v2/node/console.(*Console).Evaluate(0xc0005366e0, {0xc0013c00a0?, 0x0?})
+ github.com/ParallaxProtocol/parallax/v2/node/console/console.go:353 +0x6d
+github.com/ParallaxProtocol/parallax/v2/node/console.(*Console).Interactive(0xc0005366e0)
+ github.com/ParallaxProtocol/parallax/v2/node/console/console.go:481 +0x691
 main.localConsole(0xc00026d580?)
- github.com/ParallaxProtocol/parallax/cmd/parallax/consolecmd.go:109 +0x348
-github.com/ParallaxProtocol/parallax/internal/flags.MigrateGlobalFlags.func2.1(0x20b52c0?)
- github.com/ParallaxProtocol/parallax/internal/flags/helpers.go:91 +0x36
+ github.com/ParallaxProtocol/parallax/v2/cmd/parallax/consolecmd.go:109 +0x348
+github.com/ParallaxProtocol/parallax/v2/internal/flags.MigrateGlobalFlags.func2.1(0x20b52c0?)
+ github.com/ParallaxProtocol/parallax/v2/internal/flags/helpers.go:91 +0x36
 github.com/urfave/cli/v2.(*Command).Run(0x20b52c0, 0xc000313540)
  github.com/urfave/cli/v2@v2.17.2-0.20221006022127-8f469abc00aa/command.go:177 +0x719
 github.com/urfave/cli/v2.(*App).RunContext(0xc0005501c0, {0x1816128?, 0xc000040110}, {0xc00003c180, 0x3, 0x3})
@@ -113,15 +113,15 @@ github.com/urfave/cli/v2.(*App).RunContext(0xc0005501c0, {0x1816128?, 0xc0000401
 github.com/urfave/cli/v2.(*App).Run(...)
  github.com/urfave/cli/v2@v2.17.2-0.20221006022127-8f469abc00aa/app.go:252
 main.main()
- github.com/ParallaxProtocol/parallax/cmd/parallax/main.go:266 +0x47
+ github.com/ParallaxProtocol/parallax/v2/cmd/parallax/main.go:266 +0x47
 
 goroutine 159 [chan receive, 4 minutes]:
-github.com/ParallaxProtocol/parallax/node.(*Node).Wait(...)
- github.com/ParallaxProtocol/parallax/node/node.go:529
+github.com/ParallaxProtocol/parallax/v2/node.(*Node).Wait(...)
+ github.com/ParallaxProtocol/parallax/v2/node/node.go:529
 main.localConsole.func1()
- github.com/ParallaxProtocol/parallax/cmd/parallax/consolecmd.go:103 +0x2d
+ github.com/ParallaxProtocol/parallax/v2/cmd/parallax/consolecmd.go:103 +0x2d
 created by main.localConsole
- github.com/ParallaxProtocol/parallax/cmd/parallax/consolecmd.go:102 +0x32e
+ github.com/ParallaxProtocol/parallax/v2/cmd/parallax/consolecmd.go:102 +0x32e
 ```
 
 If the Parallax client is started with the `--pprof` option, a debugging HTTP server is made available on port 6060. Navigating to [http://localhost:6060/debug/pprof](http://localhost:6060/debug/pprof) displays the heap, running routines etc. By clicking "full goroutine stack dump" a trace can be generated that is useful for debugging.

@@ -19,7 +19,7 @@ package types
 import (
 	"errors"
 
-	"github.com/ParallaxProtocol/parallax/primitives/rlp"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/rlp"
 )
 
 // IsLegacyStoredReceipts tries to parse the RLP-encoded blob

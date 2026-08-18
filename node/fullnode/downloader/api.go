@@ -20,9 +20,9 @@ import (
 	"context"
 	"sync"
 
-	parallax "github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/rpc"
-	"github.com/ParallaxProtocol/parallax/support/event"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/rpc"
+	"github.com/ParallaxProtocol/parallax/v2/support/event"
 )
 
 // PublicDownloaderAPI provides an API which gives information about the current synchronisation status.

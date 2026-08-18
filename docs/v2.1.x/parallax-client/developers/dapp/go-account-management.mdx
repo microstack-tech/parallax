@@ -11,12 +11,12 @@ One thing that should be understood, though, is that the cryptographic primitive
 * standard needs 256MB memory and 1 second processing on a modern CPU to access a key
 * light needs 4MB memory and 100 millisecond processing on a modern CPU to access a key
 
-The encrypted keystore is implemented by the [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager) struct from the [wallet](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet) package, which also contains the configuration constants for the *standard* or *light* security modes described above. Hence client side account management simply requires importing the wallet package into the application code.
+The encrypted keystore is implemented by the [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager) struct from the [wallet](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet) package, which also contains the configuration constants for the *standard* or *light* security modes described above. Hence client side account management simply requires importing the wallet package into the application code.
 
 ```go
-import "github.com/ParallaxProtocol/parallax/wallet"
-import "github.com/ParallaxProtocol/parallax/wallet/keystore"
-import "github.com/ParallaxProtocol/parallax/util"
+import "github.com/ParallaxProtocol/parallax/v2/wallet"
+import "github.com/ParallaxProtocol/parallax/v2/wallet/keystore"
+import "github.com/ParallaxProtocol/parallax/v2/util"
 ```
 
 Afterwards a new encrypted account manager can be created via:
@@ -28,7 +28,7 @@ am := wallet.NewManager(&wallet.Config{InsecureUnlockAllowed: false}, ks)
 
 The path to the keystore folder needs to be a location that is writable by the local user but non-readable for other system users, such as inside the user's home directory.
 
-The last two arguments of [keystore.NewKeyStore](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet/keystore#NewKeyStore) are the crypto parameters defining how resource-intensive the keystore encryption should be. The options are [wallet.StandardScryptN, wallet.StandardScryptP, wallet.LightScryptN, wallet.LightScryptP](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#pkg-constants) or custom values (requiring understanding of the underlying cryptography). The *standard* version is recommended.
+The last two arguments of [keystore.NewKeyStore](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet/keystore#NewKeyStore) are the crypto parameters defining how resource-intensive the keystore encryption should be. The options are [wallet.StandardScryptN, wallet.StandardScryptP, wallet.LightScryptN, wallet.LightScryptP](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#pkg-constants) or custom values (requiring understanding of the underlying cryptography). The *standard* version is recommended.
 
 ## Account lifecycle <a href="#account-lifecycle" id="account-lifecycle"></a>
 
@@ -46,7 +46,7 @@ This individuality means that any operation requiring access to an account will 
 
 ***Please note, there are no recovery mechanisms for lost passphrases. The cryptographic properties of the encrypted keystore (using the provided parameters) guarantee that account credentials cannot be brute forced in any meaningful time.***
 
-A Parallax account is implemented by the [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Account) struct from the Parallax client [wallet](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/wallet) package. Assuming an instance of an [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager) called am exists, all of the described lifecycle operations can be executed with a handful of function calls (error handling omitted).
+A Parallax account is implemented by the [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Account) struct from the Parallax client [wallet](https://pkg.go.dev/github.com/ParallaxProtocol/parallax/v2/wallet) package. Assuming an instance of an [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager) called am exists, all of the described lifecycle operations can be executed with a handful of function calls (error handling omitted).
 
 ```go
 // Create a new account with the specified encryption passphrase.
@@ -68,7 +68,7 @@ _ = ks.Delete(newAcc, "Update password")
 impAcc, _ := ks.Import(jsonAcc, "Export password", "Import password")
 ```
 
-*Although instances of* [*wallet.Account*](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Account) *can be used to access various information about specific Parallax accounts, they do not contain any sensitive data (such as passphrases or private keys), rather they act solely as identifiers for client code and the keystore.*
+*Although instances of* [*wallet.Account*](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Account) *can be used to access various information about specific Parallax accounts, they do not contain any sensitive data (such as passphrases or private keys), rather they act solely as identifiers for client code and the keystore.*
 
 ## Signing authorization <a href="#signing-authorization" id="signing-authorization"></a>
 
@@ -79,7 +79,7 @@ There are a few different ways to authorize the account manager to execute signi
 * **Single authorization**: The simplest way to sign a transaction via the account manager is to provide the passphrase of the account every time something needs to be signed, which will ephemerally decrypt the private key, execute the signing operation and immediately throw away the decrypted key. The drawbacks are that the passphrase needs to be queried from the user every time, which can become annoying if done frequently or the application needs to keep the passphrase in memory, which can have security consequences if not done properly. Depending on the keystore's configured strength, constantly decrypting keys can result in non-negligible resource requirements.
 * **Multiple authorizations**: A more complex way of signing transactions via the account manager is to unlock the account via its passphrase once, and allow the account manager to cache the decrypted private key, enabling all subsequent signing requests to complete without the passphrase. The lifetime of the cached private key may be managed manually (by explicitly locking the account back up) or automatically (by providing a timeout during unlock). This mechanism is useful for scenarios where the user may need to sign many transactions or the application would need to do so without requiring user input. The crucial aspect to remember is that **anyone with access to the account manager can sign transactions while a particular account is unlocked** (e.g. application running untrusted code).
 
-Assuming an instance of an [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager) called am exists, a new account can be created to sign transactions using [NewAccount](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager.NewAccount). Creating transactions is out of scope for this page so instead a random [util.Hash](https://godoc.org/github.com/ParallaxProtocol/parallax/util#Hash) will be signed instead.
+Assuming an instance of an [wallet.Manager](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager) called am exists, a new account can be created to sign transactions using [NewAccount](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager.NewAccount). Creating transactions is out of scope for this page so instead a random [util.Hash](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/util#Hash) will be signed instead.
 
 For information on creating transactions in Go native applications see the [Go API page](./go-api).
 
@@ -105,7 +105,7 @@ _ = ks.TimedUnlock(signer, "Signer password", time.Second)
 signature, _ = ks.SignHash(signer, txHash.Bytes())
 ```
 
-Note that [SignWithPassphrase](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager.SignWithPassphrase) takes an [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Account) as the signer, whereas [Sign](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager.Sign) takes only a [util.Address](https://godoc.org/github.com/ParallaxProtocol/parallax/util#Address). The reason for this is that an [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Account) object may also contain a custom key-path, allowing [SignWithPassphrase](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager.SignWithPassphrase) to sign using accounts outside of the keystore; however [Sign](https://godoc.org/github.com/ParallaxProtocol/parallax/wallet#Manager.Sign) relies on accounts already unlocked within the keystore, so it cannot specify custom paths.
+Note that [SignWithPassphrase](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager.SignWithPassphrase) takes an [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Account) as the signer, whereas [Sign](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager.Sign) takes only a [util.Address](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/util#Address). The reason for this is that an [wallet.Account](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Account) object may also contain a custom key-path, allowing [SignWithPassphrase](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager.SignWithPassphrase) to sign using accounts outside of the keystore; however [Sign](https://godoc.org/github.com/ParallaxProtocol/parallax/v2/wallet#Manager.Sign) relies on accounts already unlocked within the keystore, so it cannot specify custom paths.
 
 ## Summary <a href="#summary" id="summary"></a>
 

@@ -26,7 +26,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ParallaxProtocol/parallax/util/math"
+	"github.com/ParallaxProtocol/parallax/v2/util/math"
 	"gopkg.in/urfave/cli.v1"
 )
 

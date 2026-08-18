@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/disc"
 )
 
 // reliableWindows is the shape a healthy node's stats reach within one

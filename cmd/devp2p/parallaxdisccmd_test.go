@@ -21,8 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ParallaxProtocol/parallax/p2p"
-	"github.com/ParallaxProtocol/parallax/p2p/protocols/disc"
+	"github.com/ParallaxProtocol/parallax/v2/p2p"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/protocols/disc"
 )
 
 func TestParseSeedV2IPPort(t *testing.T) {

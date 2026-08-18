@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/v2/p2p/addrman"
 )
 
 // Onion bans (PIP-0007 §4): exact-host rows in the same banlist,
