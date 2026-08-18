@@ -103,6 +103,11 @@ type AddrmanBackend struct {
 	// (phase 2) and by future eviction telemetry (phase 3).
 	peerHello map[PeerKey]Hello
 
+	// peerByKey maps session keys to their live Peer objects so the
+	// nonce-based duplicate resolution can disconnect the loser.
+	// Maintained alongside peerHello.
+	peerByKey map[PeerKey]*p2p.Peer
+
 	// peerOutboxes is the per-peer relay channel registered by
 	// handler.Run. RelayAddress fans newly-learned addresses into
 	// the chosen subset of these. See relay.go for the picker.
@@ -159,6 +164,7 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		peerBuckets:     make(map[PeerKey]*tokenBucket),
 		handshakeByID:   make(map[enode.ID]string),
 		peerHello:       make(map[PeerKey]Hello),
+		peerByKey:       make(map[PeerKey]*p2p.Peer),
 		peerOutboxes:    make(map[PeerKey]*peerRelayState),
 		getPeersPending: make(map[PeerKey]bool),
 		peersReply:      make(map[uint8]peersReplyCache),
@@ -627,6 +633,7 @@ func (b *AddrmanBackend) PeerDisconnected(peer *p2p.Peer) {
 	delete(b.peerBuckets, key)
 	delete(b.handshakeByID, peer.ID())
 	delete(b.peerHello, key)
+	delete(b.peerByKey, key)
 	delete(b.getPeersPending, key)
 	b.mu.Unlock()
 	b.Q.Disconnect(key)
@@ -738,7 +745,42 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 	key := peerKeyFor(peer)
 	b.mu.Lock()
 	b.peerHello[key] = h
+	b.peerByKey[key] = peer
+	// Same-node duplicate detection by nonce (PIP-0007): the Hello
+	// nonce is per-node-lifetime, so two live sessions carrying the
+	// same remote nonce are the same node regardless of transport —
+	// the only signal that works for onion peers, whose inbound legs
+	// are anonymous and exempt from address-based dedup. Feelers are
+	// skipped: they self-terminate and must never cost a real session.
+	var dup *p2p.Peer
+	if h.Nonce != 0 && !peer.Feeler() {
+		for k, hello := range b.peerHello {
+			if k == key || hello.Nonce != h.Nonce {
+				continue
+			}
+			if p := b.peerByKey[k]; p != nil && !p.Feeler() {
+				dup = p
+				break
+			}
+		}
+	}
 	b.mu.Unlock()
+	if dup != nil {
+		var ourNonce uint64
+		if b.helloProv != nil {
+			ourNonce = b.helloProv().Nonce
+		}
+		loser := selectNonceDupLoser(dup, peer, ourNonce, h.Nonce)
+		winner := winnerOf(dup, peer, loser)
+		// The survivor inherits the loser's proven dial target so
+		// the dialer stops re-dialing an address it is already
+		// connected to and addrman credit keeps flowing to it.
+		winner.AdoptDialTargetFrom(loser)
+		b.log.Debug("parallax-disc/1: same-node duplicate session (nonce match), dropping loser",
+			"loserInbound", loser.Inbound(), "keepInbound", winner.Inbound())
+		loser.Disconnect(p2p.DiscAlreadyConnected)
+		return nil
+	}
 
 	b.crossDialHostMu.RLock()
 	host := b.crossDialHost
@@ -746,7 +788,7 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 	if host == nil || h.ListenPort == 0 {
 		return nil
 	}
-	dup := host.FindCrossDialDup(peer, h.ListenPort)
+	dup = host.FindCrossDialDup(peer, h.ListenPort)
 	if dup == nil {
 		return nil
 	}
@@ -756,6 +798,36 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 		"keep", winnerOf(dup, peer, loser).RemoteAddr())
 	loser.Disconnect(p2p.DiscAlreadyConnected)
 	return nil
+}
+
+// selectNonceDupLoser picks which of two same-node sessions to drop.
+// The rule is symmetric across both endpoints so two upgraded nodes
+// independently drop the SAME underlying TCP connection instead of
+// each killing the other's keeper: for a mixed pair, the connection
+// initiated by the lower-nonce node survives. (At node A with nonce a
+// and peer nonce b: b<a keeps the peer-initiated leg — A's inbound;
+// a<b keeps A's outbound. Node B computes the mirror image.) A
+// same-direction pair — e.g. we dialed both the peer's IP and its
+// onion — keeps the older session; the remote sees two inbounds and
+// applies the same age rule.
+func selectNonceDupLoser(a, b *p2p.Peer, ourNonce, theirNonce uint64) *p2p.Peer {
+	aIn, bIn := a.Inbound(), b.Inbound()
+	if aIn != bIn {
+		inboundLeg, outboundLeg := a, b
+		if bIn {
+			inboundLeg, outboundLeg = b, a
+		}
+		if theirNonce < ourNonce {
+			// The peer's dial survives; our outbound leg is the loser.
+			return outboundLeg
+		}
+		return inboundLeg
+	}
+	// Same direction: drop the younger.
+	if a.Created() < b.Created() {
+		return b
+	}
+	return a
 }
 
 // selectCrossDialLoser picks which of (existing, incoming) to drop

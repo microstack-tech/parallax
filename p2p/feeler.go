@@ -132,6 +132,12 @@ func (srv *Server) runOneFeeler() {
 			srv.addrbook.Attempt(addr, false, time.Now())
 			return
 		}
+	} else if srv.isSelfNetAddr(addr) || srv.connectedToDialTarget(addr) {
+		// Onion candidates: our own service, or a target a live peer
+		// already represents (directly or via the nonce dedup's
+		// adopted twin). Core's feeler also aborts on
+		// AlreadyConnectedToAddress.
+		return
 	}
 
 	// DialV2Feeler handles the full v2 handshake, runs the

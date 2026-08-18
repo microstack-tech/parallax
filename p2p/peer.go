@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/enr"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
@@ -495,6 +496,34 @@ func (p *Peer) OnionPeer() bool {
 func (p *Peer) ProxiedConn() bool {
 	return p.rw.is(proxiedConn)
 }
+
+// AdoptDialTargetFrom transplants dup's outbound dial target onto
+// this session, when this one has none. Used by the same-node
+// duplicate resolution (PIP-0007): when an outbound onion/proxied leg
+// is dropped in favor of its inbound twin, the survivor inherits the
+// address the loser proved — so the dialer knows that address is
+// connected and addrman feedback keeps landing on the right entry.
+func (p *Peer) AdoptDialTargetFrom(dup *Peer) {
+	if p == nil || dup == nil {
+		return
+	}
+	if p.rw.dialTarget().Network != 0 {
+		return
+	}
+	if t := dup.rw.dialTarget(); t.Network != 0 {
+		p.rw.setDialTarget(t)
+	}
+}
+
+// DisconnectRequested reports whether Disconnect has been invoked on
+// this peer. Lets tests observe dedup and eviction decisions without
+// a run loop.
+func (p *Peer) DisconnectRequested() bool { return p.discRequested.Load() }
+
+// SetDialTargetForTest stamps an outbound dial target on a
+// test-constructed peer, mirroring MarkInboundForTest. Production
+// conns get the target at dial time.
+func (p *Peer) SetDialTargetForTest(a addrman.NetAddr) { p.rw.setDialTarget(a) }
 
 // MarkOnionForTest sets the onion conn flag on a test-constructed
 // peer, mirroring MarkInboundForTest.

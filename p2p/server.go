@@ -1616,6 +1616,12 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 			srv.addrmanAttemptAddr(addr, false)
 			return nil, fmt.Errorf("v2 dial %s: already connected", addr)
 		}
+	} else if srv.connectedToDialTarget(addr) {
+		// Onion targets: matched against live peers' dial targets —
+		// including a target transplanted onto an inbound twin by the
+		// nonce dedup — since onion peers expose no listen addr.
+		srv.addrmanAttemptAddr(addr, false)
+		return nil, fmt.Errorf("v2 dial %s: already connected", addr)
 	}
 	srv.log.Trace("pip6: DialV2 enter", "addr", addr.String(), "peers", len(srv.Peers()), "extra", extra)
 	// Network-group diversity for outbound dials. Refuse a second
@@ -2027,6 +2033,28 @@ func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
 // outbound/inbound branching logic.
 func (srv *Server) PeerListenAddr(p *Peer) (*net.TCPAddr, bool) {
 	return srv.peerListenAddr(p)
+}
+
+// connectedToDialTarget reports whether any live peer's recorded dial
+// target equals addr. The dedup that works for onion targets: an
+// inbound onion peer exposes no listen addr, but if it is a known
+// twin of a dropped outbound leg it carries that leg's adopted target
+// (PIP-0007 nonce dedup). Feelers are excluded — a probe must not
+// suppress real dials.
+func (srv *Server) connectedToDialTarget(addr addrman.NetAddr) bool {
+	found := false
+	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
+		for _, p := range peers {
+			if p.rw.is(feelerConn) {
+				continue
+			}
+			if t := p.rw.dialTarget(); t.Network != 0 && t.Equal(addr) {
+				found = true
+				return
+			}
+		}
+	})
+	return found
 }
 
 // alreadyConnectedTo reports whether any current peer's effective

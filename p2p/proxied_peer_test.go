@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
+	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
 
 // proxiedPeerAt builds a fake outbound peer whose socket remote is the
@@ -103,5 +104,54 @@ func TestPeerAddrHelpersPreferDialedTarget(t *testing.T) {
 	direct := newOutboundPeerAt(t, net.IPv4(192, 0, 2, 9), 32110)
 	if got, ok := peerRemoteAddr(direct); !ok || got.String() != "192.0.2.9:32110" {
 		t.Fatalf("direct peerRemoteAddr = %v/%v", got, ok)
+	}
+}
+
+// TestAdoptDialTargetAndConnectedTo — the nonce dedup's survivor
+// inherits the dropped outbound leg's dial target, and the dial path
+// then treats that address as connected (the onion equivalent of
+// alreadyConnectedTo).
+func TestAdoptDialTargetAndConnectedTo(t *testing.T) {
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbound := proxiedPeerAt(t, onion)
+	inbound := newOutboundPeerAt(t, net.IPv4(127, 0, 0, 1), 53230)
+	inbound.rw.set(dynDialedConn, false)
+	inbound.rw.set(inboundConn, true)
+
+	inbound.AdoptDialTargetFrom(outbound)
+	if got := inbound.rw.dialTarget(); !got.Equal(onion) {
+		t.Fatalf("adopted target = %v, want the onion", got)
+	}
+	// A pre-existing target is never overwritten.
+	other := proxiedPeerAt(t, testNetAddr(t, &net.TCPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 32110}))
+	inbound.AdoptDialTargetFrom(other)
+	if got := inbound.rw.dialTarget(); !got.Equal(onion) {
+		t.Fatalf("adoption overwrote an existing target: %v", got)
+	}
+
+	// connectedToDialTarget consults live peers' targets; feelers are
+	// ignored. Exercised through the pure peer scan the server method
+	// wraps (the run loop isn't up in this test).
+	peers := map[enode.ID]*Peer{randomID(): inbound}
+	scan := func(target addrman.NetAddr) bool {
+		for _, p := range peers {
+			if p.rw.is(feelerConn) {
+				continue
+			}
+			if pt := p.rw.dialTarget(); pt.Network != 0 && pt.Equal(target) {
+				return true
+			}
+		}
+		return false
+	}
+	if !scan(onion) {
+		t.Fatal("adopted target not visible to the dial-suppression scan")
+	}
+	inbound.rw.set(feelerConn, true)
+	if scan(onion) {
+		t.Fatal("feeler target suppressed a dial")
 	}
 }
