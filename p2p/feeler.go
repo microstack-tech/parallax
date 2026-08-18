@@ -237,20 +237,19 @@ func (srv *Server) runAddrFetch() {
 	}
 	// Bootstrap-only fetch — DNSSeeds resolution runs separately
 	// in setupAddrMan and feeds gossip via the regular dial path.
-	for _, tcp := range srv.BootstrapNodesV2 {
+	for _, na := range srv.BootstrapNodesV2 {
 		select {
 		case <-srv.quit:
 			return
 		default:
 		}
-		if tcp == nil || srv.IsSelfEndpoint(tcp) {
+		// Onion bootnodes ride the same loop once a Tor route
+		// exists; unreachable networks are skipped like everywhere
+		// else on the dial side.
+		if !srv.NetworkReachable(na.Network) || srv.isSelfNetAddr(na) {
 			continue
 		}
-		if srv.alreadyConnectedTo(tcp) {
-			continue
-		}
-		na, ok := netAddrFromTCP(tcp)
-		if !ok {
+		if tcp := tcpFromNetAddr(na); tcp != nil && srv.alreadyConnectedTo(tcp) {
 			continue
 		}
 		// Best-effort: ignore errors. Each successful dial yields

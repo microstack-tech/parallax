@@ -602,9 +602,9 @@ func (n *Node) setupAddrManAndDisc() error {
 	for _, bn := range n.config.P2P.BootstrapNodes {
 		addrman.IngestNode(m, bn, addrman.SourceDNSSeed, now)
 	}
-	for _, addr := range n.config.P2P.BootstrapNodesV2 {
-		addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
-	}
+	// V2 bootstrap entries are ingested by Server.setupAddrMan once
+	// the proxy policy is resolved, so onion bootnodes are stored
+	// only on nodes with a Tor route (PIP-0007).
 	// Register the subprotocol. Append directly to Protocols — we're
 	// still in initializingState (Start's state machine has flipped
 	// to runningState but the server hasn't started yet).

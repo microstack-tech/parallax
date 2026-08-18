@@ -88,6 +88,15 @@ func IngestV2Addr(m *AddrMan, addr *net.TCPAddr, tag Source, lastSeen time.Time)
 	return m.AddOne(naddr, 0x00, nil, lastSeen, naddr, tag, 0)
 }
 
+// IngestV2NetAddr is IngestV2Addr for callers that already hold the
+// BIP155 form — bootnode entries can be onion addresses (PIP-0007).
+func IngestV2NetAddr(m *AddrMan, addr NetAddr, tag Source, lastSeen time.Time) bool {
+	if m == nil || len(addr.Bytes()) == 0 || addr.Port == 0 {
+		return false
+	}
+	return m.AddOne(addr, 0x00, nil, lastSeen, addr, tag, 0)
+}
+
 // IngestNode feeds a single enode.Node into m with the given Source tag.
 // Exported so callers (e.g., bootnode ingest) can use it directly without
 // constructing a one-shot iterator.

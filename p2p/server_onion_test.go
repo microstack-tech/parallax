@@ -291,6 +291,55 @@ func TestAutoOnionProxySuppressedByExplicitOnion(t *testing.T) {
 	}
 }
 
+// TestOnionBootnodeIngestFollowsReachability — Core's fixed-seed
+// reachability skip: an onion bootstrap entry is stored only on nodes
+// with a Tor route (PIP-0007).
+func TestOnionBootnodeIngestFollowsReachability(t *testing.T) {
+	onion, err := addrman.ParseOnion(testOnionService+".onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110})
+	boot := []addrman.NetAddr{ip, onion}
+
+	newSrv := func(name string, onionProxy string) *Server {
+		return &Server{Config: Config{
+			Name:             name,
+			MaxPeers:         10,
+			NoDial:           true,
+			NoDiscovery:      true,
+			PrivateKey:       newkey(),
+			BootstrapNodesV2: boot,
+			OnionProxyAddr:   onionProxy,
+			Logger:           testlog.Logger(t, logging.LvlCrit),
+		}}
+	}
+
+	clearnet := newSrv("clearnet-only", "")
+	if err := clearnet.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer clearnet.Stop()
+	if clearnet.AddrBook().Lookup(onion) != nil {
+		t.Error("clearnet-only node stored the onion bootnode")
+	}
+	if clearnet.AddrBook().Lookup(ip) == nil {
+		t.Error("clearnet-only node missing the IP bootnode")
+	}
+
+	tor := newSrv("tor-routed", "127.0.0.1:9050")
+	if err := tor.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tor.Stop()
+	if tor.AddrBook().Lookup(onion) == nil {
+		t.Error("tor-routed node missing the onion bootnode")
+	}
+	if tor.AddrBook().Lookup(ip) == nil {
+		t.Error("tor-routed node missing the IP bootnode")
+	}
+}
+
 // TestDefaultKeepsClearnetSurface pins the inverse: without onion
 // restrictions the discv4 socket still comes up (legacy-discovery auto).
 func TestDefaultKeepsClearnetSurface(t *testing.T) {

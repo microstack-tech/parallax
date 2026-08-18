@@ -22,6 +22,8 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -79,6 +81,39 @@ func (a NetAddr) OnionHostname() string {
 	raw = append(raw, pub...)
 	raw = append(raw, sum[0], sum[1], onionV3Version)
 	return onionBase32.EncodeToString(raw) + ".onion"
+}
+
+// ParseHostPort parses a "host:port" dial target into a NetAddr,
+// accepting both "ip:port" and "<base32>.onion:port" forms — the
+// shared parser behind bootnode lists, admin RPC targets, and
+// operator flags (PIP-0007).
+func ParseHostPort(s string) (NetAddr, error) {
+	host, portStr, err := net.SplitHostPort(strings.TrimSpace(s))
+	if err != nil {
+		return NetAddr{}, fmt.Errorf("addrman: invalid host:port %q: %w", s, err)
+	}
+	port64, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil || port64 == 0 {
+		return NetAddr{}, fmt.Errorf("addrman: invalid port in %q", s)
+	}
+	port := uint16(port64)
+	na, oerr := ParseOnion(host, port)
+	switch {
+	case oerr == nil:
+		return na, nil
+	case !errors.Is(oerr, ErrNotOnion):
+		// It named a .onion but a malformed one — surface that
+		// instead of a confusing invalid-ip error.
+		return NetAddr{}, oerr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return NetAddr{}, fmt.Errorf("addrman: invalid host %q", host)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return NewNetAddr(NetIPv4, v4, port)
+	}
+	return NewNetAddr(NetIPv6, ip.To16(), port)
 }
 
 // ParseOnion parses a "<base32>.onion" hostname into a NetTorV3

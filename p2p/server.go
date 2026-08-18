@@ -151,12 +151,14 @@ type Config struct {
 	// addrman with KeyType=0x01 via IngestNode.
 	BootstrapNodes []*enode.Node
 
-	// BootstrapNodesV2 are the plain-ip:port bootstrap peers used by
-	// the Parallax v2.0 BIP324-style handshake. No NodeID / enode URL
-	// is required to reach them — the handshake authenticates against
-	// whoever answered on that ip:port. Ingested into addrman with
-	// source=dns_seed and KeyType=0x00 via IngestV2Addr.
-	BootstrapNodesV2 []*net.TCPAddr
+	// BootstrapNodesV2 are the v2-native bootstrap peers — IP or Tor
+	// v3 addresses (PIP-0007) used by the BIP324-style handshake. No
+	// NodeID / enode URL is required to reach them — the handshake
+	// authenticates against whoever answered at that address.
+	// Ingested into addrman with source=dns_seed and KeyType=0x00 at
+	// Start, filtered to the networks the node has a route to
+	// (Core's fixed-seed reachability skip).
+	BootstrapNodesV2 []addrman.NetAddr
 
 	// DNSSeeds are hostnames the node resolves at DNSSeedDefaultInterval
 	// (24h, Bitcoin parity) to bootstrap addrman with v2.0-native peers
@@ -963,9 +965,19 @@ func (srv *Server) setupAddrMan() error {
 		for _, n := range srv.BootstrapNodes {
 			addrman.IngestNode(m, n, addrman.SourceDNSSeed, now)
 		}
-		for _, addr := range srv.BootstrapNodesV2 {
-			addrman.IngestV2Addr(m, addr, addrman.SourceDNSSeed, now)
+	}
+	// V2 bootstrap ingest runs here (not the node layer) so the
+	// resolved proxy policy can filter it: a bootnode on a network we
+	// have no route to is skipped, mirroring Core's fixed-seed
+	// reachability skip. Add dedupes, so re-running on a warm
+	// addrbook is harmless.
+	now := time.Now()
+	for _, addr := range srv.BootstrapNodesV2 {
+		if !srv.NetworkReachable(addr.Network) {
+			srv.log.Debug("skipping bootstrap node on unreachable network", "addr", addr)
+			continue
 		}
+		addrman.IngestV2NetAddr(m, addr, addrman.SourceDNSSeed, now)
 	}
 	srv.addrbook = m
 	srv.log.Info("addrman enabled", "path", srv.AddrBookPath, "entries", m.Size(nil, nil))

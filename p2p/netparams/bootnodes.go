@@ -43,6 +43,7 @@ var MainnetBootnodes = []string{}
 var MainnetBootnodesV2 = []string{
 	"168.231.74.175:32110",
 	"72.61.186.233:32110",
+	"riowz6s6jhxshbldxf5ht2je6mog5wssz3a47oj5tk3zs722u3hyj2id.onion:32110",
 }
 
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the

@@ -96,6 +96,32 @@ func TestOnionParseRejections(t *testing.T) {
 	}
 }
 
+func TestParseHostPort(t *testing.T) {
+	na, err := ParseHostPort("203.0.113.7:32110")
+	if err != nil || na.Network != NetIPv4 || na.Port != 32110 {
+		t.Fatalf("ipv4: %v %v", na, err)
+	}
+	na, err = ParseHostPort("[2001:db8::7]:32110")
+	if err != nil || na.Network != NetIPv6 {
+		t.Fatalf("ipv6: %v %v", na, err)
+	}
+	na, err = ParseHostPort(" " + torProjectOnion + ":32110 ")
+	if err != nil || na.Network != NetTorV3 || na.Port != 32110 {
+		t.Fatalf("onion: %v %v", na, err)
+	}
+	for _, bad := range []string{
+		"203.0.113.7",                        // no port
+		"203.0.113.7:0",                      // zero port
+		"203.0.113.7:99999",                  // port overflow
+		"seed.example.org:32110",             // hostnames are not dial targets
+		"x" + torProjectOnion[1:] + ":32110", // corrupted onion checksum
+	} {
+		if _, err := ParseHostPort(bad); err == nil {
+			t.Errorf("ParseHostPort(%q) accepted", bad)
+		}
+	}
+}
+
 func TestOnionHostnameNonTor(t *testing.T) {
 	na, err := NewNetAddr(NetIPv4, []byte{1, 2, 3, 4}, 1)
 	if err != nil {

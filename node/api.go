@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -116,32 +115,7 @@ func (api *privateAdminAPI) AddPeer(url string) (bool, error) {
 // configured Tor proxy; the dial fails with "no route to network" when
 // none is configured).
 func parseV2Target(address string) (addrman.NetAddr, error) {
-	host, portStr, err := net.SplitHostPort(address)
-	if err != nil {
-		return addrman.NetAddr{}, err
-	}
-	port, err := parsePort(portStr)
-	if err != nil {
-		return addrman.NetAddr{}, err
-	}
-	na, err := addrman.ParseOnion(host, port)
-	switch {
-	case err == nil:
-		return na, nil
-	case !errors.Is(err, addrman.ErrNotOnion):
-		// It named a .onion but a malformed one — surface that
-		// instead of a confusing "invalid ip".
-		return addrman.NetAddr{}, err
-	}
-	ip, perr := netip.ParseAddr(host)
-	if perr != nil {
-		return addrman.NetAddr{}, fmt.Errorf("invalid host %q", host)
-	}
-	na, ok := addrman.FromAddrPort(netip.AddrPortFrom(ip.Unmap(), port))
-	if !ok {
-		return addrman.NetAddr{}, fmt.Errorf("invalid host %q", host)
-	}
-	return na, nil
+	return addrman.ParseHostPort(address)
 }
 
 // RemovePeer disconnects from a remote node. Symmetric with AddPeer:

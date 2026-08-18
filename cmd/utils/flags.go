@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	godebug "runtime/debug"
@@ -50,6 +49,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/node/nodeconfig"
 	"github.com/ParallaxProtocol/parallax/node/stats"
 	"github.com/ParallaxProtocol/parallax/p2p"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netparams"
@@ -934,28 +934,18 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		cfg.BootstrapNodes = append(cfg.BootstrapNodes, node)
 	}
 
-	cfg.BootstrapNodesV2 = make([]*net.TCPAddr, 0, len(v2Addrs))
+	cfg.BootstrapNodesV2 = make([]addrman.NetAddr, 0, len(v2Addrs))
 	for _, raw := range v2Addrs {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
 		}
-		host, portStr, err := net.SplitHostPort(raw)
+		na, err := addrman.ParseHostPort(raw)
 		if err != nil {
-			logging.Crit("Bootstrap v2 entry invalid (expected ip:port)", "entry", raw, "err", err)
+			logging.Crit("Bootstrap v2 entry invalid (expected ip:port or <addr>.onion:port)", "entry", raw, "err", err)
 			continue
 		}
-		ip := net.ParseIP(host)
-		if ip == nil {
-			logging.Crit("Bootstrap v2 entry has invalid IP", "entry", raw, "host", host)
-			continue
-		}
-		port, err := strconv.ParseUint(portStr, 10, 16)
-		if err != nil || port == 0 {
-			logging.Crit("Bootstrap v2 entry has invalid port", "entry", raw, "port", portStr)
-			continue
-		}
-		cfg.BootstrapNodesV2 = append(cfg.BootstrapNodesV2, &net.TCPAddr{IP: ip, Port: int(port)})
+		cfg.BootstrapNodesV2 = append(cfg.BootstrapNodesV2, na)
 	}
 }
 
