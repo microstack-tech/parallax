@@ -443,3 +443,39 @@ func waitForCond(t *testing.T, what string, cond func() bool) {
 	}
 	t.Fatalf("timeout waiting for %s", what)
 }
+
+// TestOnlyNetExemptsManualDials — --onlynet restricts automatic
+// outbound connections only. Regression: enforcing it inside the
+// connector made admin_addPeer and every configured static clearnet
+// node fail with "no route to network" on an onion-only node, while
+// manual onion dials stayed exempt — the exact inversion of Core,
+// where -onlynet governs automatic connections and addnode targets
+// are dialed regardless.
+func TestOnlyNetExemptsManualDials(t *testing.T) {
+	srv := &Server{Config: Config{
+		Name:           "onlynet-manual",
+		MaxPeers:       10,
+		NoDial:         true,
+		NoDiscovery:    true,
+		PrivateKey:     newkey(),
+		OnlyNet:        []string{"onion"},
+		OnionProxyAddr: "127.0.0.1:9",
+		Logger:         testlog.Logger(t, logging.LvlCrit),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	clearnet := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(203, 0, 113, 7), Port: 32110})
+	// Automatic: refused by --onlynet.
+	if err := srv.DialV2(clearnet); !errors.Is(err, errUnreachableNetwork) {
+		t.Fatalf("automatic clearnet dial = %v, want errUnreachableNetwork", err)
+	}
+	// Manual: allowed through to the transport, where it fails for
+	// ordinary connection reasons rather than policy.
+	err := srv.DialV2Manual(clearnet)
+	if errors.Is(err, errUnreachableNetwork) {
+		t.Fatalf("manual clearnet dial refused by --onlynet: %v", err)
+	}
+}

@@ -209,6 +209,8 @@ type dialConfig struct {
 	// that don't want the v2 branch.
 	v2Predicate func(*enode.Node) bool
 	v2Dial      func(addrman.NetAddr) error
+	// reachable gates automatic dials on --onlynet. nil disables.
+	reachable func(addrman.NetID) bool
 
 	// maxBlockRelay is the count of block-relay-only outbound slots
 	// reserved within maxDialPeers. Bitcoin Core defaults to 2
@@ -655,6 +657,14 @@ func (d *dialScheduler) checkDial(n *enode.Node, flags connFlag) error {
 	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNetRestrict
+	}
+	// --onlynet gates automatic dials only; static (operator-chosen)
+	// endpoints are exempt, as in Core.
+	if flags&staticDialedConn == 0 && d.reachable != nil && n.IP() != nil {
+		na, ok := netAddrFromTCP(&net.TCPAddr{IP: n.IP(), Port: n.TCP()})
+		if ok && !d.reachable(na.Network) {
+			return errUnreachableNetwork
+		}
 	}
 	// Never dial a banned address (Bitcoin Core
 	// CConnman::OpenNetworkConnection). Applies to every scheduler

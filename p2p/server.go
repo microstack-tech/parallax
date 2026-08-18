@@ -1308,6 +1308,7 @@ func (srv *Server) setupDialScheduler() {
 		clock:          srv.clock,
 		v2Predicate:    hasV2TransportENR,
 		v2Dial:         srv.DialV2,
+		reachable:      srv.NetworkReachable,
 		maxBlockRelay:  srv.maxBlockRelayDial(),
 	}
 	if srv.BanList != nil {
@@ -1610,6 +1611,14 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 			srv.addrmanAttemptAddr(addr, false)
 			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialBanned)
 		}
+	}
+	// --onlynet restricts automatic outbound connections only;
+	// operator-initiated dials (admin_addPeer / admin_dialV2, tagged
+	// staticDialedConn) reach any network the node has a route to,
+	// as in Core. Checked after the ban gate so a banned address
+	// reports banned whatever the policy says about its network.
+	if !extraHas(extra, staticDialedConn) && !srv.NetworkReachable(addr.Network) {
+		return nil, fmt.Errorf("v2 dial %s: %w", addr, errUnreachableNetwork)
 	}
 	if !srv.v2DialCooldownCheckAndMark(addr) {
 		return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialCooldown)

@@ -204,9 +204,31 @@ func (p *netPolicy) withAutoOnionProxy(addr string) (*netPolicy, error) {
 	return next, nil
 }
 
-// isReachable reports whether outbound connections to net are allowed.
+// isReachable reports whether AUTOMATIC outbound connections to net
+// are allowed: the node has a route and --onlynet permits it. This is
+// the gate for dial candidates the node picks itself (addrman draws,
+// feelers, anchors, bootstrap ingest).
 func (p *netPolicy) isReachable(net addrman.NetID) bool {
 	return p != nil && p.reachable[net]
+}
+
+// hasRoute reports whether the node can physically reach net at all,
+// ignoring --onlynet. Clearnet is always routable (directly or
+// through --proxy); onion needs a configured or discovered proxy.
+// Operator-initiated and static dials are gated on this and not on
+// isReachable, mirroring Core, where -onlynet restricts automatic
+// connections while addnode/connect targets are dialed regardless.
+func (p *netPolicy) hasRoute(net addrman.NetID) bool {
+	if p == nil {
+		return net == addrman.NetIPv4 || net == addrman.NetIPv6
+	}
+	switch net {
+	case addrman.NetIPv4, addrman.NetIPv6:
+		return true
+	case addrman.NetTorV3:
+		return p.proxies[addrman.NetTorV3] != nil
+	}
+	return false
 }
 
 // proxyFor returns the SOCKS5 proxy for net, or nil for a direct dial.

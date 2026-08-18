@@ -144,15 +144,21 @@ func TestNetConnectorUnreachable(t *testing.T) {
 	}
 	c := &netConnector{policy: func() *netPolicy { return pol }, timeout: time.Second}
 
-	// Policy-excluded network.
-	v6 := mustNetAddr(t, addrman.NetIPv6, make([]byte, 16), 32110)
-	if _, err := c.Connect(context.Background(), v6); !errors.Is(err, errUnreachableNetwork) {
-		t.Errorf("ipv6 under onlynet=ipv4: got %v", err)
+	// The connector enforces only "is this network routable at all".
+	// --onlynet is an automatic-dial restriction applied by the dial
+	// paths, so it must NOT make the connector refuse a clearnet
+	// target — operator-initiated and static dials go through here
+	// too and are exempt from --onlynet, as in Core.
+	if !pol.hasRoute(addrman.NetIPv6) {
+		t.Error("ipv6 should stay routable under onlynet=ipv4")
 	}
-	// Network without dial support (Tor dialing lands in phase 2).
+	if pol.isReachable(addrman.NetIPv6) {
+		t.Error("ipv6 should not be automatically dialable under onlynet=ipv4")
+	}
+	// Onion with no proxy has no route at all — refused here.
 	tor := mustNetAddr(t, addrman.NetTorV3, make([]byte, 32), 32110)
 	if _, err := c.Connect(context.Background(), tor); !errors.Is(err, errUnreachableNetwork) {
-		t.Errorf("tor_v3: got %v", err)
+		t.Errorf("tor_v3 without a proxy: got %v", err)
 	}
 }
 

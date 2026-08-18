@@ -86,7 +86,11 @@ func (c *netConnector) Connect(ctx context.Context, addr addrman.NetAddr) (net.C
 		if !ok {
 			return nil, errNoEndpoint
 		}
-		if pol != nil && !pol.isReachable(addr.Network) {
+		// Only "can we reach this network at all" is enforced here.
+		// The --onlynet restriction is applied by the automatic dial
+		// paths, so operator-initiated and static dials keep working
+		// under it (Core parity).
+		if pol != nil && !pol.hasRoute(addr.Network) {
 			return nil, fmt.Errorf("%w: %s", errUnreachableNetwork, addr.Network)
 		}
 		if pr := pol.proxyFor(addr.Network); pr != nil {
