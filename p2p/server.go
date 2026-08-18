@@ -203,6 +203,28 @@ type Config struct {
 	// is used to dial outbound peer connections.
 	Dialer NodeDialer `toml:"-"`
 
+	// ProxyAddr, when set, routes every outbound connection through
+	// the given SOCKS5 proxy ("ip:port"), including .onion targets —
+	// Bitcoin Core's -proxy. PIP-0007.
+	ProxyAddr string `toml:",omitempty"`
+
+	// OnionProxyAddr overrides the proxy used for .onion targets —
+	// Bitcoin Core's -onion. Empty inherits ProxyAddr; the sentinel
+	// "0" disables onion outbound even when ProxyAddr is set.
+	OnionProxyAddr string `toml:",omitempty"`
+
+	// OnlyNet restricts outbound connections to the named networks
+	// ("ipv4", "ipv6", "onion") — Bitcoin Core's -onlynet. Empty
+	// allows every network the node has a route to. Inbound and
+	// operator-initiated dials are not restricted, as in Core.
+	OnlyNet []string `toml:",omitempty"`
+
+	// ProxyNoRandomize disables per-connection SOCKS5 credential
+	// randomization (Tor stream isolation) — the inverse of Bitcoin
+	// Core's -proxyrandomize, inverted so the zero value keeps
+	// isolation on.
+	ProxyNoRandomize bool `toml:",omitempty"`
+
 	// If NoDial is true, the server will not dial any peers.
 	NoDial bool `toml:",omitempty"`
 
