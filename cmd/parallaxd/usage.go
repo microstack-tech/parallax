@@ -159,6 +159,10 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.NodeKeyFileFlag,
 			utils.NodeKeyHexFlag,
 			utils.LegacyDiscoveryFlag,
+			utils.ProxyFlag,
+			utils.OnionFlag,
+			utils.OnlyNetFlag,
+			utils.ProxyRandomizeFlag,
 		},
 	},
 	{

@@ -657,6 +657,26 @@ var (
 			"The addrman and v2 handshake are always on; this flag only controls whether the v1.x surface is exposed alongside them.",
 		Value: "auto",
 	}
+	ProxyFlag = cli.StringFlag{
+		Name: "proxy",
+		Usage: "SOCKS5 proxy (ip:port) for all outbound P2P connections, including .onion targets. " +
+			"DNS seed hostnames stop resolving locally and are fetched through the proxy instead. PIP-0007.",
+	}
+	OnionFlag = cli.StringFlag{
+		Name: "onion",
+		Usage: "SOCKS5 proxy (ip:port) used only for .onion targets, overriding --proxy for that network. " +
+			"Use 0 to disable onion outbound even when --proxy is set.",
+	}
+	OnlyNetFlag = cli.StringFlag{
+		Name: "onlynet",
+		Usage: "Comma-separated networks outbound connections are restricted to (ipv4|ipv6|onion). " +
+			"Inbound and operator-initiated dials are unaffected. onion requires --proxy or --onion.",
+	}
+	ProxyRandomizeFlag = cli.BoolTFlag{
+		Name: "proxyrandomize",
+		Usage: "Randomize SOCKS5 credentials for every proxy connection (Tor stream isolation, default on). " +
+			"--proxyrandomize=false shares one circuit across peers.",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -957,6 +977,26 @@ func setListenAddress(ctx *cli.Context, cfg *p2p.Config) {
 	}
 }
 
+// setProxy applies the PIP-0007 proxy flags (--proxy, --onion,
+// --onlynet, --proxyrandomize). Validation of the resulting policy —
+// unknown networks, onion restriction without a route — happens in
+// p2p.Server.Start, which fails startup on inconsistent values the way
+// Core's InitError does.
+func setProxy(ctx *cli.Context, cfg *p2p.Config) {
+	if ctx.GlobalIsSet(ProxyFlag.Name) {
+		cfg.ProxyAddr = ctx.GlobalString(ProxyFlag.Name)
+	}
+	if ctx.GlobalIsSet(OnionFlag.Name) {
+		cfg.OnionProxyAddr = ctx.GlobalString(OnionFlag.Name)
+	}
+	if ctx.GlobalIsSet(OnlyNetFlag.Name) {
+		cfg.OnlyNet = SplitAndTrim(ctx.GlobalString(OnlyNetFlag.Name))
+	}
+	// BoolTFlag: default true; GlobalBool returns false only when the
+	// operator passed --proxyrandomize=false.
+	cfg.ProxyNoRandomize = !ctx.GlobalBool(ProxyRandomizeFlag.Name)
+}
+
 // setNAT creates a port mapper from command line flags.
 func setNAT(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.GlobalIsSet(NATFlag.Name) {
@@ -1173,6 +1213,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setListenAddress(ctx, cfg)
 	setBootstrapNodes(ctx, cfg)
 	setDNSSeeds(ctx, cfg)
+	setProxy(ctx, cfg)
 
 	if ctx.GlobalIsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.GlobalInt(MaxPeersFlag.Name)
