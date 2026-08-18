@@ -43,6 +43,7 @@ type fakeControl struct {
 	cookie      []byte
 	password    string // expected HASHEDPASSWORD credential
 	wrongServer bool   // corrupt the SAFECOOKIE server hash
+	socksReply  string // net/listeners/socks value; empty answers 510
 
 	mu       sync.Mutex
 	commands []string // every command line received, in order
@@ -170,6 +171,12 @@ func (f *fakeControl) session(conn net.Conn, dropAfterOnion bool) {
 			if dropAfterOnion {
 				return
 			}
+		case cmd == "GETINFO net/listeners/socks":
+			if f.socksReply == "" {
+				send(`510 Unrecognized key "net/listeners/socks"`)
+				continue
+			}
+			send("250-net/listeners/socks="+f.socksReply, "250 OK")
 		case cmd == "QUIT":
 			send("250 closing connection")
 			return
@@ -363,6 +370,66 @@ func TestReconnectReestablishesService(t *testing.T) {
 	defer mu.Unlock()
 	if drops < 1 {
 		t.Fatal("OnDisconnected never fired across reconnects")
+	}
+}
+
+// TestFetchSocksListener — GETINFO net/listeners/socks parsing per
+// Core's get_socks_cb: quoted entries, localhost preference, and the
+// 127.0.0.1:9050 fallback for unusable or missing listeners.
+func TestFetchSocksListener(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string // fake's socksReply; "" answers 510
+		want  string
+	}{
+		{"quoted localhost", `"127.0.0.1:9050"`, "127.0.0.1:9050"},
+		{"prefers localhost over others", `"192.0.2.7:1080" "127.0.0.1:9150" "192.0.2.8:1080"`, "127.0.0.1:9150"},
+		{"last entry when no localhost", `"192.0.2.7:1080" "192.0.2.8:1081"`, "192.0.2.8:1081"},
+		{"unix socket falls back", `"unix:/run/tor/socks"`, defaultSocksAddr},
+		{"bare ip gets default port", `"192.0.2.9"`, "192.0.2.9:9050"},
+		{"unrecognized command falls back", "", defaultSocksAddr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeControl(t, "NULL")
+			f.socksReply = tc.reply
+			f.serve(false)
+			cfg, services := testConfig(t, f)
+			cfg.FetchSocks = true
+			var mu sync.Mutex
+			var got []string
+			cfg.OnSocksListener = func(addr string) {
+				mu.Lock()
+				got = append(got, addr)
+				mu.Unlock()
+			}
+			c := New(cfg)
+			c.Start()
+			waitFor(t, "service", func() bool { return services.count() == 1 })
+			c.Stop()
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("OnSocksListener saw %q, want [%q]", got, tc.want)
+			}
+		})
+	}
+
+	// Without FetchSocks the command is never issued.
+	f := newFakeControl(t, "NULL")
+	f.socksReply = `"127.0.0.1:9050"`
+	f.serve(false)
+	cfg, services := testConfig(t, f)
+	cfg.OnSocksListener = func(string) { t.Error("OnSocksListener fired without FetchSocks") }
+	c := New(cfg)
+	c.Start()
+	waitFor(t, "service", func() bool { return services.count() == 1 })
+	c.Stop()
+	for _, cmd := range f.received() {
+		if strings.HasPrefix(cmd, "GETINFO") {
+			t.Fatalf("GETINFO issued without FetchSocks: %q", cmd)
+		}
 	}
 }
 

@@ -84,6 +84,17 @@ type Config struct {
 	// time ADD_ONION succeeds — on first connect and after every
 	// reconnect. Called from the controller goroutine.
 	OnService func(serviceID string)
+	// FetchSocks, when set, asks the daemon for its SOCKS listener
+	// (GETINFO net/listeners/socks) after authenticating and reports
+	// it via OnSocksListener — Core's auto-configuration of the
+	// onion proxy, requested only when --onion did not name one.
+	FetchSocks bool
+	// OnSocksListener receives the daemon's SOCKS listener as
+	// "ip:port". Fired once per session, before OnService; on any
+	// failure to learn a usable listener it still fires with Core's
+	// fallback of 127.0.0.1:9050 (get_socks_cb parity). Called from
+	// the controller goroutine.
+	OnSocksListener func(addr string)
 	// OnDisconnected fires when an established service is lost (the
 	// control connection dropped; Tor discards ephemeral services
 	// with it). Called from the controller goroutine.
@@ -216,6 +227,11 @@ func (c *Controller) session() (connected, established bool, err error) {
 	if err := c.authenticate(conn, br); err != nil {
 		return true, false, err
 	}
+	// Core's auth_cb order: learn the SOCKS listener first, then
+	// create the service.
+	if c.cfg.FetchSocks && c.cfg.OnSocksListener != nil {
+		c.cfg.OnSocksListener(c.fetchSocksListener(conn, br))
+	}
 	serviceID, err := c.addOnion(conn, br)
 	if err != nil {
 		return true, false, err
@@ -344,6 +360,80 @@ func computeResponse(key string, cookie, clientNonce, serverNonce []byte) []byte
 	mac.Write(clientNonce)
 	mac.Write(serverNonce)
 	return mac.Sum(nil)
+}
+
+// defaultSocksAddr is Core's DEFAULT_TOR_SOCKS_PORT fallback: when the
+// daemon reports no usable SOCKS listener, the proxy is configured at
+// Tor's standard address anyway (get_socks_cb parity).
+const defaultSocksAddr = "127.0.0.1:9050"
+
+// fetchSocksListener runs GETINFO net/listeners/socks and returns the
+// chosen listener address. Port of Core's get_socks_cb: the reply
+// value is a space-separated list of possibly-quoted entries; the
+// first 127.0.0.1 listener wins, otherwise the last parseable entry;
+// anything unusable (unix: sockets, errors, an old daemon answering
+// 510) falls back to 127.0.0.1:9050.
+func (c *Controller) fetchSocksListener(conn net.Conn, br *bufio.Reader) string {
+	rep, err := c.command(conn, br, "GETINFO net/listeners/socks")
+	if err != nil {
+		c.log.Warn("torcontrol: GETINFO net/listeners/socks failed", "err", err)
+		return defaultSocksAddr
+	}
+	if rep.code != replyOK {
+		c.log.Warn("torcontrol: get SOCKS port command failed", "code", rep.code)
+		return defaultSocksAddr
+	}
+	location := ""
+	for _, line := range rep.lines {
+		rest, ok := strings.CutPrefix(line, "net/listeners/socks=")
+		if !ok {
+			continue
+		}
+		for entry := range strings.SplitSeq(rest, " ") {
+			if len(entry) >= 2 && (entry[0] == '"' || entry[0] == '\'') && entry[len(entry)-1] == entry[0] {
+				entry = entry[1 : len(entry)-1]
+			}
+			if entry == "" {
+				continue
+			}
+			location = entry
+			if strings.HasPrefix(entry, "127.0.0.1:") {
+				// Prefer localhost — ignore other listeners.
+				break
+			}
+		}
+	}
+	resolved := resolveSocksAddr(location)
+	if resolved == "" {
+		if location != "" {
+			c.log.Warn("torcontrol: unusable SOCKS listener from daemon; using default", "listener", location)
+		} else {
+			c.log.Warn("torcontrol: get SOCKS port command returned nothing; using default")
+		}
+		return defaultSocksAddr
+	}
+	c.log.Debug("torcontrol: SOCKS listener discovered", "addr", resolved)
+	return resolved
+}
+
+// resolveSocksAddr renders a listener entry as "ip:port", defaulting
+// the port to 9050 for a bare address — Core's
+// LookupNumeric(socks_location, DEFAULT_TOR_SOCKS_PORT). Empty when
+// the entry is not a numeric TCP address (unix sockets, hostnames).
+func resolveSocksAddr(entry string) string {
+	if entry == "" {
+		return ""
+	}
+	if host, port, err := net.SplitHostPort(entry); err == nil {
+		if ip := net.ParseIP(host); ip != nil && port != "" {
+			return net.JoinHostPort(ip.String(), port)
+		}
+		return ""
+	}
+	if ip := net.ParseIP(entry); ip != nil {
+		return net.JoinHostPort(ip.String(), "9050")
+	}
+	return ""
 }
 
 // addOnion issues ADD_ONION with the persisted key (or NEW:ED25519-V3)
