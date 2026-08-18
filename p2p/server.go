@@ -1956,12 +1956,29 @@ func (srv *Server) isSelfNetAddr(addr addrman.NetAddr) bool {
 // Callers using this for dedup must treat ok=false as "no signal" —
 // it's not safe to assume the peer's listen address.
 func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
+	if !p.rw.is(inboundConn) {
+		// Outbound: the dial target is the peer's listen endpoint.
+		// Prefer the conn's recorded target — a proxied conn's
+		// RemoteAddr is the SOCKS5 proxy, which made every proxied
+		// peer look like the same endpoint (and cross-dial dedup
+		// then tore down healthy peers as duplicates). Onion targets
+		// have no ip:port form and yield ok=false — an onion peer
+		// cannot be address-deduped.
+		if t := p.rw.dialedTarget; t.Network != 0 {
+			if tcp := tcpFromNetAddr(t); tcp != nil {
+				return tcp, true
+			}
+			return nil, false
+		}
+		pra, ok := p.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			return nil, false
+		}
+		return pra, true
+	}
 	pra, ok := p.RemoteAddr().(*net.TCPAddr)
 	if !ok {
 		return nil, false
-	}
-	if !p.rw.is(inboundConn) {
-		return pra, true
 	}
 	if srv.peerListenLookup == nil {
 		return nil, false
@@ -2035,19 +2052,32 @@ func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort u
 	if newPeer == nil || listenPort == 0 {
 		return nil
 	}
-	pra, ok := newPeer.RemoteAddr().(*net.TCPAddr)
-	if !ok {
+	newInbound := newPeer.rw.is(inboundConn)
+	var target *net.TCPAddr
+	if !newInbound {
+		// Trusted target: for an outbound newPeer use the dial
+		// target — its port, not the self-claimed Hello port, so an
+		// outbound peer can't inject a victim's port via Hello; and
+		// its address from the conn's recorded target rather than
+		// RemoteAddr, which for a proxied conn is the SOCKS5 proxy
+		// and made every proxied peer dedup against every other. An
+		// onion target has no ip:port form; onion peers are exempt
+		// from address dedup.
+		if t := newPeer.rw.dialedTarget; t.Network != 0 {
+			target = tcpFromNetAddr(t)
+		} else if pra, ok := newPeer.RemoteAddr().(*net.TCPAddr); ok {
+			target = pra
+		}
+	} else {
+		pra, ok := newPeer.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			return nil
+		}
+		target = &net.TCPAddr{IP: pra.IP, Port: int(listenPort)}
+	}
+	if target == nil {
 		return nil
 	}
-	newInbound := newPeer.rw.is(inboundConn)
-	// Trusted target port: for an outbound newPeer use the dial-target
-	// port (RemoteAddr), not the self-claimed Hello port, so an outbound
-	// peer can't inject a victim's port via Hello.
-	targetPort := int(listenPort)
-	if !newInbound {
-		targetPort = pra.Port
-	}
-	target := &net.TCPAddr{IP: pra.IP, Port: targetPort}
 	for _, p := range peers {
 		if p == newPeer {
 			continue
@@ -2245,6 +2275,12 @@ func (srv *Server) upgradeAddrIdentity(p *Peer, addr addrman.NetAddr) {
 // Outbound v1 peers have c.node = dialDest, which already carries
 // the correct listening port.
 func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
+	// An outbound dial target is the advertised endpoint we used —
+	// authoritative for proxied and onion peers, whose socket and
+	// node record carry the proxy's address at best.
+	if t := p.rw.dialedTarget; t.Network != 0 {
+		return t, true
+	}
 	n := p.Node()
 	if n == nil {
 		return addrman.NetAddr{}, false
@@ -2410,6 +2446,13 @@ func (srv *Server) addrmanConnected(p *Peer) {
 // RemoteAddr. Returns ok=false for non-TCP or unresolvable connections
 // (test pipes, Unix sockets, etc.).
 func peerRemoteAddr(p *Peer) (addrman.NetAddr, bool) {
+	// The dialed target outranks the socket address: a proxied conn's
+	// RemoteAddr is the SOCKS5 proxy, and addrman feedback recorded
+	// against the proxy is lost — the real entry then accrues
+	// attempts without successes and decays toward IsTerrible.
+	if t := p.rw.dialedTarget; t.Network != 0 {
+		return t, true
+	}
 	ra := p.RemoteAddr()
 	if ra == nil {
 		return addrman.NetAddr{}, false
