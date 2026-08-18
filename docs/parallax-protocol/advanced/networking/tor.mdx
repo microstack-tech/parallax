@@ -127,30 +127,24 @@ fanout. The onion self-address is authoritative — it comes from the
 control port's `ADD_ONION` response and bypasses the observation
 quorum, like an operator-supplied `--nat extip:` address.
 
-## Duplicate session resolution
+## Mutual connections
 
 Two Tor nodes that hold each other's onion addresses can end up
 mutually connected: each dials the other while accepting the other's
-dial, and no address correlates the two legs because inbound onion
-peers are anonymous. The client resolves such pairs using the
-`parallax-disc/1` `Hello` nonce, which is generated once per node
-lifetime: two live sessions carrying the same remote nonce belong to
-the same node, on any transport.
+dial. Both sessions persist. No address correlates the two legs —
+inbound onion peers are anonymous — and the client deliberately does
+not correlate them by `Hello` nonce either: the nonce is
+unauthenticated and stable for a node's lifetime, so any peer of a
+peer learns it and could replay it to make a victim drop a genuine
+session. Bitcoin Core cannot detect mutual connections at all and
+keeps both; Parallax makes the same choice for the same net effect,
+without adding an eclipse-assist primitive.
 
-Only mixed inbound/outbound pairs are resolved — a true mutual dial.
-The resolution is symmetric so that both nodes drop the same
-underlying TCP connection: the connection initiated by the node with
-the lower nonce survives. The surviving session inherits the dropped
-outbound leg's dial target, which lets the dial scheduler and feeler
-treat that address as connected and keeps addrman credit flowing to
-the right entry. Feeler probes never participate.
-
-A same-direction pair — two outbound sessions with one nonce — means
-the node dialed two different addresses of a dual-stack peer (its IP
-and its onion address). Both sessions are kept: they are distinct
-transports to the same node, exactly as Bitcoin Core keeps them, and
-they appear in `admin_peers` as two entries whose `network.address`
-values name the two addresses.
+The consequence is visible in `admin_peers`: a dual-stack peer
+reached over both clearnet and Tor, or a peer that dialed back while
+we dialed it, appears as two entries. Dialing an address a live
+session already represents is still suppressed, so the peer count
+does not grow without bound.
 
 ## Bans, netrestrict, bootnodes
 
