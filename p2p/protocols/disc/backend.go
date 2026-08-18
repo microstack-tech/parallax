@@ -81,6 +81,15 @@ type AddrmanBackend struct {
 	// exists; not synchronized.
 	reachableFn func(addrman.NetID) bool
 
+	// onionSelf is our own onion service address while one is
+	// established (PIP-0007 §3.3). Authoritative — the address comes
+	// from ADD_ONION, not from peer votes, so it bypasses quorum the
+	// way a --nat extip override does. Guarded by onionSelfMu, since
+	// the torcontrol goroutine updates it while sessions read it.
+	onionSelfMu  sync.Mutex
+	onionSelf    addrman.NetAddr
+	onionSelfSet bool
+
 	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
 	// handshakeByID maps peer enode IDs to the human-readable
@@ -210,6 +219,12 @@ func (b *AddrmanBackend) Log() logging.Logger { return b.log }
 // pipes, tunneled transports) — the handler sends an all-zero YourAddr
 // in that case and the peer ignores it during quorum.
 func (b *AddrmanBackend) ObserveTheirSource(peer *p2p.Peer) (uint8, []byte, uint16, bool) {
+	// A proxied conn's RemoteAddr is the proxy, not the peer — a
+	// YourAddr built from it would tell the peer "you are my SOCKS5
+	// endpoint". Send the all-zero YourAddr instead (PIP-0007).
+	if peer.ProxiedConn() {
+		return 0, nil, 0, false
+	}
 	ra := peer.RemoteAddr()
 	if ra == nil {
 		return 0, nil, 0, false
@@ -233,6 +248,13 @@ func (b *AddrmanBackend) HandleYourAddr(peer *p2p.Peer, net uint8, addr []byte, 
 	if net == 0 || len(addr) == 0 {
 		// Peer couldn't resolve our address (common behind NAT, or
 		// for test pipes). Nothing to feed quorum.
+		return
+	}
+	// Onion peers observe the Tor daemon's loopback stream, not our
+	// address — their reports would poison self-discovery (PIP-0007
+	// §3.2). Same for anything we dialed through a proxy: that
+	// peer's view of us is the proxy's exit.
+	if peer.OnionPeer() || peer.ProxiedConn() {
 		return
 	}
 	peerNet, peerAddr, ok := peerNetworkGroup(peer)
@@ -519,6 +541,67 @@ func (b *AddrmanBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 		NodeID:    nil,
 		LastSeen:  uint64(time.Now().Unix()),
 	}, true
+}
+
+// SetOnionService records our established onion service address for
+// self-advertisement. Called by the node wiring when torcontrol's
+// ADD_ONION succeeds.
+func (b *AddrmanBackend) SetOnionService(addr addrman.NetAddr) {
+	b.onionSelfMu.Lock()
+	b.onionSelf, b.onionSelfSet = addr, addr.Network == addrman.NetTorV3
+	b.onionSelfMu.Unlock()
+}
+
+// ClearOnionService stops advertising the onion address — the control
+// connection dropped and Tor discarded the service with it.
+func (b *AddrmanBackend) ClearOnionService() {
+	b.onionSelfMu.Lock()
+	b.onionSelf, b.onionSelfSet = addrman.NetAddr{}, false
+	b.onionSelfMu.Unlock()
+}
+
+// onionSelfEntry renders the onion service as a PeerEntry, ok=false
+// when no service is established.
+func (b *AddrmanBackend) onionSelfEntry() (PeerEntry, bool) {
+	b.onionSelfMu.Lock()
+	addr, ok := b.onionSelf, b.onionSelfSet
+	b.onionSelfMu.Unlock()
+	if !ok {
+		return PeerEntry{}, false
+	}
+	return PeerEntry{
+		NetworkID: NetTorV3,
+		Addr:      append([]byte(nil), addr.Bytes()...),
+		TCPPort:   addr.Port,
+		KeyType:   KeyTypeNone,
+		NodeID:    nil,
+		LastSeen:  uint64(time.Now().Unix()),
+	}, true
+}
+
+// SelfEntries implements the per-network self-advertisement rule
+// (PIP-0007 §3.3, Core's GetLocalAddrForPeer): onion peers are told
+// only the onion address — advertising the IP over a Tor circuit
+// would deanonymize an onion-only operator — while clearnet peers get
+// the IP claim plus the onion address, which propagates through
+// clearnet gossip at the reduced unreachable fanout on nodes without
+// a Tor route.
+func (b *AddrmanBackend) SelfEntries(peer *p2p.Peer, listenPort uint16) []PeerEntry {
+	onion, hasOnion := b.onionSelfEntry()
+	if peer != nil && peer.OnionPeer() {
+		if !hasOnion {
+			return nil
+		}
+		return []PeerEntry{onion}
+	}
+	var out []PeerEntry
+	if ip, ok := b.SelfEntry(listenPort); ok {
+		out = append(out, ip)
+	}
+	if hasOnion {
+		out = append(out, onion)
+	}
+	return out
 }
 
 // ingestBucketFor returns (creating if needed) the per-peer token

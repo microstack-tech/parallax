@@ -46,12 +46,12 @@ type fakeServer struct {
 }
 
 type serverOpts struct {
-	requireAuth bool   // demand USER_PASS, fail if client can't
-	rejectAuth  bool   // fail the RFC 1929 subnegotiation
-	replyCode   byte   // REP code for the CONNECT reply
-	replyAtyp   byte   // ATYP of the bound address in the reply
-	badVersion  bool   // answer the greeting with a non-SOCKS5 version
-	echo        bool   // after success, echo one payload read back
+	requireAuth bool // demand USER_PASS, fail if client can't
+	rejectAuth  bool // fail the RFC 1929 subnegotiation
+	replyCode   byte // REP code for the CONNECT reply
+	replyAtyp   byte // ATYP of the bound address in the reply
+	badVersion  bool // answer the greeting with a non-SOCKS5 version
+	echo        bool // after success, echo one payload read back
 }
 
 func startFakeServer(t *testing.T, opts serverOpts) *fakeServer {

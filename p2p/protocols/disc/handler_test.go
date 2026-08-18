@@ -82,14 +82,14 @@ func (b *testBackend) SamplePeers(_ *p2p.Peer, max int) []PeerEntry {
 	return b.sample
 }
 
-func (b *testBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
+func (b *testBackend) SelfEntries(_ *p2p.Peer, listenPort uint16) []PeerEntry {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.selfEntryPort = listenPort
 	if b.self == nil {
-		return PeerEntry{}, false
+		return nil
 	}
-	return *b.self, true
+	return []PeerEntry{*b.self}
 }
 
 func (b *testBackend) TrackHandshake(*p2p.Peer, bool) {}

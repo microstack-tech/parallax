@@ -479,6 +479,31 @@ func (p *Peer) Feeler() bool {
 	return p.rw.is(feelerConn)
 }
 
+// OnionPeer reports whether this peer's effective network is Tor: an
+// outbound dial to a .onion target, or an inbound stream delivered by
+// the local Tor daemon while our onion service is active (PIP-0007
+// §3.2). Onion peers' address observations never feed the
+// self-address quorum, and the disc greeting advertises the onion
+// self-address to them.
+func (p *Peer) OnionPeer() bool {
+	return p.rw.is(onionConn)
+}
+
+// ProxiedConn reports whether the connection was dialed through a
+// SOCKS5 proxy. RemoteAddr is then the proxy, not the peer — address
+// logic must not treat it as an observation of the peer.
+func (p *Peer) ProxiedConn() bool {
+	return p.rw.is(proxiedConn)
+}
+
+// MarkOnionForTest sets the onion conn flag on a test-constructed
+// peer, mirroring MarkInboundForTest.
+func (p *Peer) MarkOnionForTest() { p.rw.set(onionConn, true) }
+
+// MarkProxiedForTest sets the proxied conn flag on a test-constructed
+// peer.
+func (p *Peer) MarkProxiedForTest() { p.rw.set(proxiedConn, true) }
+
 // MarkInboundForTest sets the inbound conn flag on a test-constructed
 // peer. Production conns get the flag at accept time; test harnesses
 // (NewPeer / NewPeerForTest) start with no flags and need this to

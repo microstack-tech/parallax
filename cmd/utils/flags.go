@@ -677,6 +677,20 @@ var (
 		Usage: "Randomize SOCKS5 credentials for every proxy connection (Tor stream isolation, default on). " +
 			"--proxyrandomize=false shares one circuit across peers.",
 	}
+	ListenOnionFlag = cli.BoolTFlag{
+		Name: "listenonion",
+		Usage: "Create a Tor v3 onion service for the P2P listener via the Tor control port (default on; a no-op " +
+			"until the control port answers). The service key persists in <datadir>/onion_v3_private_key. PIP-0007.",
+	}
+	TorControlFlag = cli.StringFlag{
+		Name:  "torcontrol",
+		Usage: "Tor control port to use with --listenonion",
+		Value: "127.0.0.1:9051",
+	}
+	TorPasswordFlag = cli.StringFlag{
+		Name:  "torpassword",
+		Usage: "Tor control port password (HASHEDPASSWORD auth; cookie auth is used automatically when unset)",
+	}
 
 	// ATM the url is left to the user and deployment to
 	JSpathFlag = DirectoryFlag{
@@ -995,6 +1009,18 @@ func setProxy(ctx *cli.Context, cfg *p2p.Config) {
 	// BoolTFlag: default true; GlobalBool returns false only when the
 	// operator passed --proxyrandomize=false.
 	cfg.ProxyNoRandomize = !ctx.GlobalBool(ProxyRandomizeFlag.Name)
+
+	// Onion service (PIP-0007 §3). Core's -listenonion defaults on:
+	// the controller idles on reconnect backoff until a Tor control
+	// port answers, so nodes without Tor pay only a periodic local
+	// connect attempt.
+	cfg.ListenOnion = ctx.GlobalBool(ListenOnionFlag.Name)
+	if ctx.GlobalIsSet(TorControlFlag.Name) {
+		cfg.TorControlAddr = ctx.GlobalString(TorControlFlag.Name)
+	}
+	if ctx.GlobalIsSet(TorPasswordFlag.Name) {
+		cfg.TorPassword = ctx.GlobalString(TorPasswordFlag.Name)
+	}
 }
 
 // setNAT creates a port mapper from command line flags.
@@ -1294,6 +1320,12 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	// tests).
 	if cfg.P2P.BanListPath == "" && cfg.DataDir != "" {
 		cfg.P2P.BanListPath = filepath.Join(cfg.DataDir, "banlist.json")
+	}
+	// Default the onion service key to <datadir>/onion_v3_private_key
+	// (Core's filename). Empty keeps the onion identity ephemeral —
+	// a fresh address every restart.
+	if cfg.P2P.OnionKeyPath == "" && cfg.DataDir != "" {
+		cfg.P2P.OnionKeyPath = filepath.Join(cfg.DataDir, "onion_v3_private_key")
 	}
 
 	if ctx.GlobalIsSet(JWTSecretFlag.Name) {

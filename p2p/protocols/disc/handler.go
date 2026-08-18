@@ -57,11 +57,17 @@ type Backend interface {
 	// still sends a valid (empty) Peers message.
 	SamplePeers(peer *p2p.Peer, max int) []PeerEntry
 
-	// SelfEntry returns the PeerEntry we should advertise on outbound
-	// sessions, or ok=false if no self-address has reached quorum and
-	// no override is configured. listenPort is the TCP port we listen
-	// on (used when the quorum winner has port=0).
-	SelfEntry(listenPort uint16) (PeerEntry, bool)
+	// SelfEntries returns the PeerEntries we should advertise on an
+	// outbound session with the given peer — empty when no
+	// self-address has reached quorum and no override or onion
+	// service exists. Per-network (PIP-0007 §3.3, Core's
+	// GetLocalAddrForPeer): onion peers are told the onion address
+	// only (never the IP — an onion-only operator's IP must not leak
+	// over a Tor circuit); clearnet peers get the IP plus the onion
+	// address, which receivers without a Tor route still relay at the
+	// reduced unreachable fanout. listenPort is the TCP port we
+	// listen on (used when the quorum winner has port=0).
+	SelfEntries(peer *p2p.Peer, listenPort uint16) []PeerEntry
 
 	// TrackHandshake records which handshake variant a peer session
 	// was established with. The handler calls this once on session
@@ -164,7 +170,7 @@ func Run(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	// a peer that won't gossip it; GetPeers solicits gossip from a
 	// peer we shouldn't accept gossip from.
 	if !peer.Inbound() && !peer.BlockRelayOnly() {
-		if err := sendSelfAdvertise(backend, rw); err != nil {
+		if err := sendSelfAdvertise(backend, peer, rw); err != nil {
 			log.Debug("parallax-disc/1: self-advertise send failed", "err", err)
 		}
 		if err := RequestPeers(backend, peer, st, rw); err != nil {
@@ -293,20 +299,22 @@ func runRelayDrain(peer *p2p.Peer, rw p2p.MsgReadWriter, st *state, outbox <-cha
 	}
 }
 
-// sendSelfAdvertise writes a 1-entry Peers message containing our
-// current self-address claim to an outbound peer. Mirrors Bitcoin's
-// addr(self) sequence on outbound-full-relay peers. Skipped silently
-// if no self-address is available (no quorum, no override). The local
-// listen port is passed so SelfEntry can complete a port-less quorum
-// winner (e.g. a --nat extip override without a port): advertising
-// TCPPort 0 would fail Validate() on every receiver and get this
-// node discouraged on sight.
-func sendSelfAdvertise(backend Backend, rw p2p.MsgReadWriter) error {
-	self, ok := backend.SelfEntry(backend.LocalHello().ListenPort)
-	if !ok {
+// sendSelfAdvertise writes a Peers message containing our current
+// self-address claims to an outbound peer. Mirrors Bitcoin's
+// addr(self) sequence on outbound-full-relay peers, extended
+// per-network by PIP-0007 §3.3 (at most two entries: IP and onion).
+// Skipped silently if no self-address is available (no quorum, no
+// override, no onion service). The local listen port is passed so
+// SelfEntries can complete a port-less quorum winner (e.g. a --nat
+// extip override without a port): advertising TCPPort 0 would fail
+// Validate() on every receiver and get this node discouraged on
+// sight.
+func sendSelfAdvertise(backend Backend, peer *p2p.Peer, rw p2p.MsgReadWriter) error {
+	entries := backend.SelfEntries(peer, backend.LocalHello().ListenPort)
+	if len(entries) == 0 {
 		return nil
 	}
-	return p2p.Send(rw, PeersMsg, Peers{Entries: []PeerEntry{self}})
+	return p2p.Send(rw, PeersMsg, Peers{Entries: entries})
 }
 
 // handleOne reads and dispatches one inbound message. Returns on read

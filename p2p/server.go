@@ -42,6 +42,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/p2p/nat"
 	"github.com/ParallaxProtocol/parallax/p2p/netutil"
 	"github.com/ParallaxProtocol/parallax/p2p/rlpx/bip324handshake"
+	"github.com/ParallaxProtocol/parallax/p2p/torcontrol"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 	"github.com/ParallaxProtocol/parallax/support/event"
 	"github.com/ParallaxProtocol/parallax/util"
@@ -225,6 +226,38 @@ type Config struct {
 	// isolation on.
 	ProxyNoRandomize bool `toml:",omitempty"`
 
+	// ListenOnion creates a Tor v3 onion service for the P2P listener
+	// via the Tor control port — Bitcoin Core's -listenonion. Only
+	// effective when the node listens (ListenAddr != ""). PIP-0007 §3.
+	ListenOnion bool `toml:",omitempty"`
+
+	// TorControlAddr is the Tor control port. Empty defaults to
+	// 127.0.0.1:9051 (Core's -torcontrol).
+	TorControlAddr string `toml:",omitempty"`
+
+	// TorPassword authenticates to the control port via
+	// HASHEDPASSWORD (Core's -torpassword). Cookie auth is preferred
+	// and automatic when the password is empty.
+	TorPassword string `toml:"-"`
+
+	// OnionKeyPath persists the onion service's ed25519 key across
+	// restarts (Core's onion_v3_private_key). Defaults to
+	// <datadir>/onion_v3_private_key via the node layer; empty keeps
+	// the onion identity ephemeral.
+	OnionKeyPath string `toml:",omitempty"`
+
+	// OnionVirtualPort is the port the onion service exposes. Zero
+	// defaults to the network default port (32110) regardless of the
+	// local listen port — Core always advertises the default port to
+	// avoid decloaking nodes running on non-standard ones.
+	OnionVirtualPort uint16 `toml:",omitempty"`
+
+	// OnOnionService / OnOnionLost notify the wiring layer (the disc
+	// backend) when the onion service comes up or goes away. Called
+	// after the Server's own state is updated. Optional.
+	OnOnionService func(addrman.NetAddr) `toml:"-"`
+	OnOnionLost    func()                `toml:"-"`
+
 	// If NoDial is true, the server will not dial any peers.
 	NoDial bool `toml:",omitempty"`
 
@@ -347,6 +380,15 @@ type Server struct {
 	netpol    *netPolicy
 	connector Connector
 
+	// torControl maintains the onion service when ListenOnion is set.
+	// onionSelf is the service's address while established — consulted
+	// by the self-dial guard, inbound classification, and the disc
+	// backend's self-advertisement hooks.
+	torControl   *torcontrol.Controller
+	onionSelfMu  sync.Mutex
+	onionSelf    addrman.NetAddr
+	onionSelfSet bool
+
 	nodedb    *enode.DB
 	localnode *enode.LocalNode
 	ntab      *discover.UDPv4
@@ -465,6 +507,19 @@ const (
 	// an addrman failure on their deliberate disconnect (they already
 	// marked the address Good at attach).
 	feelerConn
+	// onionConn marks a peer whose effective network is Tor: an
+	// outbound dial to a .onion target, or an inbound connection
+	// arriving from loopback while our onion service is active
+	// (Core's CNode::ConnectedThroughNetwork heuristic, PIP-0007
+	// §3.2). Onion peers' YourAddr observations are excluded from
+	// the self-address quorum, and the disc greeting advertises the
+	// onion self-address to them.
+	onionConn
+	// proxiedConn marks an outbound connection that was routed
+	// through a SOCKS5 proxy. The conn's RemoteAddr is the proxy,
+	// not the peer, so it must never be used as an observation of
+	// the peer's address (YourAddr reporting, dedup).
+	proxiedConn
 )
 
 // conn wraps a network connection with information gathered
@@ -528,6 +583,12 @@ func (f connFlag) String() string {
 	}
 	if f&feelerConn != 0 {
 		s += "-feeler"
+	}
+	if f&onionConn != 0 {
+		s += "-onion"
+	}
+	if f&proxiedConn != 0 {
+		s += "-proxied"
 	}
 	if s != "" {
 		s = s[1:]
@@ -704,6 +765,11 @@ func (srv *Server) Stop() {
 		return
 	}
 	srv.running = false
+	if srv.torControl != nil {
+		// Tor drops the ephemeral onion service with the control
+		// connection; nothing else to unwind.
+		srv.torControl.Stop()
+	}
 	if srv.listener != nil {
 		// this unblocks listener Accept
 		srv.listener.Close()
@@ -815,6 +881,9 @@ func (srv *Server) Start() (err error) {
 		if err := srv.setupListening(); err != nil {
 			return err
 		}
+	}
+	if srv.ListenOnion && srv.listener != nil {
+		srv.startTorControl()
 	}
 	srv.applyLegacyDiscoveryMode()
 	if err := srv.setupAddrMan(); err != nil {
@@ -1476,11 +1545,11 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	// nor deduped against connected peers (a proxied peer's remote
 	// addr is the proxy); both checks pass onion targets through, and
 	// the cooldown above is what bounds re-dials meanwhile.
+	if srv.isSelfNetAddr(addr) {
+		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
+		return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
+	}
 	if tcp != nil {
-		if srv.IsSelfEndpoint(tcp) {
-			srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
-			return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
-		}
 		if srv.alreadyConnectedTo(tcp) {
 			// Refresh LastTry without counting a failure. addrman's
 			// Select chance weighting drops ~100x for 10 min once
@@ -1538,6 +1607,16 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	flags := dynDialedConn | v2DialedConn | extra
 	if extraHas(extra, staticDialedConn) {
 		flags &^= dynDialedConn
+	}
+	// Network classification (PIP-0007 §3.2): the dial target's
+	// network is authoritative for outbound peers, and a proxied
+	// conn's RemoteAddr is the proxy — downstream address logic
+	// (YourAddr reporting, dedup) must not treat it as the peer's.
+	if addr.Network == addrman.NetTorV3 {
+		flags |= onionConn
+	}
+	if srv.netpol.proxyFor(addr.Network) != nil {
+		flags |= proxiedConn
 	}
 	if err := srv.SetupConn(fd, flags, nil); err != nil {
 		// v2 handshake / protocol negotiation failed before a Peer
@@ -1817,16 +1896,17 @@ func (srv *Server) IsSelfEndpoint(addr *net.TCPAddr) bool {
 	return addr.IP.Equal(n.IP()) || addr.IP.IsLoopback()
 }
 
-// isSelfNetAddr adapts IsSelfEndpoint to addrman.NetAddr candidates
-// (the V2Iter self-gate). Onion targets never match: the node has no
-// onion identity to compare against until phase 3 creates the service,
-// and a self-dial through the proxy is caught by the Hello nonce
+// isSelfNetAddr adapts the self-endpoint checks to addrman.NetAddr
+// candidates (the V2Iter self-gate and the shared v2 dial path): the
+// (IP, listen-port) match for IP targets, our own onion service for
+// Tor targets. A self-dial that still slips through (e.g. the service
+// established after the check) is caught by the Hello nonce
 // self-connect check like any other v2 session.
 func (srv *Server) isSelfNetAddr(addr addrman.NetAddr) bool {
 	if tcp := tcpFromNetAddr(addr); tcp != nil {
 		return srv.IsSelfEndpoint(tcp)
 	}
-	return false
+	return srv.isSelfOnion(addr)
 }
 
 // peerListenAddr returns the peer's effective (IP, listen-port) for
@@ -3006,6 +3086,7 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
+	flags = srv.classifyInboundNetwork(fd, flags)
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
 	variant := srv.pickHandshakeVariant(fd, flags, dialDest)
 	switch variant {

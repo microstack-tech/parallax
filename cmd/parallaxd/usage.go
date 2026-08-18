@@ -163,6 +163,9 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.OnionFlag,
 			utils.OnlyNetFlag,
 			utils.ProxyRandomizeFlag,
+			utils.ListenOnionFlag,
+			utils.TorControlFlag,
+			utils.TorPasswordFlag,
 		},
 	},
 	{

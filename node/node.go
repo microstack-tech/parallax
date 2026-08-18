@@ -627,6 +627,13 @@ func (n *Node) setupAddrManAndDisc() error {
 	// gossiped onion entries become storable once the node has a Tor
 	// route (PIP-0007 §2.1).
 	backend.SetReachableFunc(n.server.NetworkReachable)
+	// Onion service lifecycle → self-advertisement (PIP-0007 §3.3):
+	// when torcontrol establishes the service, the address is
+	// authoritative (no quorum vote) and gossips per SelfEntries'
+	// per-network rule; when the control connection drops, Tor
+	// discards the service and advertising must stop with it.
+	n.server.OnOnionService = backend.SetOnionService
+	n.server.OnOnionLost = backend.ClearOnionService
 	// An operator-pinned external IP (--nat extip:<IP>) short-circuits
 	// quorum: the address is an operator statement, not a guess to be
 	// voted on, so self-advertisement must work even with zero inbound
