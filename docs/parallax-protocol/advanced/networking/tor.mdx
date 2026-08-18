@@ -55,7 +55,16 @@ onion route exists:
 The gossip storage gate, dial scheduler, feeler, anchor replay and
 bootnode ingest all consult the same policy. Reachability can change
 at runtime: a node started before its Tor daemon begins with onion
-unreachable and flips it the moment the control port answers.
+unreachable and flips it the moment the control port answers, at
+which point the bootstrap work that had to be skipped — ingesting
+that network's bootnodes, replaying its anchors, re-running the
+cold-start address fetch — is replayed.
+
+`--onlynet` restricts **automatic** outbound connections only.
+Operator-initiated dials (`addnode`, `addPeer`, `dialV2`) and
+configured static nodes reach any network the node has a route to,
+as in Core, where `-onlynet` governs the connections the node makes
+on its own.
 
 ## Identity and handshake
 
@@ -151,10 +160,14 @@ does not grow without bound.
 - **Bans.** `setban` accepts a Tor v3 address as an exact-host entry
   in the persistent ban list, alongside IP and CIDR entries. There is
   no subnet form and no discourage tier for onion space; onion bans
-  are enforced at the outbound dial gate, since inbound onion streams
-  cannot be attributed to an onion address.
+  are enforced at the outbound dial gate. Banning also disconnects a
+  matching live peer where one can be identified — outbound peers are
+  matched by the address they were dialed at, so proxied and onion
+  peers are covered; a purely inbound onion stream cannot be
+  attributed to an address and is left to drop on its own.
 - **netrestrict.** `--netrestrict` is CIDR-based and implies IP-only
-  outbound: onion dials are refused while it is set.
+  outbound: onion dials are refused while it is set. Unlike
+  `--onlynet` it binds every dial, manual ones included.
 - **Bootnodes.** The hardcoded v2 bootnode list and `--bootnodes`
   accept `<addr>.onion:port` entries. Onion bootnodes are ingested
   only on nodes with an onion route (Core's fixed-seed reachability

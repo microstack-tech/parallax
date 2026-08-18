@@ -57,7 +57,7 @@ resolved configuration allows.
 | `--torpassword` | unset | Control-port password (`HashedControlPassword` auth). Cookie auth is used automatically when unset. |
 | `--proxy` | unset | SOCKS5 proxy for **all** outbound connections, including clearnet ones. Also moves DNS-seed bootstrapping off the system resolver so no DNS query leaves the machine. |
 | `--onion` | auto-discovered | SOCKS5 proxy used only for `.onion` targets, overriding both `--proxy` and the auto-discovery. `--onion=0` disables onion outbound entirely. |
-| `--onlynet` | unset | Restrict outbound connections to the named networks (`ipv4`, `ipv6`, `onion`, comma-separated). |
+| `--onlynet` | unset | Restrict **automatic** outbound connections to the named networks (`ipv4`, `ipv6`, `onion`, comma-separated). Manual dials (`addnode`, `addPeer`, `dialV2`) and static nodes are exempt, as in Core. |
 | `--proxyrandomize` | on | Fresh SOCKS5 credentials per connection, so Tor puts every peer on its own circuit (stream isolation). |
 
 ## The onion service identity
@@ -110,7 +110,10 @@ parallax-cli dialv2 xxxx….onion:32110      # one-shot
 parallax-cli addnode xxxx….onion:32110     # persistent, survives restarts
 ```
 
-`setban`/`listbanned` accept onion addresses the same way.
+`setban`/`listbanned` accept onion addresses the same way, and
+`removenode` accepts them too — outbound peers are matched by the
+address they were dialed at, so a peer reached through a proxy is
+addressed by its real address rather than the proxy's.
 
 ## Fully dark: `--onlynet=onion`
 
