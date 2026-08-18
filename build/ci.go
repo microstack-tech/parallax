@@ -56,10 +56,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ParallaxProtocol/parallax"
-	"github.com/ParallaxProtocol/parallax/crypto/signify"
-	"github.com/ParallaxProtocol/parallax/internal/build"
-	"github.com/ParallaxProtocol/parallax/util"
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+	"github.com/ParallaxProtocol/parallax/v2/crypto/signify"
+	"github.com/ParallaxProtocol/parallax/v2/internal/build"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/cespare/cp"
 )
 
@@ -505,18 +505,23 @@ func maybeSkipArchive(env build.Environment) {
 		log.Printf("skipping archive creation because this is a cron job")
 		os.Exit(0)
 	}
-	if env.Branch != "master" && !strings.HasPrefix(env.Tag, "v1.") {
+	if env.Branch != "main" && !strings.HasPrefix(env.Tag, releaseTagPrefix) {
 		log.Printf("skipping archive creation because branch %q, tag %q is not on the inclusion list", env.Branch, env.Tag)
 		os.Exit(0)
 	}
 }
+
+// releaseTagPrefix matches release tags of the current major series, e.g. "v2.".
+// Derived from version.go so the build tooling follows major version bumps
+// instead of pinning a hardcoded series.
+var releaseTagPrefix = fmt.Sprintf("v%d.", parallax.VersionMajor)
 
 // Builds the docker images and optionally uploads them to Docker Hub.
 func doDocker(cmdline []string) {
 	var (
 		image    = flag.Bool("image", false, `Whether to build and push an arch specific docker image`)
 		manifest = flag.String("manifest", "", `Push a multi-arch docker image for the specified architectures (usually "amd64,arm64")`)
-		upload   = flag.String("upload", "", `Where to upload the docker image (usually "ethereum/client-go")`)
+		upload   = flag.String("upload", "", `Where to upload the docker image (usually "parallaxprotocol/parallax")`)
 	)
 	flag.CommandLine.Parse(cmdline)
 
@@ -534,21 +539,21 @@ func doDocker(cmdline []string) {
 		build.MustRun(auther)
 	}
 	// Retrieve the version infos to build and push to the following paths:
-	//  - parallax/client-go:latest                            - Pushes to the master branch, Parallax only
-	//  - parallax/client-go:stable                            - Version tag publish on GitHub, Parallax only
-	//  - parallax/client-go:alltools-latest                   - Pushes to the master branch, Parallax & tools
-	//  - parallax/client-go:alltools-stable                   - Version tag publish on GitHub, Parallax & tools
-	//  - parallax/client-go:release-<major>.<minor>           - Version tag publish on GitHub, Parallax only
-	//  - parallax/client-go:alltools-release-<major>.<minor>  - Version tag publish on GitHub, Parallax & tools
-	//  - parallax/client-go:v<major>.<minor>.<patch>          - Version tag publish on GitHub, Parallax only
-	//  - parallax/client-go:alltools-v<major>.<minor>.<patch> - Version tag publish on GitHub, Parallax & tools
+	//  - parallaxprotocol/parallax:latest                            - Pushes to the main branch, Parallax only
+	//  - parallaxprotocol/parallax:stable                            - Version tag publish on GitHub, Parallax only
+	//  - parallaxprotocol/parallax:alltools-latest                   - Pushes to the main branch, Parallax & tools
+	//  - parallaxprotocol/parallax:alltools-stable                   - Version tag publish on GitHub, Parallax & tools
+	//  - parallaxprotocol/parallax:release-<major>.<minor>           - Version tag publish on GitHub, Parallax only
+	//  - parallaxprotocol/parallax:alltools-release-<major>.<minor>  - Version tag publish on GitHub, Parallax & tools
+	//  - parallaxprotocol/parallax:v<major>.<minor>.<patch>          - Version tag publish on GitHub, Parallax only
+	//  - parallaxprotocol/parallax:alltools-v<major>.<minor>.<patch> - Version tag publish on GitHub, Parallax & tools
 	var tags []string
 
 	switch {
-	case env.Branch == "master":
+	case env.Branch == "main":
 		tags = []string{"latest"}
-	case strings.HasPrefix(env.Tag, "v1."):
-		tags = []string{"stable", fmt.Sprintf("release-1.%d", parallax.VersionMinor), "v" + parallax.Version}
+	case strings.HasPrefix(env.Tag, releaseTagPrefix):
+		tags = []string{"stable", fmt.Sprintf("release-%d.%d", parallax.VersionMajor, parallax.VersionMinor), "v" + parallax.Version}
 	}
 	// If architecture specific image builds are requested, build and push them
 	if *image {
@@ -564,7 +569,7 @@ func doDocker(cmdline []string) {
 			// number to prevent overwriting a newer commit if concurrent builds
 			// are running. This is still a tiny bit racey if two published are
 			// done at the same time, but that's extremely unlikely even on the
-			// master branch.
+			// main branch.
 			for _, img := range []string{parallaxImage, toolImage} {
 				if exec.Command("docker", "pull", img).Run() != nil {
 					continue // Generally the only failure is a missing image, which is good
@@ -1056,7 +1061,7 @@ func doAndroidArchive(cmdline []string) {
 	build.MustRun(tc.Go("mod", "download"))
 
 	// Build the Android archive and Maven resources
-	build.MustRun(gomobileTool("bind", "-ldflags", "-s -w", "--target", "android", "--javapkg", "org.ethereum", "-v", "github.com/ParallaxProtocol/parallax/mobile"))
+	build.MustRun(gomobileTool("bind", "-ldflags", "-s -w", "--target", "android", "--javapkg", "org.ethereum", "-v", "github.com/ParallaxProtocol/parallax/v2/mobile"))
 
 	if *local {
 		// If we're building locally, copy bundle to build dir and skip Maven
@@ -1181,7 +1186,7 @@ func doXCodeFramework(cmdline []string) {
 	build.MustRun(tc.Install(GOBIN, "golang.org/x/mobile/cmd/gomobile", "golang.org/x/mobile/cmd/gobind"))
 
 	// Build the iOS XCode framework
-	bind := gomobileTool("bind", "-ldflags", "-s -w", "--target", "ios", "-v", "github.com/ParallaxProtocol/parallax/mobile")
+	bind := gomobileTool("bind", "-ldflags", "-s -w", "--target", "ios", "-v", "github.com/ParallaxProtocol/parallax/v2/mobile")
 
 	if *local {
 		// If we're building locally, use the build folder and stop afterwards
