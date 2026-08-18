@@ -112,6 +112,11 @@ func TestTorIntegration(t *testing.T) {
 	case <-time.After(2 * time.Minute):
 		t.Fatal("onion service never established (tor control port unresponsive?)")
 	}
+	// A passed no --proxy/--onion: the auto-proxy must have picked up
+	// the daemon's real SOCKS listener and made onion reachable.
+	if !a.NetworkReachable(addrman.NetTorV3) {
+		t.Fatal("auto-proxy did not make onion reachable on the service node")
+	}
 
 	// Node B: dials through Tor's SOCKS listener.
 	b := &Server{Config: Config{

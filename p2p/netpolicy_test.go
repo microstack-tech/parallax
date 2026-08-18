@@ -127,6 +127,74 @@ func TestNetPolicyOnlyNet(t *testing.T) {
 	}
 }
 
+func TestNetPolicyListenOnionPending(t *testing.T) {
+	// --onlynet=onion with no proxy is legal when --listenonion may
+	// auto-configure one (Core init.cpp parity)...
+	p, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.isReachable(addrman.NetTorV3) {
+		t.Error("onion must stay unreachable until the auto-proxy arrives")
+	}
+	if !p.onionAllowed {
+		t.Error("onlynet=onion must mark onion allowed")
+	}
+	// ...but an explicit --onion=0 forbids the route outright.
+	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true, OnionProxyAddr: "0"}); !errors.Is(err, errOnlyNetNoRoute) {
+		t.Errorf("onlynet=onion with --onion=0: got %v", err)
+	}
+	// And without --listenonion the original error stands.
+	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}}); !errors.Is(err, errOnlyNetNoRoute) {
+		t.Errorf("onlynet=onion without any route: got %v", err)
+	}
+}
+
+func TestNetPolicyWithAutoOnionProxy(t *testing.T) {
+	// Default posture: auto-proxy adds the route and flips onion
+	// reachable, with stream isolation forced on (Core hardcodes it
+	// for the daemon's own listener).
+	p, err := newNetPolicy(&Config{ProxyNoRandomize: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := p.withAutoOnionProxy("127.0.0.1:9050")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.isReachable(addrman.NetTorV3) {
+		t.Error("auto-proxy must make onion reachable")
+	}
+	pr := next.proxyFor(addrman.NetTorV3)
+	if pr == nil || pr.Addr != "127.0.0.1:9050" {
+		t.Fatalf("onion proxy = %+v", pr)
+	}
+	if pr.Isolation == nil {
+		t.Error("auto-proxy must force stream isolation even under ProxyNoRandomize")
+	}
+	// The original policy is untouched (copy-on-write).
+	if p.isReachable(addrman.NetTorV3) || p.proxyFor(addrman.NetTorV3) != nil {
+		t.Error("withAutoOnionProxy mutated the source policy")
+	}
+
+	// --onlynet excluding onion keeps it unreachable even with the
+	// proxy configured (Core's onion_allowed_by_onlynet gate).
+	p, err = newNetPolicy(&Config{OnlyNet: []string{"ipv4"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err = p.withAutoOnionProxy("127.0.0.1:9050")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.isReachable(addrman.NetTorV3) {
+		t.Error("onlynet=ipv4 must keep onion unreachable despite the auto-proxy")
+	}
+	if next.proxyFor(addrman.NetTorV3) == nil {
+		t.Error("the proxy itself is still recorded (Core sets it unconditionally)")
+	}
+}
+
 func TestNetPolicyNoRandomize(t *testing.T) {
 	p, err := newNetPolicy(&Config{ProxyAddr: "127.0.0.1:9050", ProxyNoRandomize: true})
 	if err != nil {

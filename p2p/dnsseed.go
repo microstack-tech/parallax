@@ -136,7 +136,7 @@ func (srv *Server) proxiedSeedLoop(ctx context.Context, hosts []string, defaultP
 // feeler so it neither occupies an outbound slot nor records addrman
 // failures, and torn down after addrFetchLifetime.
 func (srv *Server) fetchSeedsViaProxy(ctx context.Context, hosts []string, defaultPort uint16) {
-	pr := srv.netpol.nameProxy()
+	pr := srv.policy().nameProxy()
 	if pr == nil {
 		return
 	}

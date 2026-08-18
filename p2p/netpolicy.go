@@ -43,12 +43,18 @@ type netPolicy struct {
 	// SetNameProxy has the same asymmetry: a clearnet node using Tor
 	// solely for onion peers still resolves seed hostnames locally.
 	name *socks.Proxy
+
+	// onionAllowed records whether --onlynet permits the onion
+	// network (or no restriction was given). The torcontrol
+	// auto-proxy flips onion reachable only when this holds —
+	// Core's onion_allowed_by_onlynet gate.
+	onionAllowed bool
 }
 
 // Config validation errors, matching Core's init-time messages in intent.
 var (
 	errOnlyNetUnknown   = errors.New("p2p: unknown --onlynet network")
-	errOnlyNetNoRoute   = errors.New("p2p: outbound restricted to a network with no route (onion needs --proxy or --onion)")
+	errOnlyNetNoRoute   = errors.New("p2p: outbound restricted to a network with no route (onion needs --proxy, --onion or --listenonion)")
 	errNoNetReachable   = errors.New("p2p: configuration leaves no network reachable")
 	errOnionProxyFormat = errors.New("p2p: invalid --onion value")
 )
@@ -77,7 +83,8 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 			addrman.NetIPv4: true,
 			addrman.NetIPv6: true,
 		},
-		proxies: make(map[addrman.NetID]*socks.Proxy),
+		proxies:      make(map[addrman.NetID]*socks.Proxy),
+		onionAllowed: true,
 	}
 
 	// One shared isolation generator across all proxies, as in Core
@@ -135,11 +142,17 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 				p.reachable[id] = false
 			}
 		}
+		p.onionAllowed = keep[addrman.NetTorV3]
 		// Core errors out when -onlynet=onion leaves no usable onion
-		// route ("Outbound connections restricted to Tor... but
-		// -proxy or -onion not provided").
+		// route — unless --listenonion is set, in which case the
+		// torcontrol thread may auto-configure the proxy from the
+		// daemon's SOCKS listener later (init.cpp parity). An
+		// explicit --onion=0 forbids the route outright and always
+		// errors.
 		if keep[addrman.NetTorV3] && p.proxies[addrman.NetTorV3] == nil {
-			return nil, errOnlyNetNoRoute
+			if cfg.OnionProxyAddr == "0" || !cfg.ListenOnion {
+				return nil, errOnlyNetNoRoute
+			}
 		}
 	}
 
@@ -150,10 +163,45 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 			break
 		}
 	}
-	if !any {
+	// onionPending: no network reachable yet, but --listenonion may
+	// deliver the onion route once the control port answers.
+	onionPending := cfg.ListenOnion && p.onionAllowed &&
+		p.proxies[addrman.NetTorV3] == nil && cfg.OnionProxyAddr != "0"
+	if !any && !onionPending {
 		return nil, errNoNetReachable
 	}
 	return p, nil
+}
+
+// withAutoOnionProxy clones p with the torcontrol-discovered SOCKS
+// listener as the onion route — Core's get_socks_cb SetProxy +
+// SetReachable. Stream isolation is always on for the auto proxy,
+// regardless of --proxyrandomize (Core hardcodes tor_stream_isolation
+// there: the daemon's own listener supports IsolateSOCKSAuth by
+// default and correlation resistance matters most on Tor). Onion
+// becomes reachable only when --onlynet permits it.
+func (p *netPolicy) withAutoOnionProxy(addr string) (*netPolicy, error) {
+	iso, err := socks.NewIsolationGenerator()
+	if err != nil {
+		return nil, err
+	}
+	next := &netPolicy{
+		reachable:    make(map[addrman.NetID]bool, len(p.reachable)),
+		proxies:      make(map[addrman.NetID]*socks.Proxy, len(p.proxies)+1),
+		name:         p.name,
+		onionAllowed: p.onionAllowed,
+	}
+	for k, v := range p.reachable {
+		next.reachable[k] = v
+	}
+	for k, v := range p.proxies {
+		next.proxies[k] = v
+	}
+	next.proxies[addrman.NetTorV3] = &socks.Proxy{Addr: addr, Isolation: iso}
+	if p.onionAllowed {
+		next.reachable[addrman.NetTorV3] = true
+	}
+	return next, nil
 }
 
 // isReachable reports whether outbound connections to net are allowed.

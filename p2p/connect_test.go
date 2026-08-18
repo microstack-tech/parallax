@@ -117,7 +117,7 @@ func TestNetConnectorViaProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &netConnector{policy: pol, timeout: 5 * time.Second}
+	c := &netConnector{policy: func() *netPolicy { return pol }, timeout: 5 * time.Second}
 
 	na := mustNetAddr(t, addrman.NetIPv4, []byte{203, 0, 113, 9}, 32110)
 	conn, err := c.Connect(context.Background(), na)
@@ -142,7 +142,7 @@ func TestNetConnectorUnreachable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &netConnector{policy: pol, timeout: time.Second}
+	c := &netConnector{policy: func() *netPolicy { return pol }, timeout: time.Second}
 
 	// Policy-excluded network.
 	v6 := mustNetAddr(t, addrman.NetIPv6, make([]byte, 16), 32110)
@@ -162,7 +162,7 @@ func TestNetConnectorOnionViaProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &netConnector{policy: pol, timeout: 5 * time.Second}
+	c := &netConnector{policy: func() *netPolicy { return pol }, timeout: 5 * time.Second}
 
 	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestConnectorDialerProxiesV1Dials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := connectorDialer{c: &netConnector{policy: pol, timeout: 5 * time.Second}}
+	d := connectorDialer{c: &netConnector{policy: func() *netPolicy { return pol }, timeout: 5 * time.Second}}
 
 	node := newNode(randomID(), "198.51.100.42:30000")
 	conn, err := d.Dial(context.Background(), node)

@@ -670,7 +670,7 @@ var (
 	OnlyNetFlag = cli.StringFlag{
 		Name: "onlynet",
 		Usage: "Comma-separated networks outbound connections are restricted to (ipv4|ipv6|onion). " +
-			"Inbound and operator-initiated dials are unaffected. onion requires --proxy or --onion.",
+			"Inbound and operator-initiated dials are unaffected. onion requires --proxy, --onion or --listenonion.",
 	}
 	ProxyRandomizeFlag = cli.BoolTFlag{
 		Name: "proxyrandomize",
@@ -680,7 +680,9 @@ var (
 	ListenOnionFlag = cli.BoolTFlag{
 		Name: "listenonion",
 		Usage: "Create a Tor v3 onion service for the P2P listener via the Tor control port (default on; a no-op " +
-			"until the control port answers). The service key persists in <datadir>/onion_v3_private_key. PIP-0007.",
+			"until the control port answers). Unless --onion is set, the onion proxy is auto-configured from the " +
+			"daemon's SOCKS listener, so a local Tor alone yields bidirectional onion connectivity. " +
+			"The service key persists in <datadir>/onion_v3_private_key. PIP-0007.",
 	}
 	TorControlFlag = cli.StringFlag{
 		Name:  "torcontrol",

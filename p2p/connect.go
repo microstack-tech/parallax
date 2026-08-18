@@ -61,25 +61,35 @@ func dialCountsAsFailure(err error) bool {
 	return !errors.Is(err, errUnreachableNetwork) && !errors.Is(err, errProxyDialFailed)
 }
 
-// netConnector is the default Connector. A nil policy dials clearnet
-// directly — the pre-PIP-0007 behavior, and the fallback for servers
-// constructed without Start in tests.
+// netConnector is the default Connector. policy is re-read per dial —
+// the torcontrol auto-proxy can swap the policy at runtime. A nil
+// policy func (or one returning nil) dials clearnet directly — the
+// pre-PIP-0007 behavior, and the fallback for servers constructed
+// without Start in tests.
 type netConnector struct {
-	policy  *netPolicy
+	policy  func() *netPolicy
 	timeout time.Duration
 }
 
+func (c *netConnector) currentPolicy() *netPolicy {
+	if c.policy == nil {
+		return nil
+	}
+	return c.policy()
+}
+
 func (c *netConnector) Connect(ctx context.Context, addr addrman.NetAddr) (net.Conn, error) {
+	pol := c.currentPolicy()
 	switch addr.Network {
 	case addrman.NetIPv4, addrman.NetIPv6:
 		ap, ok := addr.AddrPort()
 		if !ok {
 			return nil, errNoEndpoint
 		}
-		if c.policy != nil && !c.policy.isReachable(addr.Network) {
+		if pol != nil && !pol.isReachable(addr.Network) {
 			return nil, fmt.Errorf("%w: %s", errUnreachableNetwork, addr.Network)
 		}
-		if pr := c.policy.proxyFor(addr.Network); pr != nil {
+		if pr := pol.proxyFor(addr.Network); pr != nil {
 			return c.proxyDial(ctx, pr, ap.Addr().String(), addr.Port)
 		}
 		d := &net.Dialer{Timeout: c.timeout}
@@ -88,7 +98,7 @@ func (c *netConnector) Connect(ctx context.Context, addr addrman.NetAddr) (net.C
 		// Onion targets only ever dial as hostnames through a SOCKS5
 		// proxy — the Tor daemon performs the rendezvous, and the v3
 		// address's embedded ed25519 key authenticates the endpoint.
-		pr := c.policy.proxyFor(addrman.NetTorV3)
+		pr := pol.proxyFor(addrman.NetTorV3)
 		if pr == nil {
 			return nil, fmt.Errorf("%w: %s", errUnreachableNetwork, addr.Network)
 		}
@@ -144,16 +154,24 @@ func (d connectorDialer) Dial(ctx context.Context, dest *enode.Node) (net.Conn, 
 	return d.c.Connect(ctx, na)
 }
 
+// policy returns the current net policy. May change at runtime (the
+// torcontrol auto-proxy swaps in a new value); callers must not cache
+// the result across operations. Nil before Start.
+func (srv *Server) policy() *netPolicy {
+	return srv.netpol.Load()
+}
+
 // NetworkReachable reports whether this node has an outbound route to
 // the given BIP155 network under the resolved proxy policy. Exported
 // so the disc backend's ingest gate and other wiring consult the same
 // source of truth as the dial path. Before Start (no policy yet) it
 // answers for the default clearnet-only posture.
 func (srv *Server) NetworkReachable(net addrman.NetID) bool {
-	if srv.netpol == nil {
+	pol := srv.policy()
+	if pol == nil {
 		return net == addrman.NetIPv4 || net == addrman.NetIPv6
 	}
-	return srv.netpol.isReachable(net)
+	return pol.isReachable(net)
 }
 
 // dialConnector returns the Server's connector, falling back to a

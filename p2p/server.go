@@ -375,9 +375,13 @@ type Server struct {
 	log          logging.Logger
 
 	// netpol / connector are resolved from the proxy configuration at
-	// Start. connector is a test seam like newTransport: preset it
-	// before Start to intercept every outbound stream. PIP-0007.
-	netpol    *netPolicy
+	// Start. The policy is held behind an atomic pointer because the
+	// torcontrol auto-proxy replaces it at runtime (copy-on-write in
+	// setAutoOnionProxy) while dial paths and ingest gates read it
+	// unsynchronized. connector is a test seam like newTransport:
+	// preset it before Start to intercept every outbound stream.
+	// PIP-0007.
+	netpol    atomic.Pointer[netPolicy]
 	connector Connector
 
 	// torControl maintains the onion service when ListenOnion is set.
@@ -859,9 +863,9 @@ func (srv *Server) Start() (err error) {
 	if err != nil {
 		return err
 	}
-	srv.netpol = pol
+	srv.netpol.Store(pol)
 	if srv.connector == nil {
-		srv.connector = &netConnector{policy: pol, timeout: defaultDialTimeout}
+		srv.connector = &netConnector{policy: srv.policy, timeout: defaultDialTimeout}
 	}
 	// Onion-only nodes must not chatter on the LAN: UPnP/NAT-PMP
 	// discovery reveals the node and maps a port no clearnet peer
@@ -994,7 +998,7 @@ func (srv *Server) setupAddrMan() error {
 	// --nodiscover semantics).
 	if len(srv.DNSSeeds) > 0 {
 		switch {
-		case srv.netpol.nameProxy() != nil:
+		case srv.policy().nameProxy() != nil:
 			// --proxy: never touch the system resolver. Connect to
 			// each seed hostname through the proxy instead and let
 			// the disc greeting's GetPeers warm the addrbook —
@@ -1012,7 +1016,7 @@ func (srv *Server) setupAddrMan() error {
 				srv.proxiedSeedLoop(seedCtx, srv.DNSSeeds, DNSSeedDefaultPort, DNSSeedDefaultInterval)
 			}()
 			srv.log.Info("DNS seeds via proxy addr-fetch (no local resolution)", "hosts", srv.DNSSeeds)
-		case !srv.netpol.clearnetReachable():
+		case !srv.policy().clearnetReachable():
 			// Onion-only without --proxy: seed hostnames would leak
 			// through the system resolver and their A/AAAA results
 			// are undialable anyway.
@@ -1139,7 +1143,7 @@ func (srv *Server) setupDiscovery() error {
 	// Onion-only nodes skip the enrtree consumers entirely: their
 	// candidates are clearnet IPs resolved over system DNS — both a
 	// leak and useless under the policy. PIP-0007 §1.4.
-	if srv.netpol.clearnetReachable() {
+	if srv.policy().clearnetReachable() {
 		added := make(map[string]bool)
 		for _, proto := range srv.Protocols {
 			if proto.DialCandidates != nil && !added[proto.Name] {
@@ -1164,7 +1168,7 @@ func (srv *Server) setupDiscovery() error {
 	// node opens no UDP socket at all, regardless of
 	// --legacy-discovery: Tor carries no UDP, and answering discv4
 	// probes on clearnet would deanonymize the node. PIP-0007 §1.4.
-	if srv.NoDiscovery || !srv.netpol.clearnetReachable() {
+	if srv.NoDiscovery || !srv.policy().clearnetReachable() {
 		return nil
 	}
 
@@ -1637,7 +1641,7 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	if addr.Network == addrman.NetTorV3 {
 		flags |= onionConn
 	}
-	if srv.netpol.proxyFor(addr.Network) != nil {
+	if srv.policy().proxyFor(addr.Network) != nil {
 		flags |= proxiedConn
 	}
 	if err := srv.setupConnTarget(fd, flags, nil, addr); err != nil {
@@ -3522,7 +3526,7 @@ func (srv *Server) NodeInfo() *NodeInfo {
 			name = "onion"
 		}
 		row := NetworkInfo{Name: name, Reachable: srv.NetworkReachable(n)}
-		if pr := srv.netpol.proxyFor(n); pr != nil {
+		if pr := srv.policy().proxyFor(n); pr != nil {
 			row.Proxy = pr.Addr
 			row.ProxyRandomize = pr.Isolation != nil
 		}

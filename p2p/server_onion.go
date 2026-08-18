@@ -40,16 +40,49 @@ func (srv *Server) startTorControl() {
 		virtualPort = DNSSeedDefaultPort
 	}
 	srv.torControl = torcontrol.New(torcontrol.Config{
-		ControlAddr:    srv.TorControlAddr,
-		Password:       srv.TorPassword,
-		KeyFile:        srv.OnionKeyPath,
-		VirtualPort:    virtualPort,
-		Target:         fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port),
-		OnService:      func(id string) { srv.onOnionService(id, virtualPort) },
-		OnDisconnected: srv.onOnionLost,
-		Log:            srv.log,
+		ControlAddr: srv.TorControlAddr,
+		Password:    srv.TorPassword,
+		KeyFile:     srv.OnionKeyPath,
+		VirtualPort: virtualPort,
+		Target:      fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port),
+		// Auto-configure the onion proxy from the daemon's SOCKS
+		// listener only when --onion named none — Core gates the
+		// GETINFO on -onion being unset, so an explicit --onion (or
+		// the --onion=0 refusal) always wins.
+		FetchSocks:      srv.OnionProxyAddr == "",
+		OnSocksListener: srv.setAutoOnionProxy,
+		OnService:       func(id string) { srv.onOnionService(id, virtualPort) },
+		OnDisconnected:  srv.onOnionLost,
+		Log:             srv.log,
 	})
 	srv.torControl.Start()
+}
+
+// setAutoOnionProxy installs the torcontrol-discovered SOCKS listener
+// as the onion route (PIP-0007 §1.3 auto-proxy, Core's get_socks_cb).
+// Copy-on-write onto the atomic policy holder: readers never see a
+// half-updated policy. Once set it is never revoked on control-port
+// loss — Core keeps the proxy too, and dials just fail naturally if
+// the daemon is gone. Runs on the torcontrol goroutine, which is the
+// only writer after Start.
+func (srv *Server) setAutoOnionProxy(addr string) {
+	cur := srv.policy()
+	if cur == nil {
+		return
+	}
+	if pr := cur.proxyFor(addrman.NetTorV3); pr != nil && pr.Addr == addr {
+		// Reconnected session reporting the same listener — the
+		// route (and its isolation generator) stays as it is.
+		return
+	}
+	next, err := cur.withAutoOnionProxy(addr)
+	if err != nil {
+		srv.log.Warn("torcontrol: onion proxy auto-configuration failed", "addr", addr, "err", err)
+		return
+	}
+	srv.netpol.Store(next)
+	srv.log.Info("torcontrol: onion proxy auto-configured",
+		"proxy", addr, "reachable", next.isReachable(addrman.NetTorV3))
 }
 
 // onOnionService records the established service address and notifies

@@ -57,7 +57,7 @@ func TestOnionOnlyMutesClearnetSurface(t *testing.T) {
 	if srv.NAT != nil {
 		t.Error("onion-only node kept its NAT mapper")
 	}
-	if srv.netpol.clearnetReachable() {
+	if srv.policy().clearnetReachable() {
 		t.Error("policy reports clearnet reachable under --onlynet=onion")
 	}
 }
@@ -67,6 +67,12 @@ const testOnionService = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53w
 // startFakeTorControl runs a NULL-auth control port that grants every
 // ADD_ONION with a fixed service ID. Returns its address.
 func startFakeTorControl(t *testing.T) string {
+	return startFakeTorControlSocks(t, "")
+}
+
+// startFakeTorControlSocks is startFakeTorControl with a configurable
+// net/listeners/socks value; empty answers GETINFO with 510.
+func startFakeTorControlSocks(t *testing.T, socksReply string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -95,6 +101,8 @@ func startFakeTorControl(t *testing.T) string {
 						fmt.Fprintf(conn, "250 OK\r\n")
 					case strings.HasPrefix(cmd, "ADD_ONION "):
 						fmt.Fprintf(conn, "250-ServiceID=%s\r\n250-PrivateKey=ED25519-V3:X\r\n250 OK\r\n", testOnionService)
+					case cmd == "GETINFO net/listeners/socks" && socksReply != "":
+						fmt.Fprintf(conn, "250-net/listeners/socks=%s\r\n250 OK\r\n", socksReply)
 					default:
 						fmt.Fprintf(conn, "510 Unrecognized command\r\n")
 					}
@@ -181,6 +189,105 @@ func TestListenOnionEstablishesService(t *testing.T) {
 	}
 	if _, ok := srv.OnionService(); ok {
 		t.Fatal("OnionService() still set after loss")
+	}
+}
+
+// TestAutoOnionProxy — the closing PIP-0007 piece: with --listenonion
+// and no --onion, the server learns the daemon's SOCKS listener via
+// GETINFO, onion becomes reachable at runtime, and onion dials route
+// through the discovered proxy. An explicit --onion suppresses the
+// auto-configuration entirely.
+func TestAutoOnionProxy(t *testing.T) {
+	socks := startFakeSocksProxy(t)
+	control := startFakeTorControlSocks(t, fmt.Sprintf("%q", socks.ln.Addr().String()))
+
+	hookFired := make(chan struct{})
+	srv := &Server{Config: Config{
+		Name:           "auto-proxy",
+		MaxPeers:       10,
+		NoDial:         true,
+		NoDiscovery:    true,
+		ListenAddr:     "127.0.0.1:0",
+		PrivateKey:     newkey(),
+		ListenOnion:    true,
+		TorControlAddr: control,
+		OnOnionService: func(addrman.NetAddr) { close(hookFired) },
+		Logger:         testlog.Logger(t, logging.LvlTrace),
+	}}
+	// Before the control port answers, onion has no route.
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	select {
+	case <-hookFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("onion service never established")
+	}
+	// The SOCKS listener is fetched before ADD_ONION, so by now the
+	// policy swap has happened.
+	if !srv.NetworkReachable(addrman.NetTorV3) {
+		t.Fatal("onion not reachable after auto-proxy configuration")
+	}
+	pr := srv.policy().proxyFor(addrman.NetTorV3)
+	if pr == nil || pr.Addr != socks.ln.Addr().String() {
+		t.Fatalf("onion proxy = %+v, want the discovered listener", pr)
+	}
+	if pr.Isolation == nil {
+		t.Fatal("auto-proxy missing stream isolation")
+	}
+
+	// And it actually routes: an onion dial's CONNECT lands on the
+	// discovered SOCKS listener. (Not our own service — that's self.)
+	onion, err := addrman.ParseOnion("duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = srv.DialV2(onion)
+	select {
+	case dest := <-socks.destC:
+		if dest != onion.OnionHostname() {
+			t.Errorf("proxy saw %q, want %q", dest, onion.OnionHostname())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("onion dial never reached the auto-configured proxy")
+	}
+}
+
+// TestAutoOnionProxySuppressedByExplicitOnion — an operator-supplied
+// --onion always wins: no GETINFO-driven override.
+func TestAutoOnionProxySuppressedByExplicitOnion(t *testing.T) {
+	socks := startFakeSocksProxy(t)
+	control := startFakeTorControlSocks(t, fmt.Sprintf("%q", socks.ln.Addr().String()))
+
+	hookFired := make(chan struct{})
+	srv := &Server{Config: Config{
+		Name:           "explicit-onion",
+		MaxPeers:       10,
+		NoDial:         true,
+		NoDiscovery:    true,
+		ListenAddr:     "127.0.0.1:0",
+		PrivateKey:     newkey(),
+		ListenOnion:    true,
+		TorControlAddr: control,
+		OnionProxyAddr: "127.0.0.1:19050",
+		OnOnionService: func(addrman.NetAddr) { close(hookFired) },
+		Logger:         testlog.Logger(t, logging.LvlTrace),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	select {
+	case <-hookFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("onion service never established")
+	}
+	pr := srv.policy().proxyFor(addrman.NetTorV3)
+	if pr == nil || pr.Addr != "127.0.0.1:19050" {
+		t.Fatalf("onion proxy = %+v, want the explicit --onion value untouched", pr)
 	}
 }
 
