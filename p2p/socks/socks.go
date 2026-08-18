@@ -47,10 +47,18 @@ const (
 	authVersion = 0x01 // RFC 1929 subnegotiation version
 )
 
-// recvTimeout bounds each read phase of the negotiation. Bitcoin Core's
+// recvTimeout bounds the negotiation reads. Bitcoin Core's
 // g_socks5_recv_timeout (DEFAULT_SOCKS5_RECV_TIMEOUT = 20s). The overall
-// attempt is additionally bounded by the caller's context.
+// attempt is additionally bounded by the caller's context. The size
+// matters for Tor: a CONNECT reply routinely takes >15s while the
+// daemon retries the stream across circuits hunting for an exit whose
+// policy carries the port.
 const recvTimeout = 20 * time.Second
+
+// proxyConnectTimeout bounds the TCP connect to the proxy itself —
+// Core's DEFAULT_CONNECT_TIMEOUT (5s). The proxy is almost always
+// loopback; a slow connect here means it's down, not far away.
+const proxyConnectTimeout = 5 * time.Second
 
 // ReplyError is a non-success REP code from the proxy's CONNECT response.
 // Code values are RFC 1928 plus the Tor extension range 0xf0-0xf7.
@@ -163,7 +171,7 @@ func (p *Proxy) Dial(ctx context.Context, dest string, port uint16) (net.Conn, e
 		c := p.Isolation.Generate()
 		auth = &c
 	}
-	d := &net.Dialer{}
+	d := &net.Dialer{Timeout: proxyConnectTimeout}
 	conn, err := d.DialContext(ctx, "tcp", p.Addr)
 	if err != nil {
 		return nil, fmt.Errorf("socks: proxy %s unreachable: %w", p.Addr, err)

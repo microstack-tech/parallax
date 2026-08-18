@@ -111,12 +111,14 @@ func (c *netConnector) Connect(ctx context.Context, addr addrman.NetAddr) (net.C
 // proxyDial runs a SOCKS5 CONNECT and classifies failures: a ReplyError
 // is evidence about the destination and passes through; anything else
 // means the proxy leg failed and is wrapped in errProxyDialFailed.
+//
+// No overall timeout is imposed here: the socks package carries Core's
+// own budgets (5s to reach the proxy, 20s for the negotiation), and
+// clamping the whole exchange to the direct-dial timeout was cutting
+// off Tor CONNECTs mid-retry — the daemon often needs >15s to find an
+// exit whose policy carries a non-standard port. ctx still propagates
+// server-stop cancellation.
 func (c *netConnector) proxyDial(ctx context.Context, pr *socks.Proxy, dest string, port uint16) (net.Conn, error) {
-	if c.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		defer cancel()
-	}
 	conn, err := pr.Dial(ctx, dest, port)
 	if err != nil {
 		var rep *socks.ReplyError
