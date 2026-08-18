@@ -2104,6 +2104,12 @@ func (srv *Server) connectedToDialTarget(addr addrman.NetAddr) bool {
 // resolves the resulting duplicate by dropping the inbound side.
 func (srv *Server) alreadyConnectedTo(addr *net.TCPAddr) bool {
 	for _, p := range srv.Peers() {
+		// Feelers are transient probes; one must never suppress a
+		// real dial to the same address (the cold-start addr-fetch
+		// probes exactly the bootstrap addresses the dialer needs).
+		if p.rw.is(feelerConn) {
+			continue
+		}
 		la, ok := srv.peerListenAddr(p)
 		if !ok {
 			continue
@@ -2969,6 +2975,50 @@ running:
 	}
 }
 
+// v2ConnDuplicate reports whether c represents a peer the node is
+// already connected to. v2 sessions derive their node ID from
+// ephemeral keys, so the ID-keyed peer map cannot catch duplicates and
+// the address has to.
+//
+// The address compared is the one we dialed whenever the conn records
+// one: a proxied conn's socket RemoteAddr is the SOCKS5 proxy, so
+// comparing socket addresses would make the second proxied peer a
+// duplicate of the first and cap the node at one peer per proxy. A
+// proxied conn with no recorded target (a hostname seed fetch) cannot
+// be identified at all and is never treated as a duplicate.
+//
+// Feeler probes are skipped: they are transient and must never block a
+// real connection. On a cold start the addr-fetch probes exactly the
+// bootstrap addresses the dialer then needs, which with a single
+// bootnode is the only address it has.
+func v2ConnDuplicate(peers map[enode.ID]*Peer, c *conn) bool {
+	target := c.dialTarget()
+	remote, hasRemote := c.fd.RemoteAddr().(*net.TCPAddr)
+	if target.Network == 0 && (!hasRemote || c.is(proxiedConn)) {
+		return false
+	}
+	for _, p := range peers {
+		if p.rw.is(feelerConn) {
+			continue
+		}
+		pt := p.rw.dialTarget()
+		if target.Network != 0 {
+			if pt.Network != 0 && pt.Equal(target) {
+				return true
+			}
+			continue
+		}
+		if pt.Network != 0 || p.rw.is(proxiedConn) {
+			continue
+		}
+		if pra, ok := p.RemoteAddr().(*net.TCPAddr); ok &&
+			pra.Port == remote.Port && pra.IP.Equal(remote.IP) {
+			return true
+		}
+	}
+	return false
+}
+
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, tcpGossipPeers int, c *conn) error {
 	// Duplicate and self connections are rejected before any
 	// capacity handling: they must never trigger eviction (there is
@@ -3128,19 +3178,17 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount, t
 	// localnode's IP updates between the dial and this checkpoint,
 	// and any future code path that bypasses DialV2.
 	if _, isV2 := c.transport.(*v2Transport); isV2 {
-		if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok {
+		if target := c.dialTarget(); target.Network != 0 {
+			if srv.isSelfNetAddr(target) {
+				return DiscSelf
+			}
+		} else if remote, ok := c.fd.RemoteAddr().(*net.TCPAddr); ok && !c.is(proxiedConn) {
 			if srv.IsSelfEndpoint(remote) {
 				return DiscSelf
 			}
-			for _, p := range peers {
-				pra, ok := p.RemoteAddr().(*net.TCPAddr)
-				if !ok {
-					continue
-				}
-				if pra.Port == remote.Port && pra.IP.Equal(remote.IP) {
-					return DiscAlreadyConnected
-				}
-			}
+		}
+		if v2ConnDuplicate(peers, c) {
+			return DiscAlreadyConnected
 		}
 	}
 	return nil

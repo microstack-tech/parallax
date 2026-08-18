@@ -190,3 +190,70 @@ func TestDisconnectMatchesDialTarget(t *testing.T) {
 		t.Fatalf("the proxy's own address matched %d peers, want none", len(got))
 	}
 }
+
+// TestV2ConnDuplicateUnderProxy — the post-handshake duplicate check
+// must identify a v2 peer by the address it was dialed at. Regression
+// found in live testing: it compared socket addresses, which under
+// --proxy are all the SOCKS5 proxy, so the second proxied peer was
+// always rejected as a duplicate of the first and the node could never
+// hold more than one proxied peer.
+func TestV2ConnDuplicateUnderProxy(t *testing.T) {
+	proxyRemote := func() net.Conn {
+		return &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9050}}
+	}
+	first := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(203, 0, 113, 1), Port: 32110})
+	second := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(203, 0, 113, 2), Port: 32110})
+
+	existing := proxiedPeerAt(t, first)
+	peers := map[enode.ID]*Peer{randomID(): existing}
+
+	// A different target through the same proxy is not a duplicate.
+	c := &conn{fd: proxyRemote(), flags: dynDialedConn | proxiedConn}
+	c.setDialTarget(second)
+	if v2ConnDuplicate(peers, c) {
+		t.Fatal("distinct proxied targets treated as duplicates")
+	}
+	// The same target is.
+	dup := &conn{fd: proxyRemote(), flags: dynDialedConn | proxiedConn}
+	dup.setDialTarget(first)
+	if !v2ConnDuplicate(peers, dup) {
+		t.Fatal("re-dial of a connected target not detected")
+	}
+	// A proxied conn with no target (hostname seed fetch) is
+	// unidentifiable and never a duplicate.
+	anon := &conn{fd: proxyRemote(), flags: dynDialedConn | proxiedConn}
+	if v2ConnDuplicate(peers, anon) {
+		t.Fatal("unidentifiable proxied conn treated as a duplicate")
+	}
+}
+
+// TestFeelerNeverBlocksRealConnection — a feeler probe must not make a
+// real connection to the same address look like a duplicate. On a cold
+// start the addr-fetch probes exactly the bootstrap addresses the
+// dialer needs; with a single onion bootnode that is the only address
+// it has, and the node ended up with no real peers at all.
+func TestFeelerNeverBlocksRealConnection(t *testing.T) {
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := proxiedPeerAt(t, onion)
+	probe.rw.set(feelerConn, true)
+	peers := map[enode.ID]*Peer{randomID(): probe}
+
+	real := &conn{
+		fd:    &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9050}},
+		flags: dynDialedConn | proxiedConn | onionConn,
+	}
+	real.setDialTarget(onion)
+	if v2ConnDuplicate(peers, real) {
+		t.Fatal("feeler probe blocked a real connection to the same address")
+	}
+
+	// Once the real peer is attached, a further dial IS a duplicate.
+	attached := proxiedPeerAt(t, onion)
+	peers[randomID()] = attached
+	if !v2ConnDuplicate(peers, real) {
+		t.Fatal("duplicate of an attached real peer not detected")
+	}
+}
