@@ -341,6 +341,12 @@ type Server struct {
 	peerFeed     event.Feed
 	log          logging.Logger
 
+	// netpol / connector are resolved from the proxy configuration at
+	// Start. connector is a test seam like newTransport: preset it
+	// before Start to intercept every outbound stream. PIP-0007.
+	netpol    *netPolicy
+	connector Connector
+
 	nodedb    *enode.DB
 	localnode *enode.LocalNode
 	ntab      *discover.UDPv4
@@ -773,6 +779,18 @@ func (srv *Server) Start() (err error) {
 	if srv.listenFunc == nil {
 		srv.listenFunc = net.Listen
 	}
+	// Resolve proxy configuration before anything opens a socket:
+	// setupLocalNode/setupListening consult the policy to mute NAT
+	// and UDP for onion-only nodes, and the dial paths route every
+	// outbound stream through the connector. PIP-0007.
+	pol, err := newNetPolicy(&srv.Config)
+	if err != nil {
+		return err
+	}
+	srv.netpol = pol
+	if srv.connector == nil {
+		srv.connector = &netConnector{policy: pol, timeout: defaultDialTimeout}
+	}
 	srv.quit = make(chan struct{})
 	srv.quitCtx, srv.quitCancel = context.WithCancel(context.Background())
 	srv.delpeer = make(chan peerDrop)
@@ -1118,7 +1136,9 @@ func (srv *Server) setupDialScheduler() {
 		config.resolver = srv.ntab
 	}
 	if config.dialer == nil {
-		config.dialer = tcpDialer{&net.Dialer{Timeout: defaultDialTimeout}}
+		// Route v1 scheduler dials through the connector so proxy
+		// policy covers legacy enode dials too. PIP-0007 §1.1.
+		config.dialer = connectorDialer{c: srv.dialConnector()}
 	}
 	// When addrman is enabled, add its NodeIter as an additional FairMix
 	// source. discmix hands the dialer candidates round-robin across
@@ -1422,10 +1442,16 @@ func (srv *Server) dialV2WithFlags(addr *net.TCPAddr, extra connFlag) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	dialer := &net.Dialer{Timeout: defaultDialTimeout}
-	fd, err := dialer.DialContext(ctx, "tcp", addr.String())
+	na, ok := netAddrFromTCP(addr)
+	if !ok {
+		return fmt.Errorf("v2 dial %s: %w", addr, errNoEndpoint)
+	}
+	fd, err := srv.dialConnector().Connect(ctx, na)
 	if err != nil {
-		srv.addrmanAttemptByTCP(addr, true)
+		// Routing problems on our side (no route to the network, the
+		// proxy leg failed) carry no evidence about the destination
+		// and must not push it toward IsTerrible.
+		srv.addrmanAttemptByTCP(addr, dialCountsAsFailure(err))
 		return fmt.Errorf("v2 dial %s: %w", addr, err)
 	}
 	// Flags: dynDialedConn so the run loop slots it correctly, plus
