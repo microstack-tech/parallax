@@ -55,7 +55,7 @@ resolved configuration allows.
 | `--listenonion` | on | Create a v3 onion service for the P2P listener via the Tor control port. A no-op (with quiet periodic retries) until a control port answers. |
 | `--torcontrol` | `127.0.0.1:9051` | Tor control port address. |
 | `--torpassword` | unset | Control-port password (`HashedControlPassword` auth). Cookie auth is used automatically when unset. |
-| `--proxy` | unset | SOCKS5 proxy for **all** outbound connections, including clearnet ones. Also moves DNS-seed bootstrapping off the system resolver so no DNS query leaves the machine. |
+| `--proxy` | unset | SOCKS5 proxy for **all** outbound connections, including clearnet ones. Also suppresses everything that would expose the node's real IP regardless of the proxy: DNS-seed bootstrapping moves off the system resolver, the discv4 UDP socket is not opened, enrtree resolution is skipped, and UPnP/NAT-PMP is disabled. |
 | `--onion` | auto-discovered | SOCKS5 proxy used only for `.onion` targets, overriding both `--proxy` and the auto-discovery. `--onion=0` disables onion outbound entirely. |
 | `--onlynet` | unset | Restrict **automatic** outbound connections to the named networks (`ipv4`, `ipv6`, `onion`, comma-separated). Manual dials (`addnode`, `addPeer`, `dialV2`) and static nodes are exempt, as in Core. |
 | `--proxyrandomize` | on | Fresh SOCKS5 credentials per connection, so Tor puts every peer on its own circuit (stream isolation). |

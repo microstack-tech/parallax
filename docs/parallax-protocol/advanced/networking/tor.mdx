@@ -66,6 +66,18 @@ configured static nodes reach any network the node has a route to,
 as in Core, where `-onlynet` governs the connections the node makes
 on its own.
 
+## Keeping clearnet off the wire
+
+A node whose outbound traffic is proxied (`--proxy`) or which has no
+reachable clearnet network at all (`--onlynet=onion`) suppresses every
+subsystem that would reveal its address regardless of the proxy: the
+discv4 UDP socket is never opened (Tor carries no UDP, so answering a
+probe would tie the node's onion presence to its IP), enrtree
+discovery does not resolve, UPnP/NAT-PMP announcements are disabled,
+and DNS-seed bootstrapping either goes through the proxy or is
+skipped. Peer connections are unaffected — they are what the proxy is
+for.
+
 ## Identity and handshake
 
 Onion entries carry `KeyType=0x00` and connect exclusively through
