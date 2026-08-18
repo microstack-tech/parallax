@@ -197,4 +197,3 @@ func removeAnchors(path string) error {
 	}
 	return nil
 }
-

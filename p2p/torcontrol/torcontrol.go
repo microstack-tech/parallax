@@ -424,8 +424,18 @@ func readReply(br *bufio.Reader) (reply, error) {
 		if len(line) < 4 {
 			return reply{}, fmt.Errorf("malformed reply line %q", line)
 		}
-		var code int
-		if _, err := fmt.Sscanf(line[:3], "%3d", &code); err != nil {
+		// Strict three-ASCII-digit code, first digit non-zero — the
+		// control-spec's codes are SMTP-style (2xx..6xx). Sscanf
+		// would also accept signed or zero-padded forms.
+		code := 0
+		for i := range 3 {
+			d := line[i]
+			if d < '0' || d > '9' {
+				return reply{}, fmt.Errorf("malformed reply code in %q", line)
+			}
+			code = code*10 + int(d-'0')
+		}
+		if code < 100 {
 			return reply{}, fmt.Errorf("malformed reply code in %q", line)
 		}
 		sep, text := line[3], line[4:]
