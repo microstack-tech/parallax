@@ -136,6 +136,18 @@ func (d connectorDialer) Dial(ctx context.Context, dest *enode.Node) (net.Conn, 
 	return d.c.Connect(ctx, na)
 }
 
+// NetworkReachable reports whether this node has an outbound route to
+// the given BIP155 network under the resolved proxy policy. Exported
+// so the disc backend's ingest gate and other wiring consult the same
+// source of truth as the dial path. Before Start (no policy yet) it
+// answers for the default clearnet-only posture.
+func (srv *Server) NetworkReachable(net addrman.NetID) bool {
+	if srv.netpol == nil {
+		return net == addrman.NetIPv4 || net == addrman.NetIPv6
+	}
+	return srv.netpol.isReachable(net)
+}
+
 // dialConnector returns the Server's connector, falling back to a
 // direct-dial connector for servers that never ran Start (tests).
 func (srv *Server) dialConnector() Connector {

@@ -623,6 +623,10 @@ func (n *Node) setupAddrManAndDisc() error {
 		}
 	}
 	backend := disc.NewAddrmanBackend(m, nil, n.log, n.server.IsSelfEndpoint, helloProvider)
+	// The ingest storage gate follows the server's proxy policy:
+	// gossiped onion entries become storable once the node has a Tor
+	// route (PIP-0007 §2.1).
+	backend.SetReachableFunc(n.server.NetworkReachable)
 	// An operator-pinned external IP (--nat extip:<IP>) short-circuits
 	// quorum: the address is an operator statement, not a guess to be
 	// voted on, so self-advertisement must work even with zero inbound

@@ -73,6 +73,14 @@ type AddrmanBackend struct {
 	crossDialHost   CrossDialHost
 	crossDialHostMu sync.RWMutex
 
+	// reachableFn, when set, decides which BIP155 networks gossiped
+	// entries may be stored for (PIP-0007: reachability is local
+	// configuration — onion becomes storable once the node has an
+	// onion route). nil falls back to IPv4/IPv6-only, the v2.0
+	// behavior. Set once at wiring time, before any peer session
+	// exists; not synchronized.
+	reachableFn func(addrman.NetID) bool
+
 	mu          sync.Mutex
 	peerBuckets map[PeerKey]*tokenBucket
 	// handshakeByID maps peer enode IDs to the human-readable
@@ -153,6 +161,23 @@ func NewAddrmanBackend(m *addrman.AddrMan, q *Quorum, log logging.Logger, isSelf
 		panic("disc: cannot read randomness for relayKey: " + err.Error())
 	}
 	return b
+}
+
+// SetReachableFunc installs the per-network reachability predicate
+// consulted by the ingest storage gate (typically
+// p2p.Server.NetworkReachable). Must be called before the first peer
+// session — it is read unsynchronized from ingest goroutines.
+func (b *AddrmanBackend) SetReachableFunc(f func(addrman.NetID) bool) {
+	b.reachableFn = f
+}
+
+// entryReachable reports whether entries on the given wire network may
+// be stored. Falls back to IPv4/IPv6-only when no predicate is wired.
+func (b *AddrmanBackend) entryReachable(wireNet uint8) bool {
+	if b.reachableFn != nil {
+		return b.reachableFn(addrmanNetID(wireNet))
+	}
+	return wireNet == NetIPv4 || wireNet == NetIPv6
 }
 
 // TrackHandshake records the handshake variant used for this session.
@@ -356,15 +381,16 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) []Peer
 			claimed = now.Add(-5 * 24 * time.Hour)
 		}
 		e.LastSeen = uint64(claimed.Unix())
-		// This node dials IP networks only — there is no Tor/I2P/CJDNS
-		// transport. Core's ADDR handling ("Do not store addresses
-		// outside our network", net_processing.cpp) keeps such entries
-		// out of addrman — otherwise an attacker stuffs the addrbook
-		// and GetPeers response slots with undialable entries — while
-		// still relaying them (below, at the reduced unreachable
-		// fanout) so they propagate toward nodes that serve those
-		// networks.
-		reachable := e.NetworkID == NetIPv4 || e.NetworkID == NetIPv6
+		// Store only addresses on networks this node can dial.
+		// Core's ADDR handling ("Do not store addresses outside our
+		// network", net_processing.cpp) keeps the rest out of addrman
+		// — otherwise an attacker stuffs the addrbook and GetPeers
+		// response slots with undialable entries — while still
+		// relaying them (below, at the reduced unreachable fanout) so
+		// they propagate toward nodes that serve those networks.
+		// Which networks are dialable is local configuration
+		// (PIP-0007): IPv4/IPv6 always, onion iff a Tor route exists.
+		reachable := b.entryReachable(e.NetworkID)
 		if reachable {
 			// Plus the 2-hour gossip penalty applied by the Add path.
 			b.m.AddOne(naddr, e.KeyType, e.NodeID, claimed, source, addrman.SourceTCPGossip, 2*time.Hour)
