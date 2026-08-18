@@ -216,7 +216,12 @@ func (p *Proxy) Dial(ctx context.Context, dest string, port uint16) (net.Conn, e
 		return nil, negErr
 	}
 	if !owned {
-		// Cancelled during negotiation: the watcher owns the conn.
+		// Cancelled during negotiation. Close here rather than relying
+		// on the watcher: the deferred close(watchDone) races
+		// ctx.Done() in its select, so the watcher may take the
+		// watchDone branch and leak the negotiated socket. The
+		// handedOff guard makes the redundant close harmless.
+		conn.Close()
 		return nil, ctx.Err()
 	}
 	return conn, nil

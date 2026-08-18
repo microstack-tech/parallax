@@ -150,7 +150,7 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 		// explicit --onion=0 forbids the route outright and always
 		// errors.
 		if keep[addrman.NetTorV3] && p.proxies[addrman.NetTorV3] == nil {
-			if cfg.OnionProxyAddr == "0" || !cfg.ListenOnion {
+			if cfg.OnionProxyAddr == "0" || !onionRouteMayArrive(cfg) {
 				return nil, errOnlyNetNoRoute
 			}
 		}
@@ -165,7 +165,7 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 	}
 	// onionPending: no network reachable yet, but --listenonion may
 	// deliver the onion route once the control port answers.
-	onionPending := cfg.ListenOnion && p.onionAllowed &&
+	onionPending := onionRouteMayArrive(cfg) && p.onionAllowed &&
 		p.proxies[addrman.NetTorV3] == nil && cfg.OnionProxyAddr != "0"
 	if !any && !onionPending {
 		return nil, errNoNetReachable
@@ -270,6 +270,16 @@ func (p *netPolicy) nameProxy() *socks.Proxy {
 		return nil
 	}
 	return p.name
+}
+
+// onionRouteMayArrive reports whether the torcontrol auto-proxy could
+// still supply an onion route after Start. It requires a listener:
+// the controller only runs when the node listens, since the onion
+// service must forward to something, so a non-listening node will
+// never gain the route and must not be allowed to start with no
+// reachable network on the strength of it.
+func onionRouteMayArrive(cfg *Config) bool {
+	return cfg.ListenOnion && cfg.ListenAddr != ""
 }
 
 // onionProxyEnabled reports whether s names a real onion proxy rather

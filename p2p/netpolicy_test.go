@@ -130,7 +130,7 @@ func TestNetPolicyOnlyNet(t *testing.T) {
 func TestNetPolicyListenOnionPending(t *testing.T) {
 	// --onlynet=onion with no proxy is legal when --listenonion may
 	// auto-configure one (Core init.cpp parity)...
-	p, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true})
+	p, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true, ListenAddr: ":32110"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,14 @@ func TestNetPolicyListenOnionPending(t *testing.T) {
 		t.Error("onlynet=onion must mark onion allowed")
 	}
 	// ...but an explicit --onion=0 forbids the route outright.
-	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true, OnionProxyAddr: "0"}); !errors.Is(err, errOnlyNetNoRoute) {
+	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true, ListenAddr: ":32110", OnionProxyAddr: "0"}); !errors.Is(err, errOnlyNetNoRoute) {
 		t.Errorf("onlynet=onion with --onion=0: got %v", err)
+	}
+	// --listenonion only excuses the missing route when the node
+	// actually listens; otherwise the controller never runs and the
+	// route can never arrive.
+	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}, ListenOnion: true}); !errors.Is(err, errOnlyNetNoRoute) {
+		t.Errorf("onlynet=onion, --listenonion, no listener: got %v", err)
 	}
 	// And without --listenonion the original error stands.
 	if _, err := newNetPolicy(&Config{OnlyNet: []string{"onion"}}); !errors.Is(err, errOnlyNetNoRoute) {

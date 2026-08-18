@@ -903,8 +903,17 @@ func (srv *Server) Start() (err error) {
 	// discovery reveals the node and maps a port no clearnet peer
 	// will ever dial. PIP-0007 §1.4.
 	if pol.clearnetHidden() && srv.NAT != nil {
-		srv.log.Info("NAT traversal disabled: clearnet is proxied or unreachable")
-		srv.NAT = nil
+		// Only the discovery mechanisms are muted: UPnP/NAT-PMP probe
+		// the LAN and map a port, which is what would expose a node
+		// that means to stay hidden. A --nat extip: value performs no
+		// network activity at all — it is an operator statement about
+		// the node's address, and the disc layer keeps advertising it
+		// through the quorum override, so discarding it here would
+		// leave the two halves disagreeing.
+		if _, static := srv.NAT.(nat.ExtIP); !static {
+			srv.log.Info("NAT traversal disabled: clearnet is proxied or unreachable")
+			srv.NAT = nil
+		}
 	}
 	// One-line reachability summary so operators can confirm their
 	// proxy flags resolved as intended (PIP-0007 §4).

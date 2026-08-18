@@ -35,30 +35,34 @@ func onionAddrWithFirstByte(t *testing.T, b byte) addrman.NetAddr {
 	return na
 }
 
-// TestGroupKeyForNetAddr — onion targets group by the top 4 bits of
-// the service pubkey (addrman group() parity); IP targets keep the
-// ipNetworkGroupKey rules including the loopback exemption.
-func TestGroupKeyForNetAddr(t *testing.T) {
-	// Same top nibble → same group, despite differing low bits.
-	a := onionAddrWithFirstByte(t, 0x42)
-	b := onionAddrWithFirstByte(t, 0x4F)
-	if groupKeyForNetAddr(a) != groupKeyForNetAddr(b) {
-		t.Error("onion addresses sharing the top nibble must share a group")
+// TestOnionExemptFromOutboundGroupLimit — the one-peer-per-group
+// outbound limit covers IPv4/IPv6 only, as in Core, whose
+// ThreadOpenConnections inserts just those into
+// outbound_ipv46_peer_netgroups. The onion group rule is the top 4
+// bits of the service key — 16 values for the whole address space —
+// so applying the limit there would cap a node at 16 onion peers and
+// reject most candidates well before that.
+func TestOnionExemptFromOutboundGroupLimit(t *testing.T) {
+	for _, b := range []byte{0x00, 0x42, 0xF0} {
+		if got := groupKeyForNetAddr(onionAddrWithFirstByte(t, b)); got != "" {
+			t.Errorf("onion target 0x%02x has group key %x, want exempt", b, got)
+		}
 	}
-	// Different top nibble → different group.
-	c := onionAddrWithFirstByte(t, 0x52)
-	if groupKeyForNetAddr(a) == groupKeyForNetAddr(c) {
-		t.Error("onion addresses with different top nibbles must not share a group")
-	}
-	// Onion groups never collide with IP groups.
+	// IP targets keep their groups, including the loopback exemption.
 	ip := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(66, 1, 2, 3), Port: 32110})
-	if groupKeyForNetAddr(a) == groupKeyForNetAddr(ip) {
-		t.Error("onion group collided with an IPv4 group")
+	if groupKeyForNetAddr(ip) == "" {
+		t.Error("ipv4 target must still be grouped")
 	}
-	// Loopback IP targets stay exempt (empty key).
 	loop := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 32110})
 	if got := groupKeyForNetAddr(loop); got != "" {
 		t.Errorf("loopback target group = %q, want exempt", got)
+	}
+	// Eviction diversity still groups onion peers (Core's GetGroup
+	// covers onion; only the dial-time limit is IP-only).
+	a := networkGroupForOnion(onionAddrWithFirstByte(t, 0x42))
+	c := networkGroupForOnion(onionAddrWithFirstByte(t, 0x52))
+	if len(a) == 0 || SameNetworkGroup(a, c) {
+		t.Error("onion eviction groups must still distinguish top nibbles")
 	}
 }
 
@@ -83,7 +87,10 @@ func TestOutboundGroupUsesDialedTarget(t *testing.T) {
 		flags: dynDialedConn,
 	}
 	co.setDialTarget(onion)
-	if got := outboundGroupKey(co); got != groupKeyForNetAddr(onion) {
-		t.Errorf("onion conn group = %x, want the onion target group", got)
+	// Exempt from the outbound limit — and crucially not keyed on the
+	// proxy's address, which would collide with every other proxied
+	// peer.
+	if got := outboundGroupKey(co); got != "" {
+		t.Errorf("onion conn group = %x, want exempt", got)
 	}
 }

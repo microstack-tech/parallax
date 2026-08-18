@@ -166,12 +166,10 @@ func (srv *Server) fetchSeedsViaProxy(ctx context.Context, hosts []string, defau
 		srv.log.Info("proxied seed fetch connected", "host", host)
 		// The peer's endpoint is unknown to us (the proxy resolved
 		// it), so the feeler teardown can't match by address —
-		// closing the fd tears the session down instead.
-		timer := time.AfterFunc(addrFetchLifetime, func() { fd.Close() })
-		go func() {
-			<-ctx.Done()
-			timer.Stop()
-		}()
+		// closing the fd tears the session down instead. Shares the
+		// feeler's teardown, whose waiter exits after the lifetime
+		// instead of parking on shutdown for the whole process life.
+		srv.closeFeelerAfter(fd, addrFetchLifetime)
 	}
 }
 

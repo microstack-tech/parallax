@@ -108,16 +108,22 @@ func networkGroupForOnion(a addrman.NetAddr) []byte {
 	return []byte{netGroupTagOnion, a.Addr[0] | 0x0F}
 }
 
-// groupKeyForNetAddr renders the dial-target network-group key used
-// by the outbound diversity accounting. IP targets share
-// ipNetworkGroupKey's loopback/link-local exemption; onion targets
-// use the top-4-bits rule. Empty for exempt or ungroupable targets.
+// groupKeyForNetAddr renders the dial-target network-group key used by
+// the OUTBOUND one-peer-per-group limit. IP targets share
+// ipNetworkGroupKey's loopback/link-local exemption; non-IP targets
+// return the empty string and are exempt from the limit entirely.
+//
+// That exemption is deliberate and matches Core, whose
+// ThreadOpenConnections builds outbound_ipv46_peer_netgroups and
+// inserts only IPv4/IPv6 peers. The onion group rule is the top 4
+// bits of the service key — just 16 values across the whole address
+// space — so applying the one-per-group limit to onion targets would
+// cap a node at 16 onion peers and start rejecting most candidates
+// well before that. Onion groups still drive addrman bucketing and
+// the eviction diversity round, where a coarse grouping is the point.
 func groupKeyForNetAddr(a addrman.NetAddr) string {
 	if tcp := tcpFromNetAddr(a); tcp != nil {
 		return ipNetworkGroupKey(tcp.IP)
-	}
-	if a.Network == addrman.NetTorV3 {
-		return string(networkGroupForOnion(a))
 	}
 	return ""
 }

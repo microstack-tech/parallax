@@ -44,7 +44,7 @@ func TestOnionOnlyMutesClearnetSurface(t *testing.T) {
 		PrivateKey:     newkey(),
 		OnlyNet:        []string{"onion"},
 		OnionProxyAddr: "127.0.0.1:9050",
-		NAT:            nat.ExtIP(net.IP{198, 51, 100, 1}),
+		NAT:            nat.Any(),
 		Logger:         testlog.Logger(t, logging.LvlTrace),
 	}}
 	if err := srv.Start(); err != nil {
@@ -56,7 +56,7 @@ func TestOnionOnlyMutesClearnetSurface(t *testing.T) {
 		t.Error("onion-only node opened a discv4 UDP socket")
 	}
 	if srv.NAT != nil {
-		t.Error("onion-only node kept its NAT mapper")
+		t.Error("onion-only node kept its NAT discovery mechanism")
 	}
 	if srv.policy().clearnetReachable() {
 		t.Error("policy reports clearnet reachable under --onlynet=onion")
@@ -338,6 +338,37 @@ func TestOnionBootnodeIngestFollowsReachability(t *testing.T) {
 	}
 	if tor.AddrBook().Lookup(ip) == nil {
 		t.Error("tor-routed node missing the IP bootnode")
+	}
+}
+
+// TestHiddenClearnetKeepsStaticExtIP — muting removes the mechanisms
+// that probe the LAN (UPnP/NAT-PMP), not an operator-declared static
+// address. --nat extip: performs no network activity, and the disc
+// layer advertises it through the quorum override regardless, so
+// discarding it here would leave the two halves disagreeing.
+func TestHiddenClearnetKeepsStaticExtIP(t *testing.T) {
+	extip := nat.ExtIP(net.IP{198, 51, 100, 1})
+	srv := &Server{Config: Config{
+		Name:           "hidden-with-extip",
+		MaxPeers:       10,
+		NoDial:         true,
+		NoDiscovery:    true,
+		PrivateKey:     newkey(),
+		OnlyNet:        []string{"onion"},
+		OnionProxyAddr: "127.0.0.1:9050",
+		NAT:            extip,
+		Logger:         testlog.Logger(t, logging.LvlCrit),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	if srv.NAT == nil {
+		t.Fatal("operator-pinned extip was discarded")
+	}
+	if ip := srv.localnode.Node().IP(); !ip.Equal(net.IP{198, 51, 100, 1}) {
+		t.Fatalf("local node IP = %v, want the pinned extip", ip)
 	}
 }
 
