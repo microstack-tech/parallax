@@ -390,7 +390,15 @@ type Server struct {
 	// onionSelf is the service's address while established — consulted
 	// by the self-dial guard, inbound classification, and the disc
 	// backend's self-advertisement hooks.
-	torControl   *torcontrol.Controller
+	torControl *torcontrol.Controller
+	// pendingAnchors holds anchors whose network was unreachable at
+	// replay time. anchors.dat is deleted unconditionally on read
+	// (crash safety), so without this an onion anchor would be lost
+	// whenever a restart raced its Tor route coming up; the
+	// reachability hook replays them instead.
+	pendingAnchorsMu sync.Mutex
+	pendingAnchors   []addrman.NetAddr
+
 	onionSelfMu  sync.Mutex
 	onionSelf    addrman.NetAddr
 	onionSelfSet bool
@@ -925,9 +933,6 @@ func (srv *Server) Start() (err error) {
 			return err
 		}
 	}
-	if srv.ListenOnion && srv.listener != nil {
-		srv.startTorControl()
-	}
 	srv.applyLegacyDiscoveryMode()
 	if err := srv.setupAddrMan(); err != nil {
 		return err
@@ -937,6 +942,14 @@ func (srv *Server) Start() (err error) {
 	}
 	srv.setupDialScheduler()
 	srv.replayAnchors()
+
+	// Started last: the controller's callbacks (auto-proxy, service
+	// establishment) run on its own goroutine and touch the addrbook,
+	// the deferred-anchor list and the dial paths, so every one of
+	// those must be fully initialized before it can fire.
+	if srv.ListenOnion && srv.listener != nil {
+		srv.startTorControl()
+	}
 
 	// Periodic ban-list sweep + dump (Bitcoin's 15-minute
 	// DUMP_BANS_INTERVAL): keeps expired entries out of the map and
@@ -2418,7 +2431,12 @@ func (srv *Server) replayAnchors() {
 		// skipped, not an error — the file is already deleted either
 		// way.
 		if !srv.NetworkReachable(a.Network) {
-			srv.log.Debug("anchors: skipping unreachable anchor", "addr", a)
+			// Deferred, not dropped: the route may still come up (the
+			// torcontrol auto-proxy resolves after Start).
+			srv.log.Debug("anchors: deferring anchor on unreachable network", "addr", a)
+			srv.pendingAnchorsMu.Lock()
+			srv.pendingAnchors = append(srv.pendingAnchors, a)
+			srv.pendingAnchorsMu.Unlock()
 			continue
 		}
 		srv.loopWG.Add(1)

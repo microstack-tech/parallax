@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -359,4 +360,86 @@ func TestDefaultKeepsClearnetSurface(t *testing.T) {
 	if srv.ntab == nil {
 		t.Error("default config must keep the discv4 responder up")
 	}
+}
+
+// TestAutoProxyReplaysDeferredBootstrap — regression: bootnode ingest,
+// anchor replay and addr-fetch all run synchronously in Start, while
+// the auto-proxy that makes onion reachable resolves later on the
+// torcontrol goroutine. Without a replay hook the default
+// configuration (--listenonion, no explicit --onion) silently discards
+// every onion bootnode and onion anchor, leaving an onion-capable node
+// with nothing to dial.
+func TestAutoProxyReplaysDeferredBootstrap(t *testing.T) {
+	socks := startFakeSocksProxy(t)
+	control := startFakeTorControlSocks(t, fmt.Sprintf("%q", socks.ln.Addr().String()))
+
+	onionBoot, err := addrman.ParseOnion("duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ipBoot := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 32110})
+
+	// An onion anchor persisted by a previous run.
+	anchorsPath := filepath.Join(t.TempDir(), "anchors.dat")
+	onionAnchor, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveAnchors(anchorsPath, []addrman.NetAddr{onionAnchor}); err != nil {
+		t.Fatal(err)
+	}
+
+	ready := make(chan struct{})
+	srv := &Server{Config: Config{
+		Name:             "deferred-bootstrap",
+		MaxPeers:         10,
+		NoDial:           true, // anchors/addrfetch must not dial in the test
+		NoDiscovery:      true,
+		ListenAddr:       "127.0.0.1:0",
+		PrivateKey:       newkey(),
+		ListenOnion:      true,
+		TorControlAddr:   control,
+		BootstrapNodesV2: []addrman.NetAddr{ipBoot, onionBoot},
+		AnchorsPath:      anchorsPath,
+		OnOnionService:   func(addrman.NetAddr) { close(ready) },
+		Logger:           testlog.Logger(t, logging.LvlTrace),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	// At Start onion has no route, so only the IP bootnode is stored
+	// and the onion anchor is deferred rather than dropped.
+	if srv.AddrBook().Lookup(ipBoot) == nil {
+		t.Fatal("IP bootnode missing at Start")
+	}
+
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("onion service never established")
+	}
+	// The auto-proxy fires before ADD_ONION, so by now the replay has
+	// run: the onion bootnode is stored and the anchor is no longer
+	// pending.
+	waitForCond(t, "onion bootnode ingested after auto-proxy", func() bool {
+		return srv.AddrBook().Lookup(onionBoot) != nil
+	})
+	srv.pendingAnchorsMu.Lock()
+	pending := len(srv.pendingAnchors)
+	srv.pendingAnchorsMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("%d anchors still deferred after the route came up", pending)
+	}
+}
+
+func waitForCond(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timeout waiting for %s", what)
 }

@@ -19,6 +19,7 @@ package p2p
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/torcontrol"
@@ -83,6 +84,72 @@ func (srv *Server) setAutoOnionProxy(addr string) {
 	srv.netpol.Store(next)
 	srv.log.Info("torcontrol: onion proxy auto-configured",
 		"proxy", addr, "reachable", next.isReachable(addrman.NetTorV3))
+	if next.isReachable(addrman.NetTorV3) && !cur.isReachable(addrman.NetTorV3) {
+		srv.onNetworkNowReachable(addrman.NetTorV3)
+	}
+}
+
+// onNetworkNowReachable replays the bootstrap work that Start had to
+// skip because the network had no route yet. The auto-proxy resolves
+// asynchronously — after setupAddrMan, replayAnchors and runAddrFetch
+// have already run — so in the default configuration (--listenonion,
+// no explicit --onion) every onion bootnode and every onion anchor
+// would otherwise be discarded, leaving an onion-capable node with
+// nothing to dial. Safe to run repeatedly: addrman ingest dedupes and
+// the addrfetch is threshold-gated.
+func (srv *Server) onNetworkNowReachable(net addrman.NetID) {
+	if srv.addrbook != nil {
+		now := time.Now()
+		ingested := 0
+		for _, addr := range srv.BootstrapNodesV2 {
+			if addr.Network != net {
+				continue
+			}
+			if addrman.IngestV2NetAddr(srv.addrbook, addr, addrman.SourceDNSSeed, now) {
+				ingested++
+			}
+		}
+		if ingested > 0 {
+			srv.log.Info("ingested bootstrap nodes for newly reachable network",
+				"network", net, "count", ingested)
+		}
+	}
+
+	srv.pendingAnchorsMu.Lock()
+	var replay []addrman.NetAddr
+	kept := srv.pendingAnchors[:0]
+	for _, a := range srv.pendingAnchors {
+		if a.Network == net {
+			replay = append(replay, a)
+		} else {
+			kept = append(kept, a)
+		}
+	}
+	srv.pendingAnchors = kept
+	srv.pendingAnchorsMu.Unlock()
+
+	for _, a := range replay {
+		if srv.NoDial {
+			break
+		}
+		srv.log.Info("anchors: replaying deferred anchor", "addr", a)
+		srv.loopWG.Add(1)
+		go func() {
+			defer srv.loopWG.Done()
+			if err := srv.DialV2BlockRelay(a); err != nil {
+				srv.log.Trace("deferred anchor dial failed", "addr", a, "err", err)
+			}
+		}()
+	}
+
+	// Cold start: the one-shot addrfetch already ran (and skipped
+	// this network's bootnodes), so give it another pass now that
+	// they are dialable. runAddrFetch re-checks the threshold and
+	// returns immediately once the addrbook has filled.
+	if srv.addrbook != nil && len(srv.BootstrapNodesV2) > 0 {
+		srv.loopWG.Add(1)
+		go srv.runAddrFetch()
+	}
 }
 
 // onOnionService records the established service address and notifies
