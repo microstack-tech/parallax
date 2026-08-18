@@ -24,6 +24,12 @@ parallaxd --bootnodes enode://pubkey1@ip1:port1,enode://pubkey2@ip2:port2,enode:
 
 There are scenarios where disabling the discovery process is useful, for example for running a local test node or an experimental test network with known, fixed nodes. This can be achieved by passing the `--nodiscover` flag to the Parallax client at startup.
 
+v2-native bootnode entries (both the hardcoded list and `--bootnodes` values) may also be plain `ip:port` pairs or Tor v3 onion addresses in the form `<addr>.onion:port` — no public key required, since the v2 handshake authenticates against whoever answers at the address. Onion entries are used only when the node has a Tor route configured.
+
+## Connecting over Tor
+
+The client can route its connections through Tor, host an onion service so peers can reach it without any port forwarding, and run entirely inside Tor with `--onlynet=onion`. With a local Tor daemon exposing its control port, all of this is enabled by default — see [Running over Tor](./tor) for setup, flags, and verification.
+
 ## Connectivity problems
 
 There are occasions when the Parallax client simply fails to connect to peers. The common reasons for this are:

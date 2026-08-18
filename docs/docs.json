@@ -87,7 +87,8 @@
                 "pages": [
                   "parallax-protocol/advanced/networking/overview",
                   "parallax-protocol/advanced/networking/addresses",
-                  "parallax-protocol/advanced/networking/pip-0006",
+                  "parallax-protocol/advanced/networking/discovery",
+                  "parallax-protocol/advanced/networking/tor",
                   "parallax-protocol/advanced/networking/peer-management"
                 ]
               },
@@ -133,6 +134,7 @@
                   "parallax-client/fundamentals/backup-and-restore",
                   "parallax-client/fundamentals/logs",
                   "parallax-client/fundamentals/connecting-to-peers",
+                  "parallax-client/fundamentals/tor",
                   "parallax-client/fundamentals/pruning",
                   "parallax-client/fundamentals/private-networks",
                   "parallax-client/fundamentals/config-files"
@@ -311,5 +313,11 @@
       "x": "https://x.com/prlxchain",
       "github": "https://github.com/ParallaxProtocol"
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/parallax-protocol/advanced/networking/pip-0006",
+      "destination": "/parallax-protocol/advanced/networking/discovery"
+    }
+  ]
 }

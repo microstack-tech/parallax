@@ -3,7 +3,7 @@ title: 'Peer management'
 sidebarTitle: 'Peer management'
 ---
 
-PIP-0006 ships TCP gossip and `addrman`. Peer management is the layer
+[TCP discovery](discovery) ships gossip and `addrman`. Peer management is the layer
 on top: how peers identify themselves on a fresh session, which peers
 we keep when slots get tight, which peers we preemptively refuse, and
 how the outbound set is structured to resist eclipse attacks.
@@ -255,18 +255,22 @@ ban list persists.
 
 Three RPCs manage the persistent ban list. They sit alongside the
 existing addrbook RPCs documented under
-[PIP-0006](pip-0006#operator-rpc).
+[TCP Peer Discovery](discovery#operator-rpc).
 
 - `admin_setban <subnet> <add|remove> [bantime] [absolute]` — add
   or remove an entry. `subnet` accepts a plain IP (`1.2.3.4` →
-  `/32`) or a CIDR (`10.0.0.0/24`). On `add` any currently-connected
-  peer in the matching range is also disconnected. `bantime`
-  defaults to 24 h on add; passing 0 (or a negative value) also
-  selects the default. With `absolute=true` the value is a Unix
-  timestamp instead and must lie in the future — 0 is an error
-  there. Re-adding an already-active ban is an error
-  (`IP/subnet already banned`); a longer `bantime` on a ban that
-  would expire sooner extends it.
+  `/32`), a CIDR (`10.0.0.0/24`), or a Tor v3 onion address
+  (`<addr>.onion`, an exact-host row — there is no subnet concept
+  for onion space, and enforcement happens at the outbound dial
+  gate since inbound onion streams cannot be attributed to an
+  address; see [Tor Integration](tor)). On `add` any
+  currently-connected peer in the matching IP range is also
+  disconnected. `bantime` defaults to 24 h on add; passing 0 (or a
+  negative value) also selects the default. With `absolute=true`
+  the value is a Unix timestamp instead and must lie in the future
+  — 0 is an error there. Re-adding an already-active ban is an
+  error (`IP/subnet already banned`); a longer `bantime` on a ban
+  that would expire sooner extends it.
 - `admin_listbanned` — return active (non-expired) entries as JSON.
 - `admin_clearbanned` — wipe `banlist.json`. Does **not** touch the
   in-memory discourage filter.
