@@ -20,10 +20,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/primitives/rlp"
 )
 
@@ -40,7 +40,11 @@ const anchorSchemaV1 byte = 0x01
 // anchorEntry is the on-disk shape of one anchor (BIP155
 // network-id + raw addr bytes + TCP port). Matches the structure
 // of disc.PeerEntry minus the parallax-protocol-only KeyType /
-// NodeID / LastSeen fields — anchors are pure (IP, port) tuples.
+// NodeID / LastSeen fields — anchors are pure (address, port)
+// tuples. The format was BIP155-shaped from v1, so Tor v3 anchors
+// (PIP-0007 §4) need no schema bump: a pre-Tor binary reading a
+// file with an onion row skips the unrecognized network id and
+// keeps the rest.
 //
 // The Tail field reserves forward-compat space for new fields
 // without bumping the schema byte.
@@ -60,14 +64,6 @@ type anchorsBody struct {
 	Tail    []rlp.RawValue `rlp:"tail"`
 }
 
-// BIP155 network-id constants — duplicated from disc.messages so
-// p2p doesn't depend on the disc package. Stable per the wire
-// format; do not renumber.
-const (
-	anchorNetIPv4 uint8 = 0x01
-	anchorNetIPv6 uint8 = 0x02
-)
-
 // errAnchorFutureSchema is returned from loadAnchors when the
 // file's schema byte is newer than this binary recognizes.
 // Caller logs and continues with no anchor replay.
@@ -81,16 +77,20 @@ var errAnchorFutureSchema = errors.New("anchors: file schema newer than this bin
 // Caller is the Server.Stop path; it builds the entry list from
 // currently-connected block-relay-only outbound peers' effective
 // listen-addrs, capped at MaxBlockRelayAnchors.
-func saveAnchors(path string, addrs []*net.TCPAddr) error {
+func saveAnchors(path string, addrs []addrman.NetAddr) error {
 	if len(addrs) > MaxBlockRelayAnchors {
 		addrs = addrs[:MaxBlockRelayAnchors]
 	}
 	body := anchorsBody{Entries: make([]anchorEntry, 0, len(addrs))}
 	for _, a := range addrs {
-		if a == nil || a.IP == nil || a.Port == 0 {
+		if len(a.Bytes()) == 0 || a.Port == 0 {
 			continue
 		}
-		body.Entries = append(body.Entries, tcpToAnchorEntry(a))
+		body.Entries = append(body.Entries, anchorEntry{
+			Network: uint8(a.Network),
+			Addr:    append([]byte(nil), a.Bytes()...),
+			Port:    a.Port,
+		})
 	}
 	if len(body.Entries) == 0 {
 		// No anchors to persist — remove any pre-existing file so
@@ -146,7 +146,7 @@ func writeFileSync(path string, data []byte, perm os.FileMode) error {
 // (src/net.cpp:2715-2716) so a crash mid-startup doesn't replay
 // the same potentially-malicious anchors twice. We mirror that
 // here via removeAnchors.
-func loadAnchors(path string) ([]*net.TCPAddr, error) {
+func loadAnchors(path string) ([]addrman.NetAddr, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -173,13 +173,17 @@ func loadAnchors(path string) ([]*net.TCPAddr, error) {
 		// at most MaxBlockRelayAnchors entries; trim the rest.
 		body.Entries = body.Entries[:MaxBlockRelayAnchors]
 	}
-	out := make([]*net.TCPAddr, 0, len(body.Entries))
+	out := make([]addrman.NetAddr, 0, len(body.Entries))
 	for _, e := range body.Entries {
-		tcp, ok := anchorEntryToTCP(e)
-		if !ok {
+		// Unknown network ids and length mismatches are skipped, not
+		// errors — that's what lets a pre-Tor binary read a file
+		// carrying onion rows, and this binary read files from a
+		// future one.
+		na, err := addrman.NewNetAddr(addrman.NetID(e.Network), e.Addr, e.Port)
+		if err != nil || na.Port == 0 {
 			continue
 		}
-		out = append(out, tcp)
+		out = append(out, na)
 	}
 	return out, nil
 }
@@ -194,34 +198,3 @@ func removeAnchors(path string) error {
 	return nil
 }
 
-func tcpToAnchorEntry(addr *net.TCPAddr) anchorEntry {
-	if v4 := addr.IP.To4(); v4 != nil {
-		return anchorEntry{
-			Network: anchorNetIPv4,
-			Addr:    append([]byte(nil), v4...),
-			Port:    uint16(addr.Port),
-		}
-	}
-	v6 := addr.IP.To16()
-	return anchorEntry{
-		Network: anchorNetIPv6,
-		Addr:    append([]byte(nil), v6...),
-		Port:    uint16(addr.Port),
-	}
-}
-
-func anchorEntryToTCP(e anchorEntry) (*net.TCPAddr, bool) {
-	switch e.Network {
-	case anchorNetIPv4:
-		if len(e.Addr) != 4 {
-			return nil, false
-		}
-		return &net.TCPAddr{IP: net.IPv4(e.Addr[0], e.Addr[1], e.Addr[2], e.Addr[3]), Port: int(e.Port)}, true
-	case anchorNetIPv6:
-		if len(e.Addr) != 16 {
-			return nil, false
-		}
-		return &net.TCPAddr{IP: append(net.IP(nil), e.Addr...), Port: int(e.Port)}, true
-	}
-	return nil, false
-}

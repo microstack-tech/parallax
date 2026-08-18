@@ -2306,15 +2306,19 @@ func (srv *Server) replayAnchors() {
 	}
 	srv.log.Info("anchors: replaying block-relay-only peers", "count", len(addrs))
 	for _, a := range addrs {
-		na, ok := netAddrFromTCP(a)
-		if !ok {
+		// An anchor on a network the current policy can't reach (an
+		// onion anchor after a restart without a Tor route) is
+		// skipped, not an error — the file is already deleted either
+		// way.
+		if !srv.NetworkReachable(a.Network) {
+			srv.log.Debug("anchors: skipping unreachable anchor", "addr", a)
 			continue
 		}
 		srv.loopWG.Add(1)
 		go func() {
 			defer srv.loopWG.Done()
-			if err := srv.DialV2BlockRelay(na); err != nil {
-				srv.log.Trace("anchor dial failed", "addr", na, "err", err)
+			if err := srv.DialV2BlockRelay(a); err != nil {
+				srv.log.Trace("anchor dial failed", "addr", a, "err", err)
 			}
 		}()
 	}
@@ -2330,16 +2334,26 @@ func (srv *Server) persistAnchors(peers map[enode.ID]*Peer) {
 	if srv.AnchorsPath == "" {
 		return
 	}
-	addrs := make([]*net.TCPAddr, 0, MaxBlockRelayAnchors)
+	addrs := make([]addrman.NetAddr, 0, MaxBlockRelayAnchors)
 	for _, p := range peers {
 		if !p.BlockRelayOnly() {
 			continue
 		}
-		la, ok := srv.peerListenAddr(p)
-		if !ok {
+		// The dialed target is the authoritative anchor address:
+		// block-relay peers are always outbound, and for proxied or
+		// onion peers peerListenAddr would report the SOCKS5 proxy.
+		var na addrman.NetAddr
+		if t := p.rw.dialedTarget; t.Network != 0 {
+			na = t
+		} else if la, ok := srv.peerListenAddr(p); ok {
+			if converted, ok := netAddrFromTCP(la); ok {
+				na = converted
+			}
+		}
+		if na.Network == 0 {
 			continue
 		}
-		addrs = append(addrs, la)
+		addrs = append(addrs, na)
 		if len(addrs) >= MaxBlockRelayAnchors {
 			break
 		}

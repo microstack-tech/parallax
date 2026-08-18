@@ -25,8 +25,20 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/internal/testlog"
 	"github.com/ParallaxProtocol/parallax/logging"
+	"github.com/ParallaxProtocol/parallax/p2p/addrman"
 	"github.com/ParallaxProtocol/parallax/p2p/enode"
 )
+
+// anchorNA converts an (ip, port) pair into the NetAddr form the
+// anchors API takes.
+func anchorNA(t *testing.T, ip net.IP, port uint16) addrman.NetAddr {
+	t.Helper()
+	na, ok := netAddrFromTCP(&net.TCPAddr{IP: ip, Port: int(port)})
+	if !ok {
+		t.Fatalf("bad anchor ip %v", ip)
+	}
+	return na
+}
 
 // TestAnchorsRoundTripIPv4 — write 2 IPv4 (IP, port) entries to
 // anchors.dat, read them back, verify exact equality. Pin the
@@ -37,9 +49,9 @@ func TestAnchorsRoundTripIPv4(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "anchors.dat")
 
-	in := []*net.TCPAddr{
-		{IP: net.IPv4(192, 0, 2, 17), Port: 32110},
-		{IP: net.IPv4(198, 51, 100, 9), Port: 32111},
+	in := []addrman.NetAddr{
+		anchorNA(t, net.IPv4(192, 0, 2, 17), 32110),
+		anchorNA(t, net.IPv4(198, 51, 100, 9), 32111),
 	}
 	if err := saveAnchors(path, in); err != nil {
 		t.Fatalf("saveAnchors: %v", err)
@@ -52,7 +64,7 @@ func TestAnchorsRoundTripIPv4(t *testing.T) {
 		t.Fatalf("loaded %d entries, want %d", len(got), len(in))
 	}
 	for i := range in {
-		if !got[i].IP.Equal(in[i].IP) || got[i].Port != in[i].Port {
+		if !got[i].Equal(in[i]) {
 			t.Errorf("entry %d: got %v, want %v", i, got[i], in[i])
 		}
 	}
@@ -65,7 +77,7 @@ func TestAnchorsRoundTripIPv6(t *testing.T) {
 	path := filepath.Join(dir, "anchors.dat")
 
 	v6 := net.ParseIP("2001:db8::42").To16()
-	in := []*net.TCPAddr{{IP: v6, Port: 32110}}
+	in := []addrman.NetAddr{anchorNA(t, v6, 32110)}
 	if err := saveAnchors(path, in); err != nil {
 		t.Fatalf("saveAnchors: %v", err)
 	}
@@ -76,7 +88,7 @@ func TestAnchorsRoundTripIPv6(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("loaded %d entries, want 1", len(got))
 	}
-	if !got[0].IP.Equal(v6) || got[0].Port != 32110 {
+	if !got[0].Equal(anchorNA(t, v6, 32110)) {
 		t.Errorf("entry: got %v, want %v:%d", got[0], v6, 32110)
 	}
 }
@@ -90,11 +102,11 @@ func TestAnchorsCappedAtMax(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "anchors.dat")
 
-	in := []*net.TCPAddr{
-		{IP: net.IPv4(1, 0, 0, 1), Port: 32110},
-		{IP: net.IPv4(2, 0, 0, 1), Port: 32110},
-		{IP: net.IPv4(3, 0, 0, 1), Port: 32110},
-		{IP: net.IPv4(4, 0, 0, 1), Port: 32110},
+	in := []addrman.NetAddr{
+		anchorNA(t, net.IPv4(1, 0, 0, 1), 32110),
+		anchorNA(t, net.IPv4(2, 0, 0, 1), 32110),
+		anchorNA(t, net.IPv4(3, 0, 0, 1), 32110),
+		anchorNA(t, net.IPv4(4, 0, 0, 1), 32110),
 	}
 	if err := saveAnchors(path, in); err != nil {
 		t.Fatalf("saveAnchors: %v", err)
@@ -137,7 +149,7 @@ func TestAnchorsSaveEmptyRemovesFile(t *testing.T) {
 	path := filepath.Join(dir, "anchors.dat")
 
 	// First save 1 entry.
-	if err := saveAnchors(path, []*net.TCPAddr{{IP: net.IPv4(1, 2, 3, 4), Port: 32110}}); err != nil {
+	if err := saveAnchors(path, []addrman.NetAddr{anchorNA(t, net.IPv4(1, 2, 3, 4), 32110)}); err != nil {
 		t.Fatalf("first saveAnchors: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -181,7 +193,7 @@ func TestPersistAnchorsSnapshotsBlockRelayPeers(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("persisted %d anchors, want 1 (only the block-relay peer)", len(got))
 	}
-	if !got[0].IP.Equal(net.IPv4(203, 0, 113, 7)) || got[0].Port != 32110 {
+	if !got[0].Equal(anchorNA(t, net.IPv4(203, 0, 113, 7), 32110)) {
 		t.Fatalf("persisted anchor = %v, want 203.0.113.7:32110", got[0])
 	}
 }
@@ -193,7 +205,7 @@ func TestPersistAnchorsSnapshotsBlockRelayPeers(t *testing.T) {
 func TestPersistAnchorsEmptyPeerSetLeavesNoFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "anchors.dat")
-	if err := saveAnchors(path, []*net.TCPAddr{{IP: net.IPv4(1, 2, 3, 4), Port: 32110}}); err != nil {
+	if err := saveAnchors(path, []addrman.NetAddr{anchorNA(t, net.IPv4(1, 2, 3, 4), 32110)}); err != nil {
 		t.Fatal(err)
 	}
 	srv := &Server{Config: Config{AnchorsPath: path}}
@@ -220,6 +232,58 @@ func newOutboundPeerAt(t *testing.T, ip net.IP, port int) *Peer {
 	return p
 }
 
+// TestAnchorsOnionRoundTrip — Tor v3 anchors persist and reload
+// (PIP-0007 §4). The file format was BIP155-shaped from v1, so this
+// needs no schema bump; pre-Tor binaries skip the onion row.
+func TestAnchorsOnionRoundTrip(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "anchors.dat")
+
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := []addrman.NetAddr{onion, anchorNA(t, net.IPv4(203, 0, 113, 7), 32110)}
+	if err := saveAnchors(path, in); err != nil {
+		t.Fatalf("saveAnchors: %v", err)
+	}
+	got, err := loadAnchors(path)
+	if err != nil {
+		t.Fatalf("loadAnchors: %v", err)
+	}
+	if len(got) != 2 || !got[0].Equal(onion) || !got[1].Equal(in[1]) {
+		t.Fatalf("round trip: got %v, want %v", got, in)
+	}
+}
+
+// TestPersistAnchorsUsesDialedTarget — a proxied or onion block-relay
+// peer's anchor is its dialed target, never the socket's RemoteAddr
+// (which is the SOCKS5 proxy).
+func TestPersistAnchorsUsesDialedTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "anchors.dat")
+	srv := &Server{Config: Config{AnchorsPath: path}}
+	srv.log = testlog.Logger(t, logging.LvlCrit)
+
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// RemoteAddr says "the proxy"; dialedTarget says the onion.
+	br := newOutboundPeerAt(t, net.IPv4(127, 0, 0, 1), 9050)
+	br.SetBlockRelayOnly(true)
+	br.rw.dialedTarget = onion
+
+	srv.persistAnchors(peerSet(br))
+
+	got, err := loadAnchors(path)
+	if err != nil {
+		t.Fatalf("loadAnchors: %v", err)
+	}
+	if len(got) != 1 || !got[0].Equal(onion) {
+		t.Fatalf("persisted %v, want the onion dialed target", got)
+	}
+}
+
 // TestAnchorsRemoveAnchors — removeAnchors deletes the file when
 // it exists, returns nil when it doesn't.
 func TestAnchorsRemoveAnchors(t *testing.T) {
@@ -232,7 +296,7 @@ func TestAnchorsRemoveAnchors(t *testing.T) {
 		t.Fatalf("removeAnchors on missing file: %v", err)
 	}
 	// Existing-file case: file is deleted.
-	if err := saveAnchors(path, []*net.TCPAddr{{IP: net.IPv4(5, 6, 7, 8), Port: 32110}}); err != nil {
+	if err := saveAnchors(path, []addrman.NetAddr{anchorNA(t, net.IPv4(5, 6, 7, 8), 32110)}); err != nil {
 		t.Fatalf("saveAnchors: %v", err)
 	}
 	if err := removeAnchors(path); err != nil {
@@ -273,9 +337,9 @@ func TestAnchorsSkipsZeroPortEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "anchors.dat")
 
-	in := []*net.TCPAddr{
-		{IP: net.IPv4(5, 6, 7, 8), Port: 1234}, // keep
-		{IP: nil, Port: 32110},                 // nil ip → drop
+	in := []addrman.NetAddr{
+		anchorNA(t, net.IPv4(5, 6, 7, 8), 1234), // keep
+		{},                                      // zero value → drop
 	}
 	if err := saveAnchors(path, in); err != nil {
 		t.Fatalf("saveAnchors: %v", err)
@@ -293,9 +357,9 @@ func TestAnchorsSkipsZeroPortEntries(t *testing.T) {
 
 	// Same idea, port=0 case:
 	path2 := filepath.Join(dir, "anchors2.dat")
-	in2 := []*net.TCPAddr{
-		{IP: net.IPv4(9, 8, 7, 6), Port: 32110}, // keep
-		{IP: net.IPv4(1, 2, 3, 4), Port: 0},     // zero port → drop
+	in2 := []addrman.NetAddr{
+		anchorNA(t, net.IPv4(9, 8, 7, 6), 32110), // keep
+		anchorNA(t, net.IPv4(1, 2, 3, 4), 0),     // zero port → drop
 	}
 	if err := saveAnchors(path2, in2); err != nil {
 		t.Fatalf("saveAnchors2: %v", err)
