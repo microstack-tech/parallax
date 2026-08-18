@@ -37,6 +37,12 @@ import (
 type netPolicy struct {
 	reachable map[addrman.NetID]bool
 	proxies   map[addrman.NetID]*socks.Proxy
+
+	// name is the proxy used for hostname targets (DNS-free seed
+	// fetches). Set only by --proxy, never by --onion — Core's
+	// SetNameProxy has the same asymmetry: a clearnet node using Tor
+	// solely for onion peers still resolves seed hostnames locally.
+	name *socks.Proxy
 }
 
 // Config validation errors, matching Core's init-time messages in intent.
@@ -93,6 +99,7 @@ func newNetPolicy(cfg *Config) (*netPolicy, error) {
 		p.proxies[addrman.NetIPv6] = pr
 		p.proxies[addrman.NetTorV3] = pr
 		p.reachable[addrman.NetTorV3] = true
+		p.name = pr
 	}
 
 	// --onion: override the onion route specifically. "0" disables
@@ -171,9 +178,17 @@ func (p *netPolicy) clearnetReachable() bool {
 }
 
 // proxied reports whether any outbound route goes through a proxy.
-// Used to keep DNS-seed resolution off the system resolver (§1.4).
 func (p *netPolicy) proxied() bool {
 	return p != nil && len(p.proxies) > 0
+}
+
+// nameProxy returns the proxy hostname targets are sent through, or nil
+// when names resolve locally. Non-nil only under --proxy (§1.4).
+func (p *netPolicy) nameProxy() *socks.Proxy {
+	if p == nil {
+		return nil
+	}
+	return p.name
 }
 
 // onionProxyEnabled reports whether s names a real onion proxy rather

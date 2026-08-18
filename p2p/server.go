@@ -791,6 +791,13 @@ func (srv *Server) Start() (err error) {
 	if srv.connector == nil {
 		srv.connector = &netConnector{policy: pol, timeout: defaultDialTimeout}
 	}
+	// Onion-only nodes must not chatter on the LAN: UPnP/NAT-PMP
+	// discovery reveals the node and maps a port no clearnet peer
+	// will ever dial. PIP-0007 §1.4.
+	if !pol.clearnetReachable() && srv.NAT != nil {
+		srv.log.Info("NAT traversal disabled: no clearnet network is reachable")
+		srv.NAT = nil
+	}
 	srv.quit = make(chan struct{})
 	srv.quitCtx, srv.quitCancel = context.WithCancel(context.Background())
 	srv.delpeer = make(chan peerDrop)
@@ -903,26 +910,52 @@ func (srv *Server) setupAddrMan() error {
 	// with source=dns_seed. Empty Config.DNSSeeds disables it (matches
 	// --nodiscover semantics).
 	if len(srv.DNSSeeds) > 0 {
-		seedCtx, seedCancel := context.WithCancel(context.Background())
-		srv.loopWG.Add(2)
-		go func() {
-			defer srv.loopWG.Done()
-			<-srv.quit
-			seedCancel()
-		}()
-		go func() {
-			defer srv.loopWG.Done()
-			dnsSeedLoop(
-				seedCtx,
-				net.DefaultResolver,
-				srv.DNSSeeds,
-				srv.addrbook,
-				DNSSeedDefaultPort,
-				DNSSeedDefaultInterval,
-				srv.log,
-			)
-		}()
-		srv.log.Info("DNS-seed resolver enabled", "hosts", srv.DNSSeeds, "interval", DNSSeedDefaultInterval, "port", DNSSeedDefaultPort)
+		switch {
+		case srv.netpol.nameProxy() != nil:
+			// --proxy: never touch the system resolver. Connect to
+			// each seed hostname through the proxy instead and let
+			// the disc greeting's GetPeers warm the addrbook —
+			// Core's HaveNameProxy() → AddAddrFetch(seed) branch in
+			// ThreadDNSAddressSeed. PIP-0007 §1.4.
+			seedCtx, seedCancel := context.WithCancel(context.Background())
+			srv.loopWG.Add(2)
+			go func() {
+				defer srv.loopWG.Done()
+				<-srv.quit
+				seedCancel()
+			}()
+			go func() {
+				defer srv.loopWG.Done()
+				srv.proxiedSeedLoop(seedCtx, srv.DNSSeeds, DNSSeedDefaultPort, DNSSeedDefaultInterval)
+			}()
+			srv.log.Info("DNS seeds via proxy addr-fetch (no local resolution)", "hosts", srv.DNSSeeds)
+		case !srv.netpol.clearnetReachable():
+			// Onion-only without --proxy: seed hostnames would leak
+			// through the system resolver and their A/AAAA results
+			// are undialable anyway.
+			srv.log.Info("DNS seeds disabled: no clearnet network is reachable")
+		default:
+			seedCtx, seedCancel := context.WithCancel(context.Background())
+			srv.loopWG.Add(2)
+			go func() {
+				defer srv.loopWG.Done()
+				<-srv.quit
+				seedCancel()
+			}()
+			go func() {
+				defer srv.loopWG.Done()
+				dnsSeedLoop(
+					seedCtx,
+					net.DefaultResolver,
+					srv.DNSSeeds,
+					srv.addrbook,
+					DNSSeedDefaultPort,
+					DNSSeedDefaultInterval,
+					srv.log,
+				)
+			}()
+			srv.log.Info("DNS-seed resolver enabled", "hosts", srv.DNSSeeds, "interval", DNSSeedDefaultInterval, "port", DNSSeedDefaultPort)
+		}
 	}
 	return nil
 }
@@ -1020,20 +1053,35 @@ func (srv *Server) setupDiscovery() error {
 	// the static MainnetBootnodes ingest and has no view of the rest
 	// of the network, which leaves stale KeyType=0x00 entries
 	// dominating V2Iter with nothing to balance them out.
-	added := make(map[string]bool)
-	for _, proto := range srv.Protocols {
-		if proto.DialCandidates != nil && !added[proto.Name] {
-			src := proto.DialCandidates
-			if srv.addrbook != nil {
-				src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceDNSSeed)
+	// Onion-only nodes skip the enrtree consumers entirely: their
+	// candidates are clearnet IPs resolved over system DNS — both a
+	// leak and useless under the policy. PIP-0007 §1.4.
+	if srv.netpol.clearnetReachable() {
+		added := make(map[string]bool)
+		for _, proto := range srv.Protocols {
+			if proto.DialCandidates != nil && !added[proto.Name] {
+				src := proto.DialCandidates
+				if srv.addrbook != nil {
+					src = addrman.NewTeeIter(src, srv.addrbook, addrman.SourceDNSSeed)
+				}
+				srv.discmix.AddSource(src)
+				added[proto.Name] = true
 			}
-			srv.discmix.AddSource(src)
-			added[proto.Name] = true
+		}
+	} else {
+		for _, proto := range srv.Protocols {
+			if proto.DialCandidates != nil {
+				srv.log.Info("enrtree discovery disabled: no clearnet network is reachable")
+				break
+			}
 		}
 	}
 
-	// Don't listen on UDP endpoint if DHT is disabled.
-	if srv.NoDiscovery {
+	// Don't listen on UDP endpoint if DHT is disabled. An onion-only
+	// node opens no UDP socket at all, regardless of
+	// --legacy-discovery: Tor carries no UDP, and answering discv4
+	// probes on clearnet would deanonymize the node. PIP-0007 §1.4.
+	if srv.NoDiscovery || !srv.netpol.clearnetReachable() {
 		return nil
 	}
 

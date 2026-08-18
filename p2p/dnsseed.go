@@ -96,6 +96,77 @@ func dnsSeedLoop(
 	}
 }
 
+// proxiedSeedLoop is the --proxy replacement for dnsSeedLoop: instead
+// of resolving seed hostnames (which would leak through the system
+// resolver), it hands each hostname to the SOCKS5 proxy as a CONNECT
+// target on the same cadence and lets the disc protocol's outbound
+// greeting warm the addrbook. Port of Bitcoin Core's
+// ThreadDNSAddressSeed HaveNameProxy() branch (AddAddrFetch(seed)).
+// PIP-0007 §1.4.
+func (srv *Server) proxiedSeedLoop(ctx context.Context, hosts []string, defaultPort uint16, interval time.Duration) {
+	if len(hosts) == 0 {
+		return
+	}
+	if interval <= 0 {
+		interval = DNSSeedDefaultInterval
+	}
+	first := time.NewTimer(dnsSeedFirstTickDelay)
+	defer first.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-first.C:
+	}
+	srv.fetchSeedsViaProxy(ctx, hosts, defaultPort)
+
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			srv.fetchSeedsViaProxy(ctx, hosts, defaultPort)
+		}
+	}
+}
+
+// fetchSeedsViaProxy runs one addr-fetch pass: each seed hostname is
+// dialed through the name proxy on the default port, tagged as a
+// feeler so it neither occupies an outbound slot nor records addrman
+// failures, and torn down after addrFetchLifetime.
+func (srv *Server) fetchSeedsViaProxy(ctx context.Context, hosts []string, defaultPort uint16) {
+	pr := srv.netpol.nameProxy()
+	if pr == nil {
+		return
+	}
+	for _, host := range hosts {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		fd, err := pr.Dial(ctx, host, defaultPort)
+		if err != nil {
+			srv.log.Debug("proxied seed fetch failed", "host", host, "err", err)
+			continue
+		}
+		if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|feelerConn, nil); err != nil {
+			srv.log.Debug("proxied seed handshake failed", "host", host, "err", err)
+			continue
+		}
+		srv.log.Info("proxied seed fetch connected", "host", host)
+		// The peer's endpoint is unknown to us (the proxy resolved
+		// it), so the feeler teardown can't match by address —
+		// closing the fd tears the session down instead.
+		timer := time.AfterFunc(addrFetchLifetime, func() { fd.Close() })
+		go func() {
+			<-ctx.Done()
+			timer.Stop()
+		}()
+	}
+}
+
 // resolveAndIngest performs one resolution pass over hosts. Each host's
 // failure is logged at warn and skipped — other hosts still run.
 func resolveAndIngest(
