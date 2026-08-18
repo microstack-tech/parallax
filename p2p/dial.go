@@ -750,7 +750,7 @@ func outboundGroupKey(c *conn) string {
 	}
 	// The dialed target outranks the socket address: proxied conns'
 	// RemoteAddr is the SOCKS5 proxy, onion targets have no IP.
-	if t := c.dialedTarget; t.Network != 0 {
+	if t := c.dialTarget(); t.Network != 0 {
 		return groupKeyForNetAddr(t)
 	}
 	if c.fd != nil {

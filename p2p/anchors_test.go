@@ -271,7 +271,7 @@ func TestPersistAnchorsUsesDialedTarget(t *testing.T) {
 	// RemoteAddr says "the proxy"; dialedTarget says the onion.
 	br := newOutboundPeerAt(t, net.IPv4(127, 0, 0, 1), 9050)
 	br.SetBlockRelayOnly(true)
-	br.rw.dialedTarget = onion
+	br.rw.setDialTarget(onion)
 
 	srv.persistAnchors(peerSet(br))
 

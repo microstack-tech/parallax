@@ -148,7 +148,7 @@ func (p *Peer) NetworkGroup() []byte {
 // top-4-bits rule; inbound onion streams keep the loopback group the
 // Tor daemon delivers them from, as in Core.
 func (p *Peer) computeAndCacheNetworkGroup() {
-	if t := p.rw.dialedTarget; t.Network != 0 {
+	if t := p.rw.dialTarget(); t.Network != 0 {
 		var g []byte
 		if t.Network == addrman.NetTorV3 {
 			g = networkGroupForOnion(t)

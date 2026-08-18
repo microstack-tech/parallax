@@ -29,7 +29,7 @@ import (
 func proxiedPeerAt(t *testing.T, target addrman.NetAddr) *Peer {
 	t.Helper()
 	p := newOutboundPeerAt(t, net.IPv4(127, 0, 0, 1), 9050)
-	p.rw.dialedTarget = target
+	p.rw.setDialTarget(target)
 	return p
 }
 

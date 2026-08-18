@@ -540,10 +540,13 @@ type conn struct {
 	name  string     // valid after the protocol handshake
 
 	// dialedTarget is the address an outbound v2 dial was aimed at
-	// (zero for inbound and legacy dials). Group-diversity accounting
-	// prefers it over fd.RemoteAddr, which for proxied conns is the
-	// SOCKS5 proxy rather than the peer. PIP-0007 §4.
-	dialedTarget addrman.NetAddr
+	// (nil for inbound and legacy dials). Group-diversity accounting,
+	// addrman feedback and dedup prefer it over fd.RemoteAddr, which
+	// for proxied conns is the SOCKS5 proxy rather than the peer.
+	// Atomic because the nonce dedup can transplant a dropped
+	// outbound leg's target onto its surviving inbound twin while
+	// other goroutines read it. PIP-0007 §4.
+	dialedTarget atomic.Pointer[addrman.NetAddr]
 
 	// evicted records that this connection already triggered a
 	// successful inbound eviction at an earlier checkpoint. The
@@ -606,6 +609,22 @@ func (f connFlag) String() string {
 		s = s[1:]
 	}
 	return s
+}
+
+// dialTarget returns the outbound dial target, zero when the conn is
+// inbound or legacy-dialed and no target has been adopted.
+func (c *conn) dialTarget() addrman.NetAddr {
+	if p := c.dialedTarget.Load(); p != nil {
+		return *p
+	}
+	return addrman.NetAddr{}
+}
+
+// setDialTarget records (or transplants) the conn's dial target.
+func (c *conn) setDialTarget(a addrman.NetAddr) {
+	if a.Network != 0 {
+		c.dialedTarget.Store(&a)
+	}
 }
 
 func (c *conn) is(f connFlag) bool {
@@ -1724,7 +1743,7 @@ func outboundGroupOccupiedIn(peers map[enode.ID]*Peer, group string) bool {
 		}
 		// Prefer the dialed target: a proxied peer's RemoteAddr is
 		// the SOCKS5 proxy, and an onion peer has no IP at all.
-		if t := p.rw.dialedTarget; t.Network != 0 {
+		if t := p.rw.dialTarget(); t.Network != 0 {
 			if groupKeyForNetAddr(t) == group {
 				return true
 			}
@@ -1976,7 +1995,7 @@ func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
 		// then tore down healthy peers as duplicates). Onion targets
 		// have no ip:port form and yield ok=false — an onion peer
 		// cannot be address-deduped.
-		if t := p.rw.dialedTarget; t.Network != 0 {
+		if t := p.rw.dialTarget(); t.Network != 0 {
 			if tcp := tcpFromNetAddr(t); tcp != nil {
 				return tcp, true
 			}
@@ -2075,7 +2094,7 @@ func (srv *Server) findCrossDialDupIn(peers []*Peer, newPeer *Peer, listenPort u
 		// and made every proxied peer dedup against every other. An
 		// onion target has no ip:port form; onion peers are exempt
 		// from address dedup.
-		if t := newPeer.rw.dialedTarget; t.Network != 0 {
+		if t := newPeer.rw.dialTarget(); t.Network != 0 {
 			target = tcpFromNetAddr(t)
 		} else if pra, ok := newPeer.RemoteAddr().(*net.TCPAddr); ok {
 			target = pra
@@ -2290,7 +2309,7 @@ func peerAdvertisedAddr(p *Peer) (addrman.NetAddr, bool) {
 	// An outbound dial target is the advertised endpoint we used —
 	// authoritative for proxied and onion peers, whose socket and
 	// node record carry the proxy's address at best.
-	if t := p.rw.dialedTarget; t.Network != 0 {
+	if t := p.rw.dialTarget(); t.Network != 0 {
 		return t, true
 	}
 	n := p.Node()
@@ -2403,7 +2422,7 @@ func (srv *Server) persistAnchors(peers map[enode.ID]*Peer) {
 		// block-relay peers are always outbound, and for proxied or
 		// onion peers peerListenAddr would report the SOCKS5 proxy.
 		var na addrman.NetAddr
-		if t := p.rw.dialedTarget; t.Network != 0 {
+		if t := p.rw.dialTarget(); t.Network != 0 {
 			na = t
 		} else if la, ok := srv.peerListenAddr(p); ok {
 			if converted, ok := netAddrFromTCP(la); ok {
@@ -2462,7 +2481,7 @@ func peerRemoteAddr(p *Peer) (addrman.NetAddr, bool) {
 	// RemoteAddr is the SOCKS5 proxy, and addrman feedback recorded
 	// against the proxy is lost — the real entry then accrues
 	// attempts without successes and decays toward IsTerrible.
-	if t := p.rw.dialedTarget; t.Network != 0 {
+	if t := p.rw.dialTarget(); t.Network != 0 {
 		return t, true
 	}
 	ra := p.RemoteAddr()
@@ -3198,7 +3217,8 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) 
 // with a non-zero target.
 func (srv *Server) setupConnTarget(fd net.Conn, flags connFlag, dialDest *enode.Node, target addrman.NetAddr) error {
 	flags = srv.classifyInboundNetwork(fd, flags)
-	c := &conn{fd: fd, flags: flags, cont: make(chan error), dialedTarget: target}
+	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
+	c.setDialTarget(target)
 	variant := srv.pickHandshakeVariant(fd, flags, dialDest)
 	switch variant {
 	case handshakeVariantV2:

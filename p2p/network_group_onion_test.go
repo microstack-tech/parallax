@@ -68,10 +68,10 @@ func TestGroupKeyForNetAddr(t *testing.T) {
 func TestOutboundGroupUsesDialedTarget(t *testing.T) {
 	target := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(198, 51, 100, 7), Port: 32110})
 	c := &conn{
-		fd:           &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9050}},
-		flags:        dynDialedConn,
-		dialedTarget: target,
+		fd:    &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9050}},
+		flags: dynDialedConn,
 	}
+	c.setDialTarget(target)
 	want := ipNetworkGroupKey(net.IPv4(198, 51, 100, 7))
 	if got := outboundGroupKey(c); got != want {
 		t.Errorf("outboundGroupKey = %x, want the target's group %x", got, want)
@@ -79,10 +79,10 @@ func TestOutboundGroupUsesDialedTarget(t *testing.T) {
 
 	onion := onionAddrWithFirstByte(t, 0x42)
 	co := &conn{
-		fd:           &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9050}},
-		flags:        dynDialedConn,
-		dialedTarget: onion,
+		fd:    &fakeAddrConn{remoteAddr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9050}},
+		flags: dynDialedConn,
 	}
+	co.setDialTarget(onion)
 	if got := outboundGroupKey(co); got != groupKeyForNetAddr(onion) {
 		t.Errorf("onion conn group = %x, want the onion target group", got)
 	}
