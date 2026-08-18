@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
-// geth is the official command-line client for Parallax.
+// parallaxd is the official command-line client for Parallax.
 package main
 
 import (
@@ -200,8 +200,8 @@ var (
 )
 
 func init() {
-	// Initialize the CLI app and start Geth
-	app.Action = geth
+	// Initialize the CLI app and start the node
+	app.Action = parallaxd
 	app.HideVersion = true // we have a command to print the version
 	app.Copyright = "Copyright 2025-2026 The Parallax Protocol Authors"
 	app.EnableBashCompletion = true
@@ -266,8 +266,8 @@ func prepare(ctx *cli.Context) {
 		logging.Info("Starting Parallax testnet...")
 
 	case ctx.GlobalIsSet(utils.DeveloperFlag.Name):
-		logging.Info("Starting Geth in ephemeral dev mode...")
-		logging.Warn(`You are running Geth in --dev mode. Please note the following:
+		logging.Info("Starting Parallax in ephemeral dev mode...")
+		logging.Warn(`You are running Parallax in --dev mode. Please note the following:
 
   1. This mode is only intended for fast, iterative development without assumptions on
      security or persistence.
@@ -305,10 +305,10 @@ func prepare(ctx *cli.Context) {
 	go metrics.CollectProcessMetrics(3 * time.Second)
 }
 
-// geth is the main entry point into the system if no special subcommand is ran.
+// parallaxd is the main entry point into the system if no special subcommand is ran.
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
-func geth(ctx *cli.Context) error {
+func parallaxd(ctx *cli.Context) error {
 	if args := ctx.Args(); len(args) > 0 {
 		return fmt.Errorf("invalid command: %q", args[0])
 	}
@@ -360,7 +360,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend api.Backend, isConsol
 	events := make(chan wallet.WalletEvent, 16)
 	stack.AccountManager().Subscribe(events)
 
-	// Create a client to interact with local geth node.
+	// Create a client to interact with the local node.
 	rpcClient, err := stack.Attach()
 	if err != nil {
 		utils.Fatalf("Failed to attach to self: %v", err)

@@ -124,7 +124,7 @@ func fetch(url string) ([]byte, error) {
 }
 
 // verifySignature checks that the sigData is a valid signature of the given
-// data, for pubkey GethPubkey
+// data, for one of the given pubkeys
 func verifySignature(pubkeys []string, data, sigdata []byte) error {
 	sig, err := minisign.DecodeSignature(string(sigdata))
 	if err != nil {

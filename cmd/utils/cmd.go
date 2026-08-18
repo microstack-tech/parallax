@@ -125,11 +125,11 @@ func monitorFreeDiskSpace(sigc chan os.Signal, path string, freeDiskSpaceCritica
 			break
 		}
 		if freeSpace < freeDiskSpaceCritical {
-			logging.Error("Low disk space. Gracefully shutting down Geth to prevent database corruption.", "available", util.StorageSize(freeSpace))
+			logging.Error("Low disk space. Gracefully shutting down the node to prevent database corruption.", "available", util.StorageSize(freeSpace))
 			sigc <- syscall.SIGTERM
 			break
 		} else if freeSpace < 2*freeDiskSpaceCritical {
-			logging.Warn("Disk space is running low. Geth will shutdown if disk space runs below critical level.", "available", util.StorageSize(freeSpace), "critical_level", util.StorageSize(freeDiskSpaceCritical))
+			logging.Warn("Disk space is running low. The node will shut down if disk space runs below critical level.", "available", util.StorageSize(freeSpace), "critical_level", util.StorageSize(freeDiskSpaceCritical))
 		}
 		time.Sleep(30 * time.Second)
 	}
@@ -371,12 +371,15 @@ func ExportPreimages(db dbstore.Database, fn string) error {
 // should be bumped.
 // If the importer sees a higher version, it should reject the import.
 type exportHeader struct {
-	Magic    string // Always set to 'gethdbdump' for disambiguation
+	Magic    string // Always set to exportMagic for disambiguation
 	Version  uint64
 	Kind     string
 	UnixTime uint64
 }
 
+// exportMagic identifies a database dump. It is part of the on-disk format, so
+// it keeps its inherited value: renaming it would make every dump written by an
+// earlier release unreadable.
 const exportMagic = "gethdbdump"
 const (
 	OpBatchAdd = 0

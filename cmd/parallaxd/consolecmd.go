@@ -38,9 +38,9 @@ var (
 		Flags:    utils.GroupFlags(nodeFlags, rpcFlags, consoleFlags),
 		Category: "CONSOLE COMMANDS",
 		Description: `
-The Geth console is an interactive shell for the JavaScript runtime environment
+The Parallax console is an interactive shell for the JavaScript runtime environment
 which exposes a node admin interface as well as the Ðapp JavaScript API.
-See https://geth.ethereum.org/docs/interface/javascript-console.`,
+See https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/js-console.`,
 	}
 
 	attachCommand = cli.Command{
@@ -51,10 +51,10 @@ See https://geth.ethereum.org/docs/interface/javascript-console.`,
 		Flags:     utils.GroupFlags([]cli.Flag{utils.DataDirFlag}, consoleFlags),
 		Category:  "CONSOLE COMMANDS",
 		Description: `
-The Geth console is an interactive shell for the JavaScript runtime environment
+The Parallax console is an interactive shell for the JavaScript runtime environment
 which exposes a node admin interface as well as the Ðapp JavaScript API.
-See https://geth.ethereum.org/docs/interface/javascript-console.
-This command allows to open a console on a running geth node.`,
+See https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/js-console.
+This command allows to open a console on a running Parallax node.`,
 	}
 
 	javascriptCommand = cli.Command{
@@ -66,11 +66,11 @@ This command allows to open a console on a running geth node.`,
 		Category:  "CONSOLE COMMANDS",
 		Description: `
 The JavaScript VM exposes a node admin interface as well as the Ðapp
-JavaScript API. See https://geth.ethereum.org/docs/interface/javascript-console`,
+JavaScript API. See https://docs.parallaxprotocol.org/parallax-client/interacting-with-parallax/js-console`,
 	}
 )
 
-// localConsole starts a new geth node, attaching a JavaScript console to it at the
+// localConsole starts a new Parallax node, attaching a JavaScript console to it at the
 // same time.
 func localConsole(ctx *cli.Context) error {
 	// Create and start the node based on the CLI flags
@@ -82,7 +82,7 @@ func localConsole(ctx *cli.Context) error {
 	// Attach to the newly started node and create the JavaScript console.
 	client, err := stack.Attach()
 	if err != nil {
-		return fmt.Errorf("Failed to attach to the inproc geth: %v", err)
+		return fmt.Errorf("Failed to attach to the inproc node: %v", err)
 	}
 	config := console.Config{
 		DataDir: utils.MakeDataDir(ctx),
@@ -115,7 +115,7 @@ func localConsole(ctx *cli.Context) error {
 	return nil
 }
 
-// remoteConsole will connect to a remote geth instance, attaching a JavaScript
+// remoteConsole will connect to a remote Parallax node, attaching a JavaScript
 // console to it.
 func remoteConsole(ctx *cli.Context) error {
 	endpoint := ctx.Args().First()
@@ -133,7 +133,7 @@ func remoteConsole(ctx *cli.Context) error {
 	}
 	client, err := dialRPC(endpoint)
 	if err != nil {
-		utils.Fatalf("Unable to attach to remote geth: %v", err)
+		utils.Fatalf("Unable to attach to remote node: %v", err)
 	}
 	config := console.Config{
 		DataDir: utils.MakeDataDir(ctx),
@@ -160,7 +160,7 @@ func remoteConsole(ctx *cli.Context) error {
 
 // dialRPC returns a RPC client which connects to the given endpoint.
 // The check for empty endpoint implements the defaulting logic
-// for "geth attach" with no argument.
+// for "parallaxd attach" with no argument.
 func dialRPC(endpoint string) (*rpc.Client, error) {
 	if endpoint == "" {
 		endpoint = node.DefaultIPCEndpoint(clientIdentifier)
@@ -172,7 +172,7 @@ func dialRPC(endpoint string) (*rpc.Client, error) {
 	return rpc.Dial(endpoint)
 }
 
-// ephemeralConsole starts a new geth node, attaches an ephemeral JavaScript
+// ephemeralConsole starts a new Parallax node, attaches an ephemeral JavaScript
 // console to it, executes each of the files specified as arguments and tears
 // everything down.
 func ephemeralConsole(ctx *cli.Context) error {
@@ -184,7 +184,7 @@ func ephemeralConsole(ctx *cli.Context) error {
 	// Attach to the newly started node and start the JavaScript console
 	client, err := stack.Attach()
 	if err != nil {
-		return fmt.Errorf("Failed to attach to the inproc geth: %v", err)
+		return fmt.Errorf("Failed to attach to the inproc node: %v", err)
 	}
 	config := console.Config{
 		DataDir: utils.MakeDataDir(ctx),

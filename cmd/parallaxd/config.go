@@ -117,7 +117,7 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
-// makeConfigNode loads geth configuration and creates a blank node instance.
+// makeConfigNode loads parallaxd configuration and creates a blank node instance.
 func makeConfigNode(ctx *cli.Context) (*node.Node, prlxConfig) {
 	// Load defaults.
 	cfg := prlxConfig{
@@ -153,7 +153,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, prlxConfig) {
 	return stack, cfg
 }
 
-// makeFullNode loads geth configuration and creates the Parallax backend.
+// makeFullNode loads parallaxd configuration and creates the Parallax backend.
 func makeFullNode(ctx *cli.Context) (*node.Node, api.Backend) {
 	stack, cfg := makeConfigNode(ctx)
 	backend, parallax := utils.RegisterParallaxService(stack, &cfg.Parallax)
