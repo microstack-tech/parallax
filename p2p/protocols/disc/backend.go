@@ -766,6 +766,18 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 	}
 	b.mu.Unlock()
 	if dup != nil {
+		// Same-direction pairs are NOT duplicates to resolve: two
+		// outbound sessions with one nonce mean we dialed two
+		// different addresses of a dual-stack node (dialing the same
+		// address twice is blocked earlier), and Core keeps both such
+		// connections. Dropping one would also churn — the surviving
+		// session has its own dial target, so the dropped address
+		// would be re-dialed and re-dropped forever.
+		if dup.Inbound() == peer.Inbound() {
+			b.log.Debug("parallax-disc/1: dual-stack sibling session (nonce match), keeping both",
+				"inbound", peer.Inbound())
+			return nil
+		}
 		var ourNonce uint64
 		if b.helloProv != nil {
 			ourNonce = b.helloProv().Nonce
@@ -801,33 +813,25 @@ func (b *AddrmanBackend) HandleHello(peer *p2p.Peer, h Hello) error {
 }
 
 // selectNonceDupLoser picks which of two same-node sessions to drop.
-// The rule is symmetric across both endpoints so two upgraded nodes
-// independently drop the SAME underlying TCP connection instead of
-// each killing the other's keeper: for a mixed pair, the connection
-// initiated by the lower-nonce node survives. (At node A with nonce a
-// and peer nonce b: b<a keeps the peer-initiated leg — A's inbound;
-// a<b keeps A's outbound. Node B computes the mirror image.) A
-// same-direction pair — e.g. we dialed both the peer's IP and its
-// onion — keeps the older session; the remote sees two inbounds and
-// applies the same age rule.
+// Only called for mixed inbound/outbound pairs — a true mutual dial;
+// same-direction pairs are dual-stack siblings and are kept (see
+// HandleHello). The rule is symmetric across both endpoints so two
+// upgraded nodes independently drop the SAME underlying TCP
+// connection instead of each killing the other's keeper: the
+// connection initiated by the lower-nonce node survives. (At node A
+// with nonce a and peer nonce b: b<a keeps the peer-initiated leg —
+// A's inbound; a<b keeps A's outbound. Node B computes the mirror
+// image.)
 func selectNonceDupLoser(a, b *p2p.Peer, ourNonce, theirNonce uint64) *p2p.Peer {
-	aIn, bIn := a.Inbound(), b.Inbound()
-	if aIn != bIn {
-		inboundLeg, outboundLeg := a, b
-		if bIn {
-			inboundLeg, outboundLeg = b, a
-		}
-		if theirNonce < ourNonce {
-			// The peer's dial survives; our outbound leg is the loser.
-			return outboundLeg
-		}
-		return inboundLeg
+	inboundLeg, outboundLeg := a, b
+	if b.Inbound() {
+		inboundLeg, outboundLeg = b, a
 	}
-	// Same direction: drop the younger.
-	if a.Created() < b.Created() {
-		return b
+	if theirNonce < ourNonce {
+		// The peer's dial survives; our outbound leg is the loser.
+		return outboundLeg
 	}
-	return a
+	return inboundLeg
 }
 
 // selectCrossDialLoser picks which of (existing, incoming) to drop

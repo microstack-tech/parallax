@@ -1607,19 +1607,15 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 		srv.log.Debug("v2 dial skipped (self endpoint)", "addr", addr.String())
 		return nil, fmt.Errorf("v2 dial %s: %w", addr, errV2DialSelf)
 	}
-	if tcp != nil {
-		if srv.alreadyConnectedTo(tcp) {
-			// Refresh LastTry without counting a failure. addrman's
-			// Select chance weighting drops ~100x for 10 min once
-			// LastTry is recent, so the iterator stops burning cycles
-			// re-picking an endpoint we already peer with via v1.
-			srv.addrmanAttemptAddr(addr, false)
-			return nil, fmt.Errorf("v2 dial %s: already connected", addr)
-		}
-	} else if srv.connectedToDialTarget(addr) {
-		// Onion targets: matched against live peers' dial targets —
-		// including a target transplanted onto an inbound twin by the
-		// nonce dedup — since onion peers expose no listen addr.
+	// Duplicate suppression, two complementary matchers: the listen
+	// addr comparison (IP targets only — onion peers expose no listen
+	// addr) and the dial-target comparison, which covers every
+	// network and also matches targets transplanted onto an inbound
+	// twin by the nonce dedup. Either match refreshes LastTry without
+	// counting a failure: addrman's Select chance weighting drops
+	// ~100x for 10 min once LastTry is recent, so the iterator stops
+	// burning cycles re-picking an endpoint we already peer with.
+	if (tcp != nil && srv.alreadyConnectedTo(tcp)) || srv.connectedToDialTarget(addr) {
 		srv.addrmanAttemptAddr(addr, false)
 		return nil, fmt.Errorf("v2 dial %s: already connected", addr)
 	}

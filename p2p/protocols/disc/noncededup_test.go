@@ -126,6 +126,18 @@ func TestHandleHelloNonceDedup(t *testing.T) {
 			in2.DisconnectRequested(), out2.DisconnectRequested())
 	}
 
+	// Same-direction pairs are dual-stack siblings (two addresses of
+	// one node, both dialed by us) and are kept — Core keeps both
+	// such connections, and dropping one would only churn.
+	b = newBackend(100)
+	sibA, sibB := testPeerOnPipe(t), testPeerOnPipe(t)
+	sibA.SetDialTargetForTest(onion)
+	b.HandleHello(sibA, Hello{ProtoVersion: HelloMinProtoVersion, Nonce: theirNonce})
+	b.HandleHello(sibB, Hello{ProtoVersion: HelloMinProtoVersion, Nonce: theirNonce})
+	if sibA.DisconnectRequested() || sibB.DisconnectRequested() {
+		t.Fatal("dual-stack sibling sessions were deduped")
+	}
+
 	// Distinct nonces never dedup.
 	b = newBackend(100)
 	p1, p2 := testPeerOnPipe(t), testPeerOnPipe(t)

@@ -122,21 +122,21 @@ func (srv *Server) runOneFeeler() {
 	if !srv.NetworkReachable(addr.Network) {
 		return
 	}
-	if tcp := tcpFromNetAddr(addr); tcp != nil {
-		if srv.IsSelfEndpoint(tcp) {
-			return
-		}
-		if srv.alreadyConnectedTo(tcp) {
-			// Refresh LastTry without counting a failure: we already
-			// peer with this endpoint.
-			srv.addrbook.Attempt(addr, false, time.Now())
-			return
-		}
-	} else if srv.isSelfNetAddr(addr) || srv.connectedToDialTarget(addr) {
-		// Onion candidates: our own service, or a target a live peer
-		// already represents (directly or via the nonce dedup's
-		// adopted twin). Core's feeler also aborts on
-		// AlreadyConnectedToAddress.
+	if srv.isSelfNetAddr(addr) {
+		return
+	}
+	// Skip candidates a live peer already represents — by listen addr
+	// (IP targets) or by dial target (any network, including targets
+	// adopted through the nonce dedup). Core's feeler also aborts on
+	// AlreadyConnectedToAddress.
+	if tcp := tcpFromNetAddr(addr); tcp != nil && srv.alreadyConnectedTo(tcp) {
+		// Refresh LastTry without counting a failure: we already
+		// peer with this endpoint.
+		srv.addrbook.Attempt(addr, false, time.Now())
+		return
+	}
+	if srv.connectedToDialTarget(addr) {
+		srv.addrbook.Attempt(addr, false, time.Now())
 		return
 	}
 
