@@ -20,22 +20,27 @@ View at `http://localhost:3000`.
 
 ## Versions
 
-The site is versioned. Each release keeps its own copy of the docs in a
-top-level folder named after its tag, and `docs.json` declares them under
-`navigation.versions`:
+The site is versioned **by minor series**, not by individual release. Patch
+releases within a series rarely change the documentation, so one folder covers
+all of them — `v1.2.x/` serves both v1.2.0 and v1.2.1, and a future v2.0.1 needs
+no new folder. `docs.json` declares the series under `navigation.versions`:
 
 | Folder    | Version picker         | Notes                                              |
 | --------- | ---------------------- | -------------------------------------------------- |
-| `v2.1.0/` | hidden                 | In development. Reachable at `/v2.1.0/…`, but absent from the picker, search engines and sitemaps until release. |
-| `v2.0.0/` | `v2.0.0` — **default** | Current public release. Served at `/v2.0.0/…`.      |
-| `v1.2.0/` | `v1.2.0`               | The v1 client (`prlx`), imported from the archived [ParallaxProtocol/parallax-docs](https://github.com/ParallaxProtocol/parallax-docs) repository. Documents features dropped in v2.0.0, notably light-client sync and the `les` RPC namespace. Frozen; no longer maintained. |
-| `v1.1.1/`, `v1.1.0/` | `v1.1.1`, `v1.1.0` | Same content as `v1.2.0/`, copied. These releases shipped against the same docs, but each version still needs its own folder — see below. Frozen. |
+| `v2.1.x/` | hidden                 | In development. Reachable at `/v2.1.x/…`, but absent from the picker, search engines and sitemaps until release. |
+| `v2.0.x/` | `v2.0.x` — **default** | Current public release. Served at `/v2.0.x/…`.      |
+| `v1.2.x/` | `v1.2.x`               | The v1 client (`prlx`), imported from the archived [ParallaxProtocol/parallax-docs](https://github.com/ParallaxProtocol/parallax-docs) repository. Documents features dropped in v2.0.0, notably light-client sync and the `les` RPC namespace. Frozen; no longer maintained. |
+| `v1.1.x/` | `v1.1.x`               | Same content as `v1.2.x/`, copied. The v1.1 releases shipped against the same docs, but each series still needs its own folder — see below. Frozen. |
 
-Content is duplicated per version on purpose — Mintlify page paths are literal
-file paths, so a version's folder is a frozen snapshot of the docs as that
-release shipped. **Edit the folder for the release you are documenting.** Work
-on unreleased behaviour belongs in `v2.1.0/` only; a fix that also applies to
-the shipped release goes in both.
+Every released tag redirects to the series that documents it, so
+`/v1.2.1/…` and `/v2.0.0/…` resolve for readers who know their exact version.
+Add a line to that redirect block when a new patch release ships.
+
+Content is duplicated per series on purpose — Mintlify page paths are literal
+file paths, so a series folder is a frozen snapshot of the docs as that line
+shipped. **Edit the folder for the release you are documenting.** Work on
+unreleased behaviour belongs in `v2.1.x/` only; a fix that also applies to the
+shipped release goes in both.
 
 Assets are shared and stay unversioned: `index.mdx` (landing page), `logo/`,
 `images/`, `favicon.svg`.
@@ -52,20 +57,24 @@ Always use **relative** links, and always write the leading `./` or `../`:
 
 Run `mint broken-links` before pushing; it catches both cases.
 
-### Cutting a new version
+### Releasing
 
-When `vX.Y.Z` is released:
+**A patch release** (`v2.0.1`) needs no new folder. Add its tag to the redirect
+block so `/v2.0.1/…` resolves, and edit `v2.0.x/` if the docs changed.
 
-1. `cp -r` the outgoing development folder to the new version folder, or
-   snapshot a tag with
-   `git archive vX.Y.Z docs/guides docs/parallax-client docs/parallax-protocol | tar -x --strip-components=1 -C docs/vX.Y.Z`.
-2. In `docs.json`, copy the version's `tabs` block and rewrite the path prefix
-   to `vX.Y.Z/`.
-3. Move `default: true` and `tag: "latest"` onto the new version, and drop
-   `hidden` from it.
+**A new minor series** (`v2.2.0`) needs one:
+
+1. Start the folder from the outgoing development series — `cp -r docs/v2.1.x
+   docs/v2.2.x` — or snapshot a tag with
+   `git archive vX.Y.Z docs/guides docs/parallax-client docs/parallax-protocol | tar -x --strip-components=1 -C docs/vX.Y.x`.
+2. In `docs.json`, copy the series' `tabs` block and rewrite the path prefix to
+   `vX.Y.x/`.
+3. Move `default: true` and `tag: "latest"` onto the newly released series, and
+   drop `hidden` from it. Add the next development series as the new `hidden`
+   entry.
 4. Repoint the fall-through redirects at the bottom of `docs.json`
    (`/guides/:slug*`, `/parallax-client/:slug*`, `/parallax-protocol/:slug*`)
-   to the new default.
+   to the new default, and add the release tag to the tag redirect block.
 
 ### Every version needs its own folder — no aliases
 
@@ -76,15 +85,15 @@ falls back to the default version.
 
 So when a release ships against docs that already exist, copy the tree into a
 folder of its own rather than pointing the new version at the old one's pages.
-`v1.1.1/` and `v1.1.0/` are byte-for-byte copies of `v1.2.0/` for this reason.
+`v1.1.x/` is a byte-for-byte copy of `v1.2.x/` for this reason.
 
 Two shortcuts look reasonable and both fail — the JSON schema accepts each, and
 `mint broken-links` reports no problem either way:
 
 | Shortcut | What happens |
 | -------- | ------------ |
-| `{"version": "v1.1.1", "href": "/v1.2.0/…"}` | The picker builds entries from a version's own pages, so an entry with no `pages` has nothing behind it. It renders, but clicking does nothing. |
-| `{"version": "v1.1.1", "pages": ["v1.2.0/…"]}` | Now two versions claim that path. Clicking **v1.2.0** lands on the page with the picker still reading the default version and the wrong sidebar — it breaks the version it was aliasing. |
+| `{"version": "v1.1.x", "href": "/v1.2.x/…"}` | The picker builds entries from a version's own pages, so an entry with no `pages` has nothing behind it. It renders, but clicking does nothing. |
+| `{"version": "v1.1.x", "pages": ["v1.2.x/…"]}` | Now two versions claim that path. Clicking **v1.2.x** lands on the page with the picker still reading the default version and the wrong sidebar — it breaks the version it was aliasing. |
 
 Verify with `mint dev` and actually switch versions in the dropdown. Neither
 failure shows up in `mint broken-links` or in schema validation.
