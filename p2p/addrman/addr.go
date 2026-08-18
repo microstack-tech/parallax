@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 )
 
@@ -154,6 +155,15 @@ func (a NetAddr) AddrPort() (netip.AddrPort, bool) {
 		return netip.AddrPortFrom(netip.AddrFrom16(b), a.Port), true
 	}
 	return netip.AddrPort{}, false
+}
+
+// TCPAddr projects a onto a *net.TCPAddr, or nil for non-IP networks.
+func (a NetAddr) TCPAddr() *net.TCPAddr {
+	ap, ok := a.AddrPort()
+	if !ok {
+		return nil
+	}
+	return &net.TCPAddr{IP: ap.Addr().AsSlice(), Port: int(ap.Port())}
 }
 
 // Equal reports whether a and b refer to the same (Network, Addr, Port).

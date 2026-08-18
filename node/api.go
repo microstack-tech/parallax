@@ -143,20 +143,15 @@ func (api *privateAdminAPI) RemovePeer(url string) (bool, error) {
 		server.RemovePeer(node)
 		return true, nil
 	}
-	// ip:port → disconnect the peer with a matching RemoteAddr.
-	host, portStr, err := net.SplitHostPort(url)
+	// ip:port / onion:port → disconnect the matching peer. Matching
+	// keys on the peer's dial target where one exists, so onion peers
+	// are addressable and a proxied peer is found by its real address
+	// rather than the proxy's.
+	na, err := parseV2Target(url)
 	if err != nil {
-		return false, fmt.Errorf("invalid address %q: expected enode://… or ip:port", url)
+		return false, fmt.Errorf("invalid address %q: expected enode://…, ip:port or <addr>.onion:port (%v)", url, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false, fmt.Errorf("invalid ip %q", host)
-	}
-	port, err := parsePort(portStr)
-	if err != nil {
-		return false, err
-	}
-	return server.DisconnectByAddr(&net.TCPAddr{IP: ip, Port: int(port)}), nil
+	return server.DisconnectByNetAddr(na), nil
 }
 
 // AddTrustedPeer allows a remote node to always connect, even if slots are full
@@ -294,6 +289,17 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 			if err := bm.BanHost(host, duration, banman.ReasonManual); err != nil {
 				return false, err
 			}
+			// Kick the banned peer if it is connected. Outbound onion
+			// peers are attributable through their dial target;
+			// inbound onion streams are not, and simply stay until
+			// they drop.
+			canonical, cerr := addrman.ParseOnion(host, 0)
+			if cerr == nil {
+				server.DisconnectMatching(func(a addrman.NetAddr) bool {
+					return a.Network == addrman.NetTorV3 &&
+						string(a.Bytes()) == string(canonical.Bytes())
+				})
+			}
 			return true, nil
 		case "remove":
 			ok, err := bm.UnbanHost(host)
@@ -335,16 +341,14 @@ func (api *privateAdminAPI) Setban(subnet string, command string, bantime *int64
 		if err := bm.BanSubnet(netw, duration, banman.ReasonManual); err != nil {
 			return false, err
 		}
-		// Bitcoin parity: kick any matching live peers (rpc/net.cpp:808-811).
-		for _, p := range server.Peers() {
-			ra, ok := p.RemoteAddr().(*net.TCPAddr)
-			if !ok {
-				continue
-			}
-			if netw.Contains(ra.IP) {
-				p.Disconnect(p2p.DiscRequested)
-			}
-		}
+		// Bitcoin parity: kick any matching live peers
+		// (rpc/net.cpp:808-811). Matching keys on the dial target
+		// where one exists, so a peer reached through a proxy is
+		// matched by its real address instead of the proxy's.
+		server.DisconnectMatching(func(a addrman.NetAddr) bool {
+			tcp := a.TCPAddr()
+			return tcp != nil && netw.Contains(tcp.IP)
+		})
 		return true, nil
 	case "remove":
 		ok, err := bm.UnbanSubnet(netw)

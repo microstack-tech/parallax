@@ -2266,20 +2266,75 @@ func (srv *Server) LegacyHandshakeRefused() bool {
 // because v2 peer identities are session-ephemeral and can't be used
 // as stable lookup keys.
 func (srv *Server) DisconnectByAddr(addr *net.TCPAddr) bool {
-	if addr == nil {
+	na, ok := netAddrFromTCP(addr)
+	if !ok {
 		return false
 	}
+	return srv.DisconnectByNetAddr(na)
+}
+
+// DisconnectByNetAddr disconnects the first peer matching addr on any
+// network, and reports whether one was found. A peer matches on its
+// dial target when it has one — the only handle on an onion peer, and
+// the correct one for a proxied peer, whose RemoteAddr is the SOCKS5
+// proxy and would otherwise match every peer sharing that proxy — and
+// otherwise on its socket address.
+func (srv *Server) DisconnectByNetAddr(addr addrman.NetAddr) bool {
+	if len(addr.Bytes()) == 0 {
+		return false
+	}
+	want := tcpFromNetAddr(addr)
 	for _, p := range srv.Peers() {
+		if t := p.rw.dialTarget(); t.Network != 0 {
+			if t.Equal(addr) {
+				p.Disconnect(DiscRequested)
+				return true
+			}
+			continue
+		}
+		if want == nil || p.rw.is(proxiedConn) {
+			continue
+		}
 		ra, ok := p.RemoteAddr().(*net.TCPAddr)
 		if !ok {
 			continue
 		}
-		if ra.Port == addr.Port && ra.IP.Equal(addr.IP) {
+		if ra.Port == want.Port && ra.IP.Equal(want.IP) {
 			p.Disconnect(DiscRequested)
 			return true
 		}
 	}
 	return false
+}
+
+// DisconnectMatching disconnects every peer whose address satisfies
+// match, and returns how many were dropped. Peers are matched by dial
+// target when they have one, else by socket address; proxied peers
+// without a target are skipped, since their socket address is the
+// proxy's. Used by setban to enforce a fresh ban immediately.
+func (srv *Server) DisconnectMatching(match func(addrman.NetAddr) bool) int {
+	if match == nil {
+		return 0
+	}
+	dropped := 0
+	for _, p := range srv.Peers() {
+		var cand addrman.NetAddr
+		if t := p.rw.dialTarget(); t.Network != 0 {
+			cand = t
+		} else if !p.rw.is(proxiedConn) {
+			if ra, ok := p.RemoteAddr().(*net.TCPAddr); ok {
+				if na, ok := netAddrFromTCP(ra); ok {
+					cand = na
+				}
+			}
+		}
+		if cand.Network == 0 || !match(cand) {
+			continue
+		}
+		p.Disconnect(DiscRequested)
+		dropped++
+	}
+	return dropped
 }
 
 // AddrBook returns the server's address manager, or nil when

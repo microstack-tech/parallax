@@ -142,3 +142,51 @@ func TestConnectedToDialTargetScan(t *testing.T) {
 		t.Fatal("feeler target suppressed a dial")
 	}
 }
+
+// TestDisconnectMatchesDialTarget — peer-targeting RPCs (removePeer,
+// setban's kick) must find a peer by the address it was dialed at.
+// Regression: matching on RemoteAddr meant a proxied peer could not be
+// removed by its real address, while passing the proxy's address
+// disconnected an arbitrary peer sharing that proxy.
+func TestDisconnectMatchesDialTarget(t *testing.T) {
+	onion, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(203, 0, 113, 7), Port: 32110})
+	proxyAddr := testNetAddr(t, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9050})
+
+	onionPeer := proxiedPeerAt(t, onion)
+	ipPeer := proxiedPeerAt(t, real) // socket remote is the proxy
+	peers := []*Peer{onionPeer, ipPeer}
+
+	// Mirrors DisconnectMatching's selection, which needs a run loop
+	// this test doesn't stand up.
+	match := func(target addrman.NetAddr) []*Peer {
+		var hit []*Peer
+		for _, p := range peers {
+			cand := p.rw.dialTarget()
+			if cand.Network == 0 && !p.rw.is(proxiedConn) {
+				if ra, ok := p.RemoteAddr().(*net.TCPAddr); ok {
+					if na, ok := netAddrFromTCP(ra); ok {
+						cand = na
+					}
+				}
+			}
+			if cand.Network != 0 && cand.Equal(target) {
+				hit = append(hit, p)
+			}
+		}
+		return hit
+	}
+
+	if got := match(onion); len(got) != 1 || got[0] != onionPeer {
+		t.Fatalf("onion address matched %d peers, want exactly the onion peer", len(got))
+	}
+	if got := match(real); len(got) != 1 || got[0] != ipPeer {
+		t.Fatalf("real address matched %d peers, want exactly the proxied IP peer", len(got))
+	}
+	if got := match(proxyAddr); len(got) != 0 {
+		t.Fatalf("the proxy's own address matched %d peers, want none", len(got))
+	}
+}
