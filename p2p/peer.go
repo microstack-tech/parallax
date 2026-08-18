@@ -919,12 +919,20 @@ func (p *Peer) Info() *PeerInfo {
 	info.Network.Inbound = p.rw.is(inboundConn)
 	info.Network.Trusted = p.rw.is(trustedConn)
 	info.Network.Static = p.rw.is(staticDialedConn)
-	if t := p.rw.dialTarget(); t.Network != 0 {
-		info.Network.Address = t.String()
+	target := p.rw.dialTarget()
+	if target.Network != 0 {
+		info.Network.Address = target.String()
 	}
+	// Classify from the dial target when we have one: a proxied
+	// peer's socket address is the SOCKS5 proxy (usually loopback
+	// IPv4), which would mislabel every proxied IPv6 peer.
 	switch {
-	case p.rw.is(onionConn):
+	case p.rw.is(onionConn) || target.Network == addrman.NetTorV3:
 		info.Network.Network = "onion"
+	case target.Network == addrman.NetIPv6:
+		info.Network.Network = "ipv6"
+	case target.Network == addrman.NetIPv4:
+		info.Network.Network = "ipv4"
 	default:
 		info.Network.Network = "ipv4"
 		if ra, ok := p.RemoteAddr().(*net.TCPAddr); ok && ra.IP.To4() == nil {

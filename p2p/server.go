@@ -2029,6 +2029,14 @@ func (srv *Server) peerListenAddr(p *Peer) (*net.TCPAddr, bool) {
 			}
 			return nil, false
 		}
+		if p.rw.is(proxiedConn) {
+			// Dialed through a proxy with no recorded target (a
+			// hostname seed fetch): RemoteAddr is the proxy, so the
+			// peer's listen address is simply unknown. Reporting the
+			// proxy would make every such session look like the same
+			// endpoint.
+			return nil, false
+		}
 		pra, ok := p.RemoteAddr().(*net.TCPAddr)
 		if !ok {
 			return nil, false

@@ -151,7 +151,12 @@ func (srv *Server) fetchSeedsViaProxy(ctx context.Context, hosts []string, defau
 			srv.log.Debug("proxied seed fetch failed", "host", host, "err", err)
 			continue
 		}
-		if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|feelerConn, nil); err != nil {
+		// proxiedConn matters even though these are feelers: without
+		// it the seed peer's YourAddr — which describes the proxy or
+		// Tor exit, not us — would feed the self-address quorum, and
+		// the session would dedup against every other seed session
+		// through the same proxy.
+		if err := srv.SetupConn(fd, dynDialedConn|v2DialedConn|feelerConn|proxiedConn, nil); err != nil {
 			srv.log.Debug("proxied seed handshake failed", "host", host, "err", err)
 			continue
 		}

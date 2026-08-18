@@ -40,12 +40,23 @@ func (srv *Server) startTorControl() {
 	if virtualPort == 0 {
 		virtualPort = DNSSeedDefaultPort
 	}
+	// Tor forwards rendezvous streams to this address, so it must be
+	// one the listener actually answers on. The wildcard bind (the
+	// default) covers loopback, but a listener pinned to a concrete
+	// interface does not — forwarding to 127.0.0.1 there would
+	// advertise an onion address that refuses every connection.
+	target := fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port)
+	if !tcpAddr.IP.IsUnspecified() && !tcpAddr.IP.IsLoopback() {
+		target = tcpAddr.String()
+		srv.log.Info("torcontrol: forwarding onion service to the bound listener address",
+			"target", target)
+	}
 	srv.torControl = torcontrol.New(torcontrol.Config{
 		ControlAddr: srv.TorControlAddr,
 		Password:    srv.TorPassword,
 		KeyFile:     srv.OnionKeyPath,
 		VirtualPort: virtualPort,
-		Target:      fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port),
+		Target:      target,
 		// Auto-configure the onion proxy from the daemon's SOCKS
 		// listener only when --onion named none — Core gates the
 		// GETINFO on -onion being unset, so an explicit --onion (or

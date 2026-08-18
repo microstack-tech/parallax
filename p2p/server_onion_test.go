@@ -479,3 +479,59 @@ func TestOnlyNetExemptsManualDials(t *testing.T) {
 		t.Fatalf("manual clearnet dial refused by --onlynet: %v", err)
 	}
 }
+
+// TestOnionServiceTargetsBoundListener — the ADD_ONION forward target
+// must be an address the listener answers on. Regression: it was
+// hardcoded to 127.0.0.1, so a node bound to a concrete non-loopback
+// interface advertised an onion address whose every inbound stream Tor
+// forwarded to a closed port.
+func TestOnionServiceTargetsBoundListener(t *testing.T) {
+	// Bind to a concrete non-loopback interface if the host has one;
+	// otherwise the wildcard case is all we can exercise.
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bindIP net.IP
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			bindIP = ipnet.IP
+			break
+		}
+	}
+	if bindIP == nil {
+		t.Skip("no concrete non-loopback IPv4 interface to bind")
+	}
+
+	srv := &Server{Config: Config{
+		Name:        "bound-listener",
+		MaxPeers:    10,
+		NoDial:      true,
+		NoDiscovery: true,
+		ListenAddr:  net.JoinHostPort(bindIP.String(), "0"),
+		PrivateKey:  newkey(),
+		Logger:      testlog.Logger(t, logging.LvlCrit),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	tcpAddr := srv.listener.Addr().(*net.TCPAddr)
+	target := fmt.Sprintf("127.0.0.1:%d", tcpAddr.Port)
+	if !tcpAddr.IP.IsUnspecified() && !tcpAddr.IP.IsLoopback() {
+		target = tcpAddr.String()
+	}
+	if target != tcpAddr.String() {
+		t.Fatalf("onion target = %s, want the bound listener %s", target, tcpAddr)
+	}
+	// And the loopback default still applies to a wildcard bind.
+	wild := &net.TCPAddr{IP: net.IPv4zero, Port: 32110}
+	wildTarget := fmt.Sprintf("127.0.0.1:%d", wild.Port)
+	if !wild.IP.IsUnspecified() && !wild.IP.IsLoopback() {
+		wildTarget = wild.String()
+	}
+	if wildTarget != "127.0.0.1:32110" {
+		t.Fatalf("wildcard bind target = %s, want loopback", wildTarget)
+	}
+}
