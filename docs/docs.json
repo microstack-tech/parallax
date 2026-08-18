@@ -156,7 +156,8 @@
                       "v2.1.x/parallax-client/fundamentals/tor",
                       "v2.1.x/parallax-client/fundamentals/pruning",
                       "v2.1.x/parallax-client/fundamentals/private-networks",
-                      "v2.1.x/parallax-client/fundamentals/config-files"
+                      "v2.1.x/parallax-client/fundamentals/config-files",
+                      "v2.1.x/parallax-client/fundamentals/versioning"
                     ]
                   },
                   {

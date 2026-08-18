@@ -154,6 +154,56 @@ wallet/         Account management, keystore, hardware wallets
 
 Each layer only imports from layers below it, enforced by Go's import rules. The `kernel/` package can be embedded independently without pulling in the full node stack.
 
+## Versioning
+
+Parallax releases follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`, tagged as `vX.Y.Z`.
+
+| Component | Bumped for | Example |
+|---|---|---|
+| **PATCH** (`Z`) | Bug fixes, security patches, performance work. No new features and no interface changes — a drop-in upgrade. | `2.0.0` → `2.0.1` |
+| **MINOR** (`Y`) | Features added, changed, or removed: new RPC methods, new CLI flags, new subsystems. Node operators upgrade without changes; removals and behavior changes are listed in the release notes. | `2.0.1` → `2.1.0` |
+| **MAJOR** (`X`) | Breaking changes to the exported Go API — moved packages, renamed or removed types and functions. Code that imports Parallax as a library needs edits. `1.x` → `2.0` was the move to the layered architecture above. | `2.1.0` → `3.0.0` |
+
+The major digit tracks the **library** surface, so it matters most to developers embedding `kernel/` or building on the Go packages. For someone who only runs `parallaxd`, a major release mostly means "read the release notes carefully."
+
+Because the major version is part of the Go module path, library consumers pin it in the import path:
+
+```go
+import "github.com/ParallaxProtocol/parallax/v2/kernel/chainparams"
+```
+
+```bash
+go get github.com/ParallaxProtocol/parallax/v2@latest
+```
+
+The `/vN` suffix is what lets a `3.x` release land without breaking code still on `2.x` — the two are distinct modules and can coexist in one build.
+
+### Pre-releases and development builds
+
+`version.go` carries the version components plus a metadata tag:
+
+- `unstable` — the development cycle on `main`, e.g. `2.1.0-unstable`. Not a release; the version names the *next* release.
+- `rcN` — release candidate, tagged `v2.1.0-rc1`. Any tag containing a hyphen is published as a GitHub pre-release.
+- `stable` — the released build. Only stable tags are recommended for mainnet.
+
+Binaries also embed the git commit and build date (`parallaxd version`), so an unstable build is always traceable to a commit.
+
+### Release branches
+
+Each minor series gets a long-lived branch, `X.Y.x` (e.g. `2.0.x`). The series is cut when `X.Y.0` ships; patch releases are tagged from that branch, while `main` moves on to the next minor's development cycle. Documentation is versioned the same way — `docs/v2.0.x`, `docs/v2.1.x` — so the docs for the release you run stay available after newer ones land.
+
+### Consensus is not versioned by releases
+
+The version number describes the *software*, never the *rules*. Parallax treats consensus the way Bitcoin does: the rules are meant to stay fixed. There is no scheduled fork cadence, and a new release is not an occasion to change how blocks are validated. Client releases ship bug fixes, features, and refactors on top of rules that are expected to outlive every version number in this scheme.
+
+Consequently:
+
+- A major version bump means the Go API moved, not that the chain changed. Upgrading from `2.x` to `3.x` does not imply a fork.
+- On the rare occasion a consensus change is warranted, it activates at a **block height** in `kernel/chainparams` rather than at a release boundary, and the release carrying it is mandatory for every node regardless of which digit moved.
+- The wire protocols carry their own version numbers — `prl/66` for chain sync, `parallax-disc/1` for peer discovery — and bump independently of the release version.
+
+Release notes state explicitly when an upgrade is mandatory rather than optional.
+
 ## Development Process
 
 The `main` branch is the development branch. Changes are submitted as pull requests and require review before merging.

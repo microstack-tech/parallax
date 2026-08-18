@@ -32,6 +32,10 @@ no new folder. `docs.json` declares the series under `navigation.versions`:
 | `v1.2.x/` | `v1.2.x`               | The v1 client (`prlx`), imported from the archived [ParallaxProtocol/parallax-docs](https://github.com/ParallaxProtocol/parallax-docs) repository. Documents features dropped in v2.0.0, notably light-client sync and the `les` RPC namespace. Frozen; no longer maintained. |
 | `v1.1.x/` | `v1.1.x`               | Same content as `v1.2.x/`, copied. The v1.1 releases shipped against the same docs, but each series still needs its own folder — see below. Frozen. |
 
+What a major, minor, or patch release of the client itself means — and why a
+version bump never implies a consensus change — is documented on the
+[Versioning](v2.1.x/parallax-client/fundamentals/versioning.mdx) page.
+
 Every released tag redirects to the series that documents it, so
 `/v1.2.1/…` and `/v2.0.0/…` resolve for readers who know their exact version.
 Add a line to that redirect block when a new patch release ships.
