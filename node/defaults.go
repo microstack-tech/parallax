@@ -63,6 +63,11 @@ var DefaultConfig = Config{
 		ListenAddr: ":32110",
 		MaxPeers:   100,
 		NAT:        nat.Any(),
+		// Default on (Core's -listenonion): a no-op with quiet
+		// retries until a Tor control port answers. Lives here rather
+		// than in the flag setter so a config file can turn it off
+		// without the flag default overriding it.
+		ListenOnion: true,
 	},
 }
 

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -178,27 +179,44 @@ func (p *Proxy) Dial(ctx context.Context, dest string, port uint16) (net.Conn, e
 	}
 	// Server shutdown interrupts in-flight dials by cancelling ctx;
 	// negotiate itself only honors deadlines, so close the conn on
-	// cancellation to unblock its reads.
+	// cancellation to unblock its reads. Ownership passes to the
+	// caller under mu, so a cancellation racing a successful
+	// negotiation either closes the conn (and Dial reports the
+	// cancellation) or finds it handed off and leaves it alone —
+	// never both.
+	var (
+		mu        sync.Mutex
+		handedOff bool
+	)
 	watchDone := make(chan struct{})
 	defer close(watchDone)
 	go func() {
 		select {
 		case <-ctx.Done():
-			conn.Close()
+			mu.Lock()
+			if !handedOff {
+				conn.Close()
+			}
+			mu.Unlock()
 		case <-watchDone:
 		}
 	}()
-	if err := negotiate(ctx, conn, dest, port, auth); err != nil {
+	negErr := negotiate(ctx, conn, dest, port, auth)
+	mu.Lock()
+	if negErr == nil && ctx.Err() == nil {
+		handedOff = true
+	}
+	owned := handedOff
+	mu.Unlock()
+	if negErr != nil {
 		conn.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, err
+		return nil, negErr
 	}
-	if ctx.Err() != nil {
-		// Cancellation raced negotiate's success; the conn may already
-		// be closed by the watcher.
-		conn.Close()
+	if !owned {
+		// Cancelled during negotiation: the watcher owns the conn.
 		return nil, ctx.Err()
 	}
 	return conn, nil

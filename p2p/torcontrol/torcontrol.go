@@ -573,20 +573,28 @@ func readReply(br *bufio.Reader) (reply, error) {
 }
 
 // readLine reads one CRLF line, enforcing maxLineLength.
+//
+// ReadSlice, not ReadString: ReadString only returns once it finds the
+// delimiter, growing its own buffer without bound, so a peer that
+// streams bytes with no newline would exhaust memory before any
+// length check could run. ReadSlice returns what fits in the fixed
+// buffer with ErrBufferFull, letting the cap be enforced as the line
+// accumulates.
 func readLine(br *bufio.Reader) (string, error) {
 	var b strings.Builder
 	for {
-		chunk, err := br.ReadString('\n')
-		b.WriteString(chunk)
-		if b.Len() > maxLineLength {
+		chunk, err := br.ReadSlice('\n')
+		if b.Len()+len(chunk) > maxLineLength {
 			return "", errors.New("control reply line exceeds maximum length")
+		}
+		b.Write(chunk)
+		if err == bufio.ErrBufferFull {
+			continue
 		}
 		if err != nil {
 			return "", err
 		}
-		if strings.HasSuffix(chunk, "\n") {
-			return strings.TrimRight(b.String(), "\r\n"), nil
-		}
+		return strings.TrimRight(b.String(), "\r\n"), nil
 	}
 }
 

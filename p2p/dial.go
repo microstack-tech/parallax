@@ -190,7 +190,12 @@ type dialScheduler struct {
 	doneSinceLastLog int
 }
 
-type dialSetupFunc func(net.Conn, connFlag, *enode.Node) error
+// dialSetupFunc hands a freshly dialed conn to the Server. The
+// NetAddr is the address the dial was aimed at: under a proxy the
+// conn's RemoteAddr is the proxy, so everything downstream that
+// identifies a peer by address (dedup, netgroups, addrman feedback)
+// needs the target instead.
+type dialSetupFunc func(net.Conn, connFlag, *enode.Node, addrman.NetAddr) error
 
 type dialConfig struct {
 	self           enode.ID         // our own ID
@@ -211,6 +216,10 @@ type dialConfig struct {
 	v2Dial      func(addrman.NetAddr) error
 	// reachable gates automatic dials on --onlynet. nil disables.
 	reachable func(addrman.NetID) bool
+	// proxied reports whether dials to a network are routed through a
+	// SOCKS5 proxy, so the conn can be flagged accordingly. nil
+	// disables (no proxy configured).
+	proxied func(addrman.NetID) bool
 
 	// maxBlockRelay is the count of block-relay-only outbound slots
 	// reserved within maxDialPeers. Bitcoin Core defaults to 2
@@ -992,7 +1001,20 @@ func (t *dialTask) dial(d *dialScheduler, dest *enode.Node) error {
 		return &dialError{err}
 	}
 	mfd := newMeteredConn(fd, false, &net.TCPAddr{IP: dest.IP(), Port: dest.TCP()})
-	return d.setupFunc(mfd, t.flags, dest)
+	// Legacy dials run through the same proxy-aware connector as v2
+	// ones, so they must carry the same identity: the dial target and,
+	// when routed through a proxy, the proxied flag. Without them a
+	// proxied v1 peer is identified by the proxy's address — every
+	// such peer looks like the same endpoint to the dedup, netgroup
+	// and addrman paths.
+	flags := t.flags
+	target, ok := netAddrFromTCP(&net.TCPAddr{IP: dest.IP(), Port: dest.TCP()})
+	if !ok {
+		target = addrman.NetAddr{}
+	} else if d.proxied != nil && d.proxied(target.Network) {
+		flags |= proxiedConn
+	}
+	return d.setupFunc(mfd, flags, dest, target)
 }
 
 func (t *dialTask) String() string {

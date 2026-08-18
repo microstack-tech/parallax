@@ -247,6 +247,17 @@ func (p *netPolicy) clearnetReachable() bool {
 	return p.isReachable(addrman.NetIPv4) || p.isReachable(addrman.NetIPv6)
 }
 
+// clearnetHidden reports whether the node must keep its clearnet
+// identity off the wire: either no clearnet network is reachable, or
+// every outbound connection is proxied. Both postures forbid the
+// subsystems that would expose the real IP regardless of the proxy —
+// the discv4 UDP socket (Tor carries no UDP, so probing it links the
+// node's onion presence to its address), enrtree resolution over the
+// system resolver, and UPnP/NAT-PMP announcements on the LAN.
+func (p *netPolicy) clearnetHidden() bool {
+	return !p.clearnetReachable() || p.proxied()
+}
+
 // proxied reports whether any outbound route goes through a proxy.
 func (p *netPolicy) proxied() bool {
 	return p != nil && len(p.proxies) > 0

@@ -180,6 +180,12 @@ func (srv *Server) NetworkReachable(net addrman.NetID) bool {
 	return pol.isReachable(net)
 }
 
+// networkProxied reports whether outbound dials to net are routed
+// through a SOCKS5 proxy.
+func (srv *Server) networkProxied(net addrman.NetID) bool {
+	return srv.policy().proxyFor(net) != nil
+}
+
 // dialConnector returns the Server's connector, falling back to a
 // direct-dial connector for servers that never ran Start (tests).
 func (srv *Server) dialConnector() Connector {

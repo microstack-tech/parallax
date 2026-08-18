@@ -547,13 +547,12 @@ type conn struct {
 	caps  []Cap      // valid after the protocol handshake
 	name  string     // valid after the protocol handshake
 
-	// dialedTarget is the address an outbound v2 dial was aimed at
-	// (nil for inbound and legacy dials). Group-diversity accounting,
-	// addrman feedback and dedup prefer it over fd.RemoteAddr, which
-	// for proxied conns is the SOCKS5 proxy rather than the peer.
-	// Atomic because the nonce dedup can transplant a dropped
-	// outbound leg's target onto its surviving inbound twin while
-	// other goroutines read it. PIP-0007 §4.
+	// dialedTarget is the address an outbound dial was aimed at (nil
+	// for inbound conns). Group-diversity accounting, addrman
+	// feedback, dedup and peer-targeting RPCs prefer it over
+	// fd.RemoteAddr, which for proxied conns is the SOCKS5 proxy
+	// rather than the peer. Atomic because it is written at conn
+	// setup and read from peer, dial and RPC goroutines. PIP-0007.
 	dialedTarget atomic.Pointer[addrman.NetAddr]
 
 	// evicted records that this connection already triggered a
@@ -628,7 +627,7 @@ func (c *conn) dialTarget() addrman.NetAddr {
 	return addrman.NetAddr{}
 }
 
-// setDialTarget records (or transplants) the conn's dial target.
+// setDialTarget records the conn's dial target.
 func (c *conn) setDialTarget(a addrman.NetAddr) {
 	if a.Network != 0 {
 		c.dialedTarget.Store(&a)
@@ -903,8 +902,8 @@ func (srv *Server) Start() (err error) {
 	// Onion-only nodes must not chatter on the LAN: UPnP/NAT-PMP
 	// discovery reveals the node and maps a port no clearnet peer
 	// will ever dial. PIP-0007 §1.4.
-	if !pol.clearnetReachable() && srv.NAT != nil {
-		srv.log.Info("NAT traversal disabled: no clearnet network is reachable")
+	if pol.clearnetHidden() && srv.NAT != nil {
+		srv.log.Info("NAT traversal disabled: clearnet is proxied or unreachable")
 		srv.NAT = nil
 	}
 	// One-line reachability summary so operators can confirm their
@@ -1064,7 +1063,7 @@ func (srv *Server) setupAddrMan() error {
 				srv.proxiedSeedLoop(seedCtx, srv.DNSSeeds, DNSSeedDefaultPort, DNSSeedDefaultInterval)
 			}()
 			srv.log.Info("DNS seeds via proxy addr-fetch (no local resolution)", "hosts", srv.DNSSeeds)
-		case !srv.policy().clearnetReachable():
+		case srv.policy().clearnetHidden():
 			// Onion-only without --proxy: seed hostnames would leak
 			// through the system resolver and their A/AAAA results
 			// are undialable anyway.
@@ -1191,7 +1190,7 @@ func (srv *Server) setupDiscovery() error {
 	// Onion-only nodes skip the enrtree consumers entirely: their
 	// candidates are clearnet IPs resolved over system DNS — both a
 	// leak and useless under the policy. PIP-0007 §1.4.
-	if srv.policy().clearnetReachable() {
+	if !srv.policy().clearnetHidden() {
 		added := make(map[string]bool)
 		for _, proto := range srv.Protocols {
 			if proto.DialCandidates != nil && !added[proto.Name] {
@@ -1206,7 +1205,7 @@ func (srv *Server) setupDiscovery() error {
 	} else {
 		for _, proto := range srv.Protocols {
 			if proto.DialCandidates != nil {
-				srv.log.Info("enrtree discovery disabled: no clearnet network is reachable")
+				srv.log.Info("enrtree discovery disabled: clearnet is proxied or unreachable")
 				break
 			}
 		}
@@ -1216,7 +1215,7 @@ func (srv *Server) setupDiscovery() error {
 	// node opens no UDP socket at all, regardless of
 	// --legacy-discovery: Tor carries no UDP, and answering discv4
 	// probes on clearnet would deanonymize the node. PIP-0007 §1.4.
-	if srv.NoDiscovery || !srv.policy().clearnetReachable() {
+	if srv.NoDiscovery || srv.policy().clearnetHidden() {
 		return nil
 	}
 
@@ -1309,6 +1308,7 @@ func (srv *Server) setupDialScheduler() {
 		v2Predicate:    hasV2TransportENR,
 		v2Dial:         srv.DialV2,
 		reachable:      srv.NetworkReachable,
+		proxied:        srv.networkProxied,
 		maxBlockRelay:  srv.maxBlockRelayDial(),
 	}
 	if srv.BanList != nil {
@@ -1358,7 +1358,7 @@ func (srv *Server) setupDialScheduler() {
 			go srv.runAddrFetch()
 		}
 	}
-	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
+	srv.dialsched = newDialScheduler(config, srv.discmix, srv.setupConnTarget)
 	for _, n := range srv.StaticNodes {
 		srv.dialsched.addStatic(n)
 	}
@@ -1636,8 +1636,7 @@ func (srv *Server) dialV2WithFlags(addr addrman.NetAddr, extra connFlag) (net.Co
 	// Duplicate suppression, two complementary matchers: the listen
 	// addr comparison (IP targets only — onion peers expose no listen
 	// addr) and the dial-target comparison, which covers every
-	// network and also matches targets transplanted onto an inbound
-	// twin by the nonce dedup. Either match refreshes LastTry without
+	// network. Either match refreshes LastTry without
 	// counting a failure: addrman's Select chance weighting drops
 	// ~100x for 10 min once LastTry is recent, so the iterator stops
 	// burning cycles re-picking an endpoint we already peer with.
@@ -2066,11 +2065,9 @@ func (srv *Server) PeerListenAddr(p *Peer) (*net.TCPAddr, bool) {
 }
 
 // connectedToDialTarget reports whether any live peer's recorded dial
-// target equals addr. The dedup that works for onion targets: an
-// inbound onion peer exposes no listen addr, but if it is a known
-// twin of a dropped outbound leg it carries that leg's adopted target
-// (PIP-0007 nonce dedup). Feelers are excluded — a probe must not
-// suppress real dials.
+// target equals addr. This is the dedup that works on every network,
+// including onion targets, which expose no listen address to compare.
+// Feelers are excluded — a probe must not suppress real dials.
 func (srv *Server) connectedToDialTarget(addr addrman.NetAddr) bool {
 	found := false
 	srv.doPeerOp(func(peers map[enode.ID]*Peer) {

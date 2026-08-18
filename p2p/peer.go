@@ -490,6 +490,15 @@ func (p *Peer) OnionPeer() bool {
 	return p.rw.is(onionConn)
 }
 
+// DialTarget returns the address this outbound session was dialed at,
+// and ok=false for inbound sessions or legacy dials that recorded
+// none. It is the peer's real address even when the connection runs
+// through a proxy, whose endpoint RemoteAddr would report instead.
+func (p *Peer) DialTarget() (addrman.NetAddr, bool) {
+	t := p.rw.dialTarget()
+	return t, t.Network != 0
+}
+
 // ProxiedConn reports whether the connection was dialed through a
 // SOCKS5 proxy. RemoteAddr is then the proxy, not the peer — address
 // logic must not treat it as an observation of the peer.
@@ -874,8 +883,7 @@ type PeerInfo struct {
 		// outbound dial target ("ip:port" or "host.onion:port"),
 		// meaningful when the socket's RemoteAddress is only a SOCKS5
 		// proxy. Empty for inbound proxied/onion peers, which are
-		// anonymous by design, unless the nonce dedup bound them to a
-		// dropped outbound twin. Core's getpeerinfo "addr" analog.
+		// anonymous by design. Core's getpeerinfo "addr" analog.
 		Address string `json:"address,omitempty"`
 		// Network classifies the peer's transport: "ipv4", "ipv6" or
 		// "onion". Core's getpeerinfo "network" field.

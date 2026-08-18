@@ -381,7 +381,7 @@ func TestDialSchedBlockRelayBucketFills(t *testing.T) {
 	config.rand = rand.New(rand.NewSource(0x1111))
 
 	var dialsched *dialScheduler
-	setup := func(fd net.Conn, f connFlag, node *enode.Node) error {
+	setup := func(fd net.Conn, f connFlag, node *enode.Node, _ addrman.NetAddr) error {
 		c := &conn{flags: f, node: node}
 		dialsched.peerAdded(c)
 		setupCh <- c
@@ -664,7 +664,7 @@ func TestDialSchedV2HandoffAccounting(t *testing.T) {
 		},
 	}
 	it := newDialTestIterator()
-	d := newDialScheduler(config, it, func(net.Conn, connFlag, *enode.Node) error { return nil })
+	d := newDialScheduler(config, it, func(net.Conn, connFlag, *enode.Node, addrman.NetAddr) error { return nil })
 	defer d.stop()
 	// Unblock any still-parked v2Dial before stop() drains the task
 	// (a closed channel yields a nil error). Registered after stop's
@@ -897,7 +897,7 @@ func runDialTest(t *testing.T, config dialConfig, rounds []dialTestRound) {
 	// Set up the dialer. The setup function below runs on the dialTask
 	// goroutine and adds the peer.
 	var dialsched *dialScheduler
-	setup := func(fd net.Conn, f connFlag, node *enode.Node) error {
+	setup := func(fd net.Conn, f connFlag, node *enode.Node, _ addrman.NetAddr) error {
 		conn := &conn{flags: f, node: node}
 		dialsched.peerAdded(conn)
 		setupCh <- conn

@@ -219,10 +219,13 @@ func (b *AddrmanBackend) Log() logging.Logger { return b.log }
 // pipes, tunneled transports) — the handler sends an all-zero YourAddr
 // in that case and the peer ignores it during quorum.
 func (b *AddrmanBackend) ObserveTheirSource(peer *p2p.Peer) (uint8, []byte, uint16, bool) {
-	// A proxied conn's RemoteAddr is the proxy, not the peer — a
-	// YourAddr built from it would tell the peer "you are my SOCKS5
-	// endpoint". Send the all-zero YourAddr instead (PIP-0007).
-	if peer.ProxiedConn() {
+	// A proxied conn's RemoteAddr is the proxy and an inbound onion
+	// stream's is the local Tor daemon — a YourAddr built from either
+	// would tell the peer "you are my SOCKS5 endpoint" or "you are
+	// 127.0.0.1", which a peer without the same guard would feed into
+	// its own self-address quorum. Send the all-zero YourAddr instead
+	// (PIP-0007), exactly as HandleYourAddr refuses their reports.
+	if peer.ProxiedConn() || peer.OnionPeer() {
 		return 0, nil, 0, false
 	}
 	ra := peer.RemoteAddr()
@@ -849,6 +852,22 @@ func peerKeyFor(peer *p2p.Peer) PeerKey {
 // their RemoteAddr. Used by the quorum to tag reports with the
 // reporter's network group.
 func peerNetworkGroup(peer *p2p.Peer) (uint8, []byte, bool) {
+	// The dial target outranks the socket address: under a proxy
+	// RemoteAddr is the proxy and for an inbound onion peer it is the
+	// local Tor daemon, so every such peer would share one source
+	// group and their gossip would collapse into the same few addrman
+	// new-table buckets — losing exactly the source diversity the
+	// bucketing exists for.
+	if t, ok := peer.DialTarget(); ok {
+		switch t.Network {
+		case addrman.NetIPv4:
+			return NetIPv4, append([]byte(nil), t.Bytes()...), true
+		case addrman.NetIPv6:
+			return NetIPv6, append([]byte(nil), t.Bytes()...), true
+		case addrman.NetTorV3:
+			return NetTorV3, append([]byte(nil), t.Bytes()...), true
+		}
+	}
 	ra := peer.RemoteAddr()
 	if ra == nil {
 		return 0, nil, false
@@ -871,6 +890,12 @@ func peerNetworkGroup(peer *p2p.Peer) (uint8, []byte, bool) {
 // Kept local so this package doesn't import addrman's internal helper.
 func computeGroup(net uint8, addr []byte) []byte {
 	switch net {
+	case NetTorV3:
+		// Top 4 bits of the service key — addrman's rule for onion.
+		if len(addr) != 32 {
+			return nil
+		}
+		return []byte{NetTorV3, addr[0] | 0x0F}
 	case NetIPv4:
 		if len(addr) != 4 {
 			return nil

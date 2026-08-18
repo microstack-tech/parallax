@@ -126,9 +126,8 @@ func (srv *Server) runOneFeeler() {
 		return
 	}
 	// Skip candidates a live peer already represents — by listen addr
-	// (IP targets) or by dial target (any network, including targets
-	// adopted through the nonce dedup). Core's feeler also aborts on
-	// AlreadyConnectedToAddress.
+	// (IP targets) or by dial target (any network). Core's feeler
+	// also aborts on AlreadyConnectedToAddress.
 	if tcp := tcpFromNetAddr(addr); tcp != nil && srv.alreadyConnectedTo(tcp) {
 		// Refresh LastTry without counting a failure: we already
 		// peer with this endpoint.

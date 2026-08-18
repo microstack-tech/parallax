@@ -998,15 +998,21 @@ func setProxy(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.GlobalIsSet(OnlyNetFlag.Name) {
 		cfg.OnlyNet = SplitAndTrim(ctx.GlobalString(OnlyNetFlag.Name))
 	}
-	// BoolTFlag: default true; GlobalBool returns false only when the
-	// operator passed --proxyrandomize=false.
-	cfg.ProxyNoRandomize = !ctx.GlobalBool(ProxyRandomizeFlag.Name)
+	// Guarded like every other setter here so a value from a config
+	// file survives when the flag is absent. BoolTFlag defaults true,
+	// so GlobalBool is false only when --proxyrandomize=false was
+	// passed explicitly.
+	if ctx.GlobalIsSet(ProxyRandomizeFlag.Name) {
+		cfg.ProxyNoRandomize = !ctx.GlobalBool(ProxyRandomizeFlag.Name)
+	}
 
 	// Onion service (PIP-0007 §3). Core's -listenonion defaults on:
 	// the controller idles on reconnect backoff until a Tor control
 	// port answers, so nodes without Tor pay only a periodic local
 	// connect attempt.
-	cfg.ListenOnion = ctx.GlobalBool(ListenOnionFlag.Name)
+	if ctx.GlobalIsSet(ListenOnionFlag.Name) {
+		cfg.ListenOnion = ctx.GlobalBool(ListenOnionFlag.Name)
+	}
 	if ctx.GlobalIsSet(TorControlFlag.Name) {
 		cfg.TorControlAddr = ctx.GlobalString(TorControlFlag.Name)
 	}
