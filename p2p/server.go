@@ -870,6 +870,14 @@ func (srv *Server) Start() (err error) {
 		srv.log.Info("NAT traversal disabled: no clearnet network is reachable")
 		srv.NAT = nil
 	}
+	// One-line reachability summary so operators can confirm their
+	// proxy flags resolved as intended (PIP-0007 §4).
+	srv.log.Info("network reachability",
+		"ipv4", pol.isReachable(addrman.NetIPv4),
+		"ipv6", pol.isReachable(addrman.NetIPv6),
+		"onion", pol.isReachable(addrman.NetTorV3),
+		"proxied", pol.proxied(),
+		"listenonion", srv.ListenOnion && srv.ListenAddr != "")
 	srv.quit = make(chan struct{})
 	srv.quitCtx, srv.quitCancel = context.WithCancel(context.Background())
 	srv.delpeer = make(chan peerDrop)
@@ -3453,6 +3461,21 @@ type NodeInfo struct {
 	} `json:"ports"`
 	ListenAddr string         `json:"listenAddr"`
 	Protocols  map[string]any `json:"protocols"`
+
+	// Networks is the per-network reachability/proxy table — Core's
+	// getnetworkinfo "networks" array (PIP-0007 §4).
+	Networks []NetworkInfo `json:"networks"`
+	// Onion is this node's established onion service ("host:port"),
+	// empty while none is active.
+	Onion string `json:"onion,omitempty"`
+}
+
+// NetworkInfo is one row of NodeInfo.Networks.
+type NetworkInfo struct {
+	Name           string `json:"name"`
+	Reachable      bool   `json:"reachable"`
+	Proxy          string `json:"proxy,omitempty"`
+	ProxyRandomize bool   `json:"proxy_randomize_credentials"`
 }
 
 // NodeInfo gathers and returns a collection of metadata known about the host.
@@ -3488,6 +3511,25 @@ func (srv *Server) NodeInfo() *NodeInfo {
 			}
 			info.Protocols[proto.Name] = nodeInfo
 		}
+	}
+
+	// Per-network reachability and proxy routing (PIP-0007 §4).
+	// Row names follow Core's getnetworkinfo ("onion", not the
+	// wire-format label).
+	for _, n := range []addrman.NetID{addrman.NetIPv4, addrman.NetIPv6, addrman.NetTorV3} {
+		name := n.String()
+		if n == addrman.NetTorV3 {
+			name = "onion"
+		}
+		row := NetworkInfo{Name: name, Reachable: srv.NetworkReachable(n)}
+		if pr := srv.netpol.proxyFor(n); pr != nil {
+			row.Proxy = pr.Addr
+			row.ProxyRandomize = pr.Isolation != nil
+		}
+		info.Networks = append(info.Networks, row)
+	}
+	if onion, ok := srv.OnionService(); ok {
+		info.Onion = onion.String()
 	}
 	return info
 }

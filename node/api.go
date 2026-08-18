@@ -558,31 +558,11 @@ func parseAddrbookAddress(s string) (addrman.Entry, error) {
 			LastSeen: time.Now(),
 		}, nil
 	}
-	// Plain ip:port form.
-	host, portStr, err := net.SplitHostPort(s)
+	// Plain ip:port / onion:port form (PIP-0007: onion entries pin
+	// like any other manual peer; dialing them needs a Tor route).
+	naddr, err := parseV2Target(s)
 	if err != nil {
 		return addrman.Entry{}, fmt.Errorf("invalid address %q: %w", s, err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return addrman.Entry{}, fmt.Errorf("invalid ip %q", host)
-	}
-	port, err := parsePort(portStr)
-	if err != nil {
-		return addrman.Entry{}, err
-	}
-	var netID addrman.NetID
-	var addrBytes []byte
-	if v4 := ip.To4(); v4 != nil {
-		netID = addrman.NetIPv4
-		addrBytes = v4
-	} else {
-		netID = addrman.NetIPv6
-		addrBytes = ip
-	}
-	naddr, err := addrman.NewNetAddr(netID, addrBytes, port)
-	if err != nil {
-		return addrman.Entry{}, err
 	}
 	return addrman.Entry{Addr: naddr, KeyType: 0x00, LastSeen: time.Now()}, nil
 }

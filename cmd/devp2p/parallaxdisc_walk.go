@@ -228,6 +228,11 @@ type walker struct {
 	passOK     int64
 	passFail   int64
 	passNew    int64
+	// passNonIP counts gossiped Tor/I2P/CJDNS entries the crawler
+	// cannot probe. Counted, not silently dropped, so a crawl report
+	// never reads as full coverage of a network it didn't visit
+	// (PIP-0007 §4).
+	passNonIP int64
 
 	parallelism     int
 	saveInterval    time.Duration
@@ -254,6 +259,7 @@ func (w *walker) logPassSummary() {
 		"ok", atomic.LoadInt64(&w.passOK),
 		"failed", atomic.LoadInt64(&w.passFail),
 		"new", atomic.LoadInt64(&w.passNew),
+		"nonIPSeen", atomic.LoadInt64(&w.passNonIP),
 		"nodes", total,
 		"good", good,
 		"elapsed", time.Since(w.passStart).Round(time.Second))
@@ -374,6 +380,7 @@ func (w *walker) requeueAll(ctx context.Context) {
 	atomic.StoreInt64(&w.passOK, 0)
 	atomic.StoreInt64(&w.passFail, 0)
 	atomic.StoreInt64(&w.passNew, 0)
+	atomic.StoreInt64(&w.passNonIP, 0)
 	w.stMu.Lock()
 	nodes := make([]*CrawlNode, 0, len(w.state.Nodes))
 	for _, n := range w.state.Nodes {
@@ -494,6 +501,10 @@ func (w *walker) probeAndUpdate(ctx context.Context, n *CrawlNode) {
 	for _, e := range peers {
 		cn, ok := peerEntryToCrawlNode(e)
 		if !ok {
+			switch e.NetworkID {
+			case disc.NetTorV3, disc.NetI2P, disc.NetCJDNS:
+				atomic.AddInt64(&w.passNonIP, 1)
+			}
 			skipped++
 			continue
 		}
