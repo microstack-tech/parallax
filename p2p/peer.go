@@ -893,9 +893,19 @@ type PeerInfo struct {
 	Network struct {
 		LocalAddress  string `json:"localAddress"`  // Local endpoint of the TCP data connection
 		RemoteAddress string `json:"remoteAddress"` // Remote endpoint of the TCP data connection
-		Inbound       bool   `json:"inbound"`
-		Trusted       bool   `json:"trusted"`
-		Static        bool   `json:"static"`
+		// Address is the peer's logical address when known — the
+		// outbound dial target ("ip:port" or "host.onion:port"),
+		// meaningful when the socket's RemoteAddress is only a SOCKS5
+		// proxy. Empty for inbound proxied/onion peers, which are
+		// anonymous by design, unless the nonce dedup bound them to a
+		// dropped outbound twin. Core's getpeerinfo "addr" analog.
+		Address string `json:"address,omitempty"`
+		// Network classifies the peer's transport: "ipv4", "ipv6" or
+		// "onion". Core's getpeerinfo "network" field.
+		Network string `json:"network"`
+		Inbound bool   `json:"inbound"`
+		Trusted bool   `json:"trusted"`
+		Static  bool   `json:"static"`
 	} `json:"network"`
 	Protocols map[string]any `json:"protocols"` // Sub-protocol specific metadata fields
 }
@@ -932,6 +942,18 @@ func (p *Peer) Info() *PeerInfo {
 	info.Network.Inbound = p.rw.is(inboundConn)
 	info.Network.Trusted = p.rw.is(trustedConn)
 	info.Network.Static = p.rw.is(staticDialedConn)
+	if t := p.rw.dialTarget(); t.Network != 0 {
+		info.Network.Address = t.String()
+	}
+	switch {
+	case p.rw.is(onionConn):
+		info.Network.Network = "onion"
+	default:
+		info.Network.Network = "ipv4"
+		if ra, ok := p.RemoteAddr().(*net.TCPAddr); ok && ra.IP.To4() == nil {
+			info.Network.Network = "ipv6"
+		}
+	}
 
 	// Gather all the running protocol infos
 	for _, proto := range p.running {
