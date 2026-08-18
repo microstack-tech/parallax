@@ -249,13 +249,25 @@ func (p *netPolicy) clearnetReachable() bool {
 
 // clearnetHidden reports whether the node must keep its clearnet
 // identity off the wire: either no clearnet network is reachable, or
-// every outbound connection is proxied. Both postures forbid the
+// clearnet traffic itself is proxied. Both postures forbid the
 // subsystems that would expose the real IP regardless of the proxy —
 // the discv4 UDP socket (Tor carries no UDP, so probing it links the
 // node's onion presence to its address), enrtree resolution over the
 // system resolver, and UPnP/NAT-PMP announcements on the LAN.
+//
+// The test is specifically whether the CLEARNET networks are routed
+// through a proxy, not whether any proxy exists: --onion installs a
+// route for onion targets alone, and a dual-stack node using Tor only
+// to reach .onion peers must keep its ordinary clearnet discovery —
+// DNS seeds, enrtree, discv4, NAT traversal — fully intact.
 func (p *netPolicy) clearnetHidden() bool {
-	return !p.clearnetReachable() || p.proxied()
+	if p == nil {
+		return false
+	}
+	if !p.clearnetReachable() {
+		return true
+	}
+	return p.proxies[addrman.NetIPv4] != nil || p.proxies[addrman.NetIPv6] != nil
 }
 
 // proxied reports whether any outbound route goes through a proxy.

@@ -219,3 +219,35 @@ func TestNetPolicyNilReceiver(t *testing.T) {
 		t.Error("nil policy must report nothing reachable and no proxies")
 	}
 }
+
+// TestNetPolicyClearnetHidden — the suppression of clearnet-exposing
+// subsystems (discv4 UDP, enrtree, NAT traversal, local DNS seeding)
+// keys on clearnet itself being proxied or unreachable. Regression:
+// testing "any proxy exists" made --onion — documented as a route for
+// .onion targets only — silently disable all of them on an otherwise
+// ordinary dual-stack node.
+func TestNetPolicyClearnetHidden(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"default", Config{}, false},
+		{"onion proxy only", Config{OnionProxyAddr: "127.0.0.1:9050"}, false},
+		{"listenonion only", Config{ListenOnion: true, ListenAddr: ":32110"}, false},
+		{"proxy routes clearnet", Config{ProxyAddr: "127.0.0.1:9050"}, true},
+		{"onion-only posture", Config{OnlyNet: []string{"onion"}, OnionProxyAddr: "127.0.0.1:9050"}, true},
+		{"proxy plus onion override", Config{ProxyAddr: "127.0.0.1:9050", OnionProxyAddr: "127.0.0.1:9150"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := newNetPolicy(&tc.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.clearnetHidden(); got != tc.want {
+				t.Fatalf("clearnetHidden = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

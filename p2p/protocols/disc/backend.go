@@ -388,10 +388,8 @@ func (b *AddrmanBackend) HandlePeers(peer *p2p.Peer, entries []PeerEntry) []Peer
 		// come back to us via gossip; without this filter we'd
 		// write a self-loop into addrman that survives across
 		// restarts via addrbook.rlp.
-		if b.isSelf != nil {
-			if tcp, ok := selfTCPFromEntry(e); ok && b.isSelf(tcp) {
-				continue
-			}
+		if b.isSelfEntry(e) {
+			continue
 		}
 		// Sanitize LastSeen the way Bitcoin ingests addr timestamps
 		// (net_processing.cpp ADDR handling): an ancient sentinel
@@ -605,6 +603,29 @@ func (b *AddrmanBackend) SelfEntries(peer *p2p.Peer, listenPort uint16) []PeerEn
 		out = append(out, onion)
 	}
 	return out
+}
+
+// isSelfEntry reports whether a gossiped entry names this node's own
+// advertised endpoint, on any network. Without the onion arm our own
+// onion address — which we advertise on every outbound clearnet
+// session — comes back through gossip, passes the reachability gate
+// on any Tor-routed node and is stored in our own addrbook, a
+// self-loop that survives restarts in addrbook.rlp and burns
+// candidate-iteration budget until the dial guard rejects it.
+func (b *AddrmanBackend) isSelfEntry(e PeerEntry) bool {
+	if e.NetworkID == NetTorV3 {
+		b.onionSelfMu.Lock()
+		self, ok := b.onionSelf, b.onionSelfSet
+		b.onionSelfMu.Unlock()
+		// Port-insensitive, like the dial-side onion self check: our
+		// service answers on whatever port a peer gossips for it.
+		return ok && len(e.Addr) == 32 && string(e.Addr) == string(self.Bytes())
+	}
+	if b.isSelf == nil {
+		return false
+	}
+	tcp, ok := selfTCPFromEntry(e)
+	return ok && b.isSelf(tcp)
 }
 
 // ingestBucketFor returns (creating if needed) the per-peer token

@@ -19,6 +19,7 @@ package disc
 import (
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/ParallaxProtocol/parallax/p2p"
 	"github.com/ParallaxProtocol/parallax/p2p/addrman"
@@ -151,5 +152,49 @@ func TestObserveTheirSourceProxied(t *testing.T) {
 	proxied.MarkProxiedForTest()
 	if _, _, _, ok := b.ObserveTheirSource(proxied); ok {
 		t.Fatal("proxied peer must not be observable — RemoteAddr is the proxy")
+	}
+}
+
+// TestOwnOnionAddressNotStored — our own onion address is advertised
+// on outbound clearnet sessions, so it propagates and returns through
+// gossip. Regression: the self-filter projected entries onto
+// *net.TCPAddr, which onion entries have none of, so the node stored
+// its own onion address in its own addrbook — a self-loop that
+// survived restarts via addrbook.rlp.
+func TestOwnOnionAddressNotStored(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	b.SetReachableFunc(func(n addrman.NetID) bool {
+		return n == addrman.NetIPv4 || n == addrman.NetTorV3
+	})
+	self := testOnionAddr(t)
+	b.SetOnionService(self)
+
+	other, err := addrman.ParseOnion("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion", 32110)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := testPeerOnPipe(t)
+	fresh := uint64(time.Now().Unix())
+	b.ingestBucketFor(peer).Credit(10)
+	b.HandlePeers(peer, []PeerEntry{
+		// Our own service, echoed back on a different port than we
+		// advertise — still us.
+		{NetworkID: NetTorV3, Addr: self.Bytes(), TCPPort: 33000, KeyType: KeyTypeNone, LastSeen: fresh},
+		{NetworkID: NetTorV3, Addr: other.Bytes(), TCPPort: 32110, KeyType: KeyTypeNone, LastSeen: fresh},
+	})
+
+	selfEchoed, err := addrman.NewNetAddr(addrman.NetTorV3, self.Bytes(), 33000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info := m.Lookup(selfEchoed); info != nil {
+		t.Fatal("node stored its own onion address from gossip")
+	}
+	if info := m.Lookup(other); info == nil {
+		t.Fatal("a different peer's onion address was dropped")
 	}
 }
