@@ -189,10 +189,14 @@ func (a NetAddr) Valid() bool {
 	return true
 }
 
-// String renders a as "network:ip:port" for logs. Not a canonical encoding.
+// String renders a as "ip:port" / "host.onion:port" for logs and for
+// keying dial-side maps. Not a canonical wire encoding.
 func (a NetAddr) String() string {
 	if ap, ok := a.AddrPort(); ok {
 		return ap.String()
+	}
+	if a.Network == NetTorV3 {
+		return fmt.Sprintf("%s:%d", a.OnionHostname(), a.Port)
 	}
 	return fmt.Sprintf("%s:%x:%d", a.Network, a.Bytes(), a.Port)
 }
