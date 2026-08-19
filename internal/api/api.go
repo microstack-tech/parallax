@@ -1991,11 +1991,29 @@ func (s *PublicNetAPI) PeerCount() hexutil.Uint {
 	return hexutil.Uint(s.net.PeerCount())
 }
 
-// Peers returns the remote addresses (ip:port) of connected peers.
+// Peers returns the addresses of connected peers as "ip:port" or
+// "host.onion:port".
+//
+// The socket's remote address is the wrong answer for any peer reached
+// through a SOCKS5 proxy: it is the local proxy listener, not the peer, so
+// every Tor peer and every proxied clearnet peer reports as loopback. We
+// therefore prefer the logical dial target (PeerInfo.Network.Address) when
+// the node has one, which is where the .onion hostname lives.
+//
+// Inbound onion peers still report loopback, and that is not a gap we can
+// close: Tor does not disclose a client's onion address to the service it
+// connects to, so the node genuinely does not know who they are. Callers
+// counting Tor peers must treat both loopback and the ".onion" suffix as
+// Tor. See PeerInfo.Network.Network for the transport classification, which
+// is authoritative and cheaper to switch on than parsing these strings.
 func (s *PublicNetAPI) Peers() []string {
 	infos := s.net.PeersInfo()
 	addrs := make([]string, len(infos))
 	for i, info := range infos {
+		if info.Network.Address != "" {
+			addrs[i] = info.Network.Address
+			continue
+		}
 		addrs[i] = info.Network.RemoteAddress
 	}
 	return addrs
