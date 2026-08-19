@@ -773,10 +773,31 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 //
 // Note, this function assumes that the `mu` mutex is held!
 func (bc *BlockChain) writeHeadBlock(block *types.Block) {
+	// Markers already ahead of block on the canonical chain are kept: during
+	// the tail of a snap sync the header chain is at the sync target while
+	// full blocks are still executing behind it, and demoting the head header
+	// to each imported block races the downloader's TD-promise check — the
+	// check then sees a head short of the peer's promise, declares the peer
+	// stalling and rolls back 2048 good headers. With a quiet chain head the
+	// retry loses the same race every round, wedging sync one block short.
+	// A marker whose entry is no longer canonical (a reorg in progress) is
+	// stale and must be demoted regardless of its height.
+	blockCanonical := rawdb.ReadCanonicalHash(bc.db, block.NumberU64()) == block.Hash()
+	currentHeader := bc.hc.CurrentHeader()
+	keepHeader := blockCanonical && currentHeader.Number.Uint64() > block.NumberU64() &&
+		rawdb.ReadCanonicalHash(bc.db, currentHeader.Number.Uint64()) == currentHeader.Hash()
+	currentFast := bc.CurrentFastBlock()
+	keepFast := blockCanonical && currentFast.NumberU64() > block.NumberU64() &&
+		rawdb.ReadCanonicalHash(bc.db, currentFast.NumberU64()) == currentFast.Hash()
+
 	// Add the block to the canonical chain number scheme and mark as the head
 	batch := bc.db.NewBatch()
-	rawdb.WriteHeadHeaderHash(batch, block.Hash())
-	rawdb.WriteHeadFastBlockHash(batch, block.Hash())
+	if !keepHeader {
+		rawdb.WriteHeadHeaderHash(batch, block.Hash())
+	}
+	if !keepFast {
+		rawdb.WriteHeadFastBlockHash(batch, block.Hash())
+	}
 	rawdb.WriteCanonicalHash(batch, block.Hash(), block.NumberU64())
 	rawdb.WriteTxLookupEntriesByBlock(batch, block)
 	rawdb.WriteHeadBlockHash(batch, block.Hash())
@@ -786,11 +807,13 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 		logging.Crit("Failed to update chain indexes and markers", "err", err)
 	}
 	// Update all in-memory chain markers in the last step
-	bc.hc.SetCurrentHeader(block.Header())
-
-	bc.currentFastBlock.Store(block)
-	headFastBlockGauge.Update(int64(block.NumberU64()))
-
+	if !keepHeader {
+		bc.hc.SetCurrentHeader(block.Header())
+	}
+	if !keepFast {
+		bc.currentFastBlock.Store(block)
+		headFastBlockGauge.Update(int64(block.NumberU64()))
+	}
 	bc.currentBlock.Store(block)
 	headBlockGauge.Update(int64(block.NumberU64()))
 }

@@ -485,6 +485,57 @@ func testBrokenChain(t *testing.T, full bool) {
 	}
 }
 
+// Tests that importing full blocks behind an already-inserted canonical
+// header chain does not demote the head header / head fast block markers —
+// the snap-sync tail shape, where demotion makes the downloader's TD-promise
+// check see a head short of the peer's promise and roll back good headers.
+func TestWriteHeadBlockKeepsAheadMarkers(t *testing.T) {
+	db, blockchain, err := newCanonical(xhash.NewFaker(), 0, true)
+	if err != nil {
+		t.Fatalf("failed to create pristine chain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	blocks := makeBlockChain(blockchain.CurrentBlock(), 8, xhash.NewFaker(), db, canonicalSeed)
+	headers := make([]*types.Header, len(blocks))
+	for i, block := range blocks {
+		headers[i] = block.Header()
+	}
+	if _, err := blockchain.InsertHeaderChain(headers, 1); err != nil {
+		t.Fatalf("failed to insert header chain: %v", err)
+	}
+	if got := blockchain.CurrentHeader().Number.Uint64(); got != 8 {
+		t.Fatalf("head header = %d, want 8", got)
+	}
+	// Import the first half of the bodies; the header marker must hold at
+	// the header chain head while the block markers trail behind it.
+	if _, err := blockchain.InsertChain(blocks[:4]); err != nil {
+		t.Fatalf("failed to insert chain tail: %v", err)
+	}
+	if got := blockchain.CurrentHeader().Number.Uint64(); got != 8 {
+		t.Errorf("head header demoted to %d during tail import, want 8", got)
+	}
+	if got := blockchain.CurrentBlock().NumberU64(); got != 4 {
+		t.Errorf("head block = %d, want 4", got)
+	}
+	if got := rawdb.ReadHeadHeaderHash(db); got != headers[7].Hash() {
+		t.Errorf("stored head header hash = %x, want %x", got, headers[7].Hash())
+	}
+	// Completing the tail converges every marker on the head.
+	if _, err := blockchain.InsertChain(blocks[4:]); err != nil {
+		t.Fatalf("failed to complete chain tail: %v", err)
+	}
+	if got := blockchain.CurrentHeader().Number.Uint64(); got != 8 {
+		t.Errorf("head header = %d after completion, want 8", got)
+	}
+	if got := blockchain.CurrentBlock().NumberU64(); got != 8 {
+		t.Errorf("head block = %d after completion, want 8", got)
+	}
+	if got := blockchain.CurrentFastBlock().NumberU64(); got != 8 {
+		t.Errorf("head fast block = %d after completion, want 8", got)
+	}
+}
+
 // Tests that reorganising a long difficult chain after a short easy one
 // overwrites the canonical numbers and links in the database.
 func TestReorgLongHeaders(t *testing.T) { testReorgLong(t, false) }
