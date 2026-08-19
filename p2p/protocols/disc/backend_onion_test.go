@@ -60,6 +60,8 @@ func TestSelfEntriesPerNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	// All networks reachable — the default posture without --onlynet.
+	b.SetReachableFunc(func(addrman.NetID) bool { return true })
 	// An operator override stands in for a quorum-confirmed IP.
 	b.Q.SetOverride(NetIPv4, []byte{198, 51, 100, 7}, 32110)
 
@@ -98,6 +100,44 @@ func TestSelfEntriesPerNetwork(t *testing.T) {
 	b.ClearOnionService()
 	if got := b.SelfEntries(clearnetPeer, 32110); len(got) != 1 || got[0].NetworkID != NetIPv4 {
 		t.Fatalf("clearnet after ClearOnionService: %v", got)
+	}
+}
+
+// TestSelfEntriesReachabilityGate — Core's AddLocal refuses addresses
+// on networks --onlynet excluded (net.cpp), so an --onlynet=ipv4 node
+// with a live onion service never advertises it, and an --onlynet=onion
+// node never advertises its IP claim.
+func TestSelfEntriesReachabilityGate(t *testing.T) {
+	m, err := addrman.New(addrman.Deterministic(20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewAddrmanBackend(m, nil, nil, nil, nil)
+	b.Q.SetOverride(NetIPv4, []byte{198, 51, 100, 7}, 32110)
+	b.SetOnionService(testOnionAddr(t))
+
+	clearnetPeer := testPeerOnPipe(t)
+	onionPeer := testPeerOnPipe(t)
+	onionPeer.MarkOnionForTest()
+
+	// --onlynet=ipv4: onion unreachable. The service stays up (inbound
+	// is unaffected) but must not be gossiped anywhere.
+	b.SetReachableFunc(func(n addrman.NetID) bool { return n == addrman.NetIPv4 })
+	if got := b.SelfEntries(clearnetPeer, 32110); len(got) != 1 || got[0].NetworkID != NetIPv4 {
+		t.Fatalf("onion unreachable, clearnet peer: %v, want IP claim only", got)
+	}
+	if got := b.SelfEntries(onionPeer, 32110); len(got) != 0 {
+		t.Fatalf("onion unreachable, onion peer: %v, want nothing", got)
+	}
+
+	// --onlynet=onion: IPv4 unreachable. The IP claim is suppressed,
+	// the onion address still propagates.
+	b.SetReachableFunc(func(n addrman.NetID) bool { return n == addrman.NetTorV3 })
+	if got := b.SelfEntries(clearnetPeer, 32110); len(got) != 1 || got[0].NetworkID != NetTorV3 {
+		t.Fatalf("ipv4 unreachable, clearnet peer: %v, want onion only", got)
+	}
+	if got := b.SelfEntries(onionPeer, 32110); len(got) != 1 || got[0].NetworkID != NetTorV3 {
+		t.Fatalf("ipv4 unreachable, onion peer: %v, want onion only", got)
 	}
 }
 

@@ -76,7 +76,9 @@ type AddrmanBackend struct {
 	// reachableFn, when set, decides which BIP155 networks gossiped
 	// entries may be stored for (PIP-0007: reachability is local
 	// configuration — onion becomes storable once the node has an
-	// onion route). nil falls back to IPv4/IPv6-only, the v2.0
+	// onion route) and which networks self-addresses may be
+	// advertised on (Core's AddLocal gate: --onlynet exclusions are
+	// never advertised). nil falls back to IPv4/IPv6-only, the v2.0
 	// behavior. Set once at wiring time, before any peer session
 	// exists; not synchronized.
 	reachableFn func(addrman.NetID) bool
@@ -181,7 +183,9 @@ func (b *AddrmanBackend) SetReachableFunc(f func(addrman.NetID) bool) {
 }
 
 // entryReachable reports whether entries on the given wire network may
-// be stored. Falls back to IPv4/IPv6-only when no predicate is wired.
+// be stored, and whether self-addresses on it may be advertised
+// (Core's AddLocal reachability gate). Falls back to IPv4/IPv6-only
+// when no predicate is wired.
 func (b *AddrmanBackend) entryReachable(wireNet uint8) bool {
 	if b.reachableFn != nil {
 		return b.reachableFn(addrmanNetID(wireNet))
@@ -516,11 +520,13 @@ func (b *AddrmanBackend) SamplePeers(peer *p2p.Peer, max int) []PeerEntry {
 
 // SelfEntry returns the PeerEntry we should advertise to newly-connected
 // outbound peers (Bitcoin's addr(self) + getaddr sequence). Empty if no
-// self-address has quorum or an override. Called by handler.Run on
-// outbound sessions.
+// self-address has quorum or an override, or if --onlynet excludes the
+// winner's network — Core's AddLocal refuses addresses on unreachable
+// networks (net.cpp), so an --onlynet=onion node never advertises its
+// IP. Called by handler.Run on outbound sessions.
 func (b *AddrmanBackend) SelfEntry(listenPort uint16) (PeerEntry, bool) {
 	net, addr, port, ok := b.Q.Winner()
-	if !ok {
+	if !ok || !b.entryReachable(net) {
 		return PeerEntry{}, false
 	}
 	// If the quorum returned a port of 0 (observation without a port
@@ -562,8 +568,15 @@ func (b *AddrmanBackend) ClearOnionService() {
 }
 
 // onionSelfEntry renders the onion service as a PeerEntry, ok=false
-// when no service is established.
+// when no service is established or when --onlynet excludes onion —
+// Core's AddLocal refuses addresses on unreachable networks (net.cpp),
+// so under -onlynet=ipv4 the onion service runs but is never
+// advertised. isSelfEntry stays ungated: copies gossiped before the
+// restriction still name this node and must be dropped at ingest.
 func (b *AddrmanBackend) onionSelfEntry() (PeerEntry, bool) {
+	if !b.entryReachable(NetTorV3) {
+		return PeerEntry{}, false
+	}
 	b.onionSelfMu.Lock()
 	addr, ok := b.onionSelf, b.onionSelfSet
 	b.onionSelfMu.Unlock()
