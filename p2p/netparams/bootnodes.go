@@ -41,9 +41,13 @@ var MainnetBootnodes = []string{}
 // with a failed handshake and — with MainnetBootnodes empty — no
 // other cold-start bootstrap path exists besides the DNS seeds.
 var MainnetBootnodesV2 = []string{
+	// Clearnet
 	"168.231.74.175:32110",
 	"72.61.186.233:32110",
+
+	// The Onion Router - Bootnodes
 	"riowz6s6jhxshbldxf5ht2je6mog5wssz3a47oj5tk3zs722u3hyj2id.onion:32110",
+	"lwvknlvrxx6tr4unrx7lxr6opql7cqrq6aiutolbtljsej4bbdshwyid.onion:32110",
 }
 
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
