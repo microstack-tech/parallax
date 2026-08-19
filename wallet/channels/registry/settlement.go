@@ -15,6 +15,10 @@ import "math/big"
 // than available or drive a payout negative; an over-spent state costs the
 // over-spender's counterparty, which is why the wallet validates balance
 // sufficiency before countersigning (SPEC-003 §8).
+//
+// The contract bounds transferred amounts to uint128 at startClose,
+// challenge, and settlementPreview (SPEC-001 §7.5); callers must apply the
+// same bound before treating this mirror's output as the on-chain outcome.
 func Settlement(depositA, depositB, withdrawnA, withdrawnB, transferredAtoB, transferredBtoA *big.Int) (balA, balB *big.Int) {
 	available := new(big.Int).Add(depositA, depositB)
 	available.Sub(available, withdrawnA)
