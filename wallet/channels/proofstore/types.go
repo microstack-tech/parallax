@@ -110,6 +110,21 @@ type ChannelMeta struct {
 	FrozenUntilBlock uint64       `json:"frozenUntilBlock"` // coop-close freeze; 0 = unfrozen
 	Poisoned         bool         `json:"poisoned"`
 	Towers           []string     `json:"towers,omitempty"` // tower npubs
+
+	// PendingClose is the outstanding cooperative-close negotiation, kept so
+	// a restart can neither forget the freeze nor re-sign different
+	// balances while a signed close is live (Part 1 §7.4, Part 4 R5).
+	PendingClose *PendingCoopClose `json:"pendingClose,omitempty"`
+}
+
+// PendingCoopClose records a signed cooperative close from proposal until
+// on-chain settle or expiry.
+type PendingCoopClose struct {
+	BalanceA    U256   `json:"balanceA"`
+	BalanceB    U256   `json:"balanceB"`
+	ExpiryBlock uint64 `json:"expiryBlock"`
+	MySig       []byte `json:"mySig,omitempty"`
+	PeerSig     []byte `json:"peerSig,omitempty"`
 }
 
 // SignedState is the canonical off-chain state object (Part 2 §5). A state
