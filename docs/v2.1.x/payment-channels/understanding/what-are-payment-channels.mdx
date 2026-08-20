@@ -1,0 +1,73 @@
+---
+title: "What Are Payment Channels?"
+---
+
+Parallax produces a new block roughly every ten minutes. That is a deliberate design choice — it keeps the chain simple, secure, and cheap to verify — but it means an ordinary on-chain payment takes minutes to confirm. That is fine for settling large amounts. It is not fine for buying a coffee.
+
+**Payment channels** solve this. They let two parties exchange an unlimited number of instant, fee-less payments off-chain, while keeping the full security of the Parallax blockchain behind every single one of them. The chain is only involved twice: once to open the channel, and once to close it.
+
+## The bar tab
+
+The easiest way to understand a payment channel is a bar tab.
+
+When you open a tab, you hand the bartender your card. From that moment, ordering a drink doesn't involve the card machine at all — the bartender just adds a line to the tab. Each drink is instant. At the end of the night, the tab is settled in one single card transaction.
+
+A payment channel works the same way, with two important upgrades:
+
+1. **The "card behind the bar" is real money locked in a smart contract.** When Alice opens a channel to Bob's café, she deposits, say, 10 LAX into a contract on the Parallax blockchain. Neither Alice nor Bob can take that money unilaterally — the contract holds it.
+2. **Every line on the tab is signed by both parties.** Each time Alice buys a coffee, she and the café both cryptographically sign an updated tab: *"of the 10 LAX in the channel, 9.5 now belongs to Alice and 0.5 to the café."* Buy another coffee, sign a new tab: 9.0 / 1.0. Each new tab replaces the previous one.
+
+When either side wants to cash out, they show the latest tab to the contract, and it pays each party exactly what the tab says. One blockchain transaction to open, one to close — and in between, thousands of payments that confirm in about a second and cost nothing.
+
+## A worked example
+
+Alice visits Bob's café every morning.
+
+| Event | On the blockchain | In the channel |
+|---|---|---|
+| Monday: Alice opens a channel with 10 LAX | ✅ one transaction | Alice 10.0 — Café 0.0 |
+| Monday: espresso, 0.5 LAX | nothing | Alice 9.5 — Café 0.5 |
+| Tuesday: cappuccino, 0.7 LAX | nothing | Alice 8.8 — Café 1.2 |
+| …three weeks of coffees… | nothing | Alice 2.1 — Café 7.9 |
+| Alice and the café close the channel | ✅ one transaction | contract pays 2.1 to Alice, 7.9 to the café |
+
+Dozens of purchases, two on-chain transactions in total. Every individual coffee purchase was instant, private, and free of network fees — and at every moment, both parties held a signed document proving exactly who owned what.
+
+## What makes it safe?
+
+The obvious question: what stops the café from showing the contract an *old* tab — one from Monday, when it had only earned 0.5 LAX but Alice's balance was still high? Or what stops *Alice* from doing the same in reverse?
+
+Three things:
+
+- **Both signatures are required.** Nobody can invent a tab. The contract only accepts a state that both parties signed, so the worst anyone can do is present a *genuine but outdated* one.
+- **The challenge window.** Closing a channel unilaterally doesn't pay out immediately. It opens a waiting period (about a day, by default) during which the other party — or anyone they've shared the latest tab with — can present a newer signed state. Newer always wins.
+- **Cheating is punished.** If someone tries to close with an old state and gets caught, the contract takes a 20% cut of whatever they tried to over-claim and **destroys it**. Cheating isn't just unprofitable — it costs real money. (The penalty is burned rather than paid to the catcher, which closes off a whole family of subtle traps; the [security page](./staying-safe) explains why.)
+
+The result: as long as somebody — you, your wallet software, or a [watchtower](./staying-safe#watchtowers-protection-while-youre-offline) acting for you — can get one transaction onto the chain within about a day, an out-of-date close attempt can never take your money.
+
+## What channels are (and are not)
+
+Parallax channels are **direct and bidirectional**:
+
+- **Direct** — a channel connects exactly two parties. There is no routing of payments through strangers' channels. This keeps the system simple to reason about: your money is only ever in a contract between you and someone you chose to open a channel with.
+- **Bidirectional** — payments flow both ways in the same channel. The café can refund Alice's coffee through the very same channel, instantly.
+
+They are designed for **repeated payments between parties with a relationship**: a customer and their regular shops, an employer streaming wages, a machine paying another machine per API call, friends splitting expenses over months. For a one-off payment to a stranger, a normal on-chain transaction is the right tool.
+
+Channels also support **top-ups and partial withdrawals while open** — the café can sweep its earnings to cold storage every week without closing the channel, and Alice can add funds when her balance runs low.
+
+## Where do the payments actually travel?
+
+Signed tabs need to move from payer to payee somehow. Parallax channels send them as **end-to-end encrypted messages over Nostr relays** — an open, public network of simple message-forwarding servers that anyone can run. No Parallax-specific server infrastructure exists, so there is nothing to shut down, and the relays never see payment contents — they only carry sealed envelopes.
+
+And when there's no internet at all, two devices can complete a payment by **showing each other three QR codes**. Same signatures, same security, zero connectivity. See [Instant payments, anywhere](./instant-payments-anywhere).
+
+## In one sentence
+
+> A payment channel is a jointly-controlled pot of LAX on the blockchain, plus a running series of mutually signed statements about how to split it — giving you unlimited instant payments with the blockchain as the referee of last resort.
+
+## Read next
+
+- [Staying safe: how channels protect your money](./staying-safe)
+- [Instant payments, anywhere — relays and offline QR](./instant-payments-anywhere)
+- [Getting started with the channel wallet](../guides/getting-started)

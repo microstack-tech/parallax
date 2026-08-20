@@ -1,0 +1,89 @@
+---
+title: "Security Model"
+---
+
+This page states the channel system's trust assumptions and walks the significant attacks with their defenses and honest residuals. It is the public condensation of the threat-model portion of the specification; the full analysis ships with the `parallax-channels` repository.
+
+## Trust assumptions, explicit
+
+1. **L1 honest majority.** No sustained majority-hashrate adversary; three confirmations bury a deposit.
+2. **One transaction in the window.** Each party — or at least one of its watchtowers — can get a single transaction mined within the challenge window (≥36 blocks ≈ 6 h). This is the load-bearing liveness assumption of the entire design.
+3. **Local storage discipline.** The wallet's persist-before-transmit rules hold; disk is the primary record, relays are the safety net.
+4. **Standard cryptography.** secp256k1 ECDSA and Schnorr, Keccak/SHA-256, and the NIP-44 v2 encryption construction.
+
+Notably *not* assumed: honest relays (availability-only couriers), honest watchtowers (they can only enforce the truth), or any operator, upgrade key, or administrator — the registry has none.
+
+## Attack catalog
+
+Format: **attack → defense → residual**.
+
+### Stale-state fraud
+The classic channel attack: close with an old state where your balance was higher.
+**Defense:** anyone-can-challenge with the newer dual-signed state; 20% of the over-claim burned, small fixed refund to the challenger. Fraud is negative-EV unless the close goes unchallenged with probability above ~83% — and with the victim's wallet auto-challenging plus optional towers, realistic unchallenged probability is ~0.
+**Residual:** a victim offline beyond the entire window with no functioning tower can lose up to the discrepancy. Sized by choosing the challenge period and tower count.
+
+### Countersignature withholding
+A recipient keeps the payer's signed state but withholds their countersignature, later "challenging" the payer's inevitable close at the previous state — indistinguishable on-chain from fraud, so the payer eats the penalty.
+**Defense:** layered. The penalty is *burned*, so the trap yields the baiter nothing; the wallet's held-up-channel rule refuses new sends and refuses closing at the old state by default, surfacing the exact exposure; a per-payment cap bounds it ex ante.
+**Residual:** accepted and strictly bounded — 20% of one in-flight payment (plus the payment itself if goods weren't delivered, which is ordinary counterparty risk no payment system removes). Never touches the rest of the channel.
+
+### Relay censorship or failure
+**Defense:** several relays including self-hosted ones; persistent retransmission; the QR path needs zero relays; the enforcement path needs zero relays.
+**Residual:** payments (never funds) stall if literally every relay fails and the parties aren't co-located. Denial of service, not loss.
+
+### Watchtower compromise
+**Defense:** structural. Delegated material fits only the permissionless challenge; force-closing is restricted to channel participants on-chain. A malicious tower's ceiling: do nothing, and know your balances. Multiple towers are free (challenges are idempotent), and the wallet is always its own first watcher.
+**Residual:** privacy of delegated balances; laziness only matters inside the stale-fraud residual above.
+
+### Griefing by honest force-close
+Repeatedly force-closing at the true state to lock the counterparty's capital for the window.
+**Defense:** the closer pays the gas; capital lock ≤ the challenge window is a priced-in property of channels. Wallet policy can refuse reopening with serial offenders.
+**Residual:** ~a day of capital lock per incident at default settings. Accepted.
+
+### Forgery, malleability, replay
+**Defense:** EIP-712 domain binds chain + registry; three distinct type hashes prevent cross-type replay; channel ids are never reused; sequence numbers and withdrawal totals are strictly monotone; low-`s` and fixed signer order leave one valid byte-encoding per signer; dual signatures mean no unilateral state can exist. The Go and Solidity digest implementations are differentially tested byte-for-byte.
+**Residual:** none identified beyond the cryptographic assumptions.
+
+### Paying with a vanishing deposit
+Deposit, pay instantly off-chain, then reorg the deposit away — settlement clamping would push the loss onto the counterparty.
+**Defense:** wallets credit deposits only at 3 confirmations before counting them in any acceptance decision.
+**Residual:** reorgs deeper than 3 blocks — folded into the honest-majority assumption.
+
+### Signing two states at one sequence number
+The one unforgivable client-side act, since ties resolve to the closer's variant on-chain.
+**Defense:** the reference wallet refuses at the storage layer; cancellation is always supersession at a higher sequence number, never re-signing. The narrow, safe exception (adopting the counterparty's variant during a simultaneous-proposal tiebreak, where your own variant can never complete) is explicitly carved out.
+**Residual:** a buggy *third-party* client can burn itself; its honest counterparty risks the delta between variants if the buggy party closes first.
+
+### Dust-level fraud spam
+Cheat by amounts too small for towers to bother with.
+**Defense:** the victim's own wallet challenges unconditionally — the tower dust floor is an economics knob for tower operators, not the defense.
+**Residual:** the victim's challenge gas. Trivial.
+
+### Gas spikes across the challenge window
+**Defense:** the challenger refund is sized at several multiples of normal challenge gas; the transaction manager bumps fees automatically as the deadline approaches and alarms loudly if a challenge is still unmined near it; the ≥36-block minimum gives dozens of attempts.
+**Residual:** a challenger may run net-negative on gas during an extreme spike — and executes anyway, since the principal at stake dwarfs any fee.
+
+### Miner censorship of challenges
+A majority miner suppressing challenge transactions for a full window could let a stale close settle.
+**Defense:** none at this layer — this is inherited L1 risk, identical in shape to Lightning's exposure under Bitcoin miner censorship. Block-denominated windows mean a hashrate *crash* (as opposed to censorship) stretches the window, failing safe. High-value channels should choose longer windows: censorship cost scales linearly with window length.
+**Residual:** bounded by the L1 security budget. Documented, not mitigated.
+
+## Privacy model
+
+- On-chain, `open` and settlement reveal the pair and the *net* result — inherent to any channel design. Individual payment amounts and timing never touch the chain.
+- Relays see sealed envelopes and recipient keys with fuzzed timestamps; payment-timing correlation against a busy merchant's inbox is possible and accepted (self-hosting a relay removes it).
+- The messaging key is derived from the wallet key but unlinkable to the address by observers; merchants opt into publishing the link, payers deliver it privately per-channel.
+- QR codes at a point of sale are readable by bystanders like a paper receipt — a privacy exposure only; a captured code can only enforce the true state.
+
+## The one-table summary
+
+| Residual risk | Bound | Your knob |
+|---|---|---|
+| Offline past the window, no tower, counterparty cheats | up to the discrepancy | challenge period, tower count |
+| Countersignature-withholding grief | 20% of one in-flight payment | per-payment cap |
+| Total storage loss without any relay backup | 20% of the state gap, capped by own balance | one retained-relay backup |
+| Miner censorship of challenges | L1 security budget | longer windows for high value |
+| All relays down and not co-located | payments pause; no fund risk | relay diversity, QR |
+| Tower knowledge of balances | privacy only | run your own |
+
+Nothing in the table is unbounded, and only the first row — the classic channel risk, shared by every channel construction — can exceed a fraction of a single payment.

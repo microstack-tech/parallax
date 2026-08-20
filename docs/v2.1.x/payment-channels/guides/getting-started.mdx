@@ -1,0 +1,160 @@
+---
+title: "Getting Started with Channels"
+---
+
+This guide walks you through opening a payment channel, sending and receiving payments, and closing it — using the `parallax-wallet` command line against a running Parallax node.
+
+## Prerequisites
+
+- A synced Parallax node with the RPC enabled (`parallaxd --http --ws`).
+- The `parallax-wallet` binary (built alongside the node: `go build ./cmd/parallax-wallet`).
+- A funded keyfile. Create one with `parallax-wallet generate mykey.json` and send some LAX to its address.
+
+## 1. Write a configuration file
+
+Channel commands read a small TOML config. A minimal `channels.toml`:
+
+```toml
+[node]
+rpc = "ws://127.0.0.1:8546"     # your node's websocket endpoint
+confirmations = 3                # deposits credit after 3 blocks (~30 min)
+
+[registries]
+  [[registries.v1]]
+  address = "0x…"                # the channel registry contract address
+  chain_id = 2110
+
+[nostr]
+relays = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://your-own-relay.example", # at least one you trust for retention
+]
+
+[channels]
+default_challenge_period = 144   # ~24h at 10-minute blocks
+
+[backup]
+enabled = true
+```
+
+Three to five relays is the sweet spot — at least one large public relay for reach, at least one paid or self-hosted relay so your encrypted backups stay retained.
+
+Every channel command below takes the same three flags; we'll abbreviate them as `$FLAGS`:
+
+```bash
+FLAGS="--config channels.toml --channeldata ~/.parallax-channels --passwordfile pw.txt"
+```
+
+## 2. Find your channel identity
+
+```bash
+parallax-wallet nostr whoami $FLAGS mykey.json
+```
+
+```
+address: 0x53Df…9FD1
+npub:    31e1049b496de932997ae0bedc5ab5f474325863e9db91c89bff997fcf0509df
+```
+
+The `npub` is your messaging identity, derived deterministically from your wallet key — recovering your seed recovers it too. Share it with people who will open channels *to* you. Merchants usually also publish the link between their address and npub so customers can discover them:
+
+```bash
+parallax-wallet nostr link-publish $FLAGS mykey.json
+```
+
+## 3. Open a channel
+
+You need the counterparty's Parallax address and npub (from their published link, their payment URI, or just ask them):
+
+```bash
+parallax-wallet channel open $FLAGS \
+  --npub <their-npub> \
+  --deposit 10000000000000000000 \   # 10 LAX, in wei
+  --period 144 \
+  mykey.json 0xTheirAddress
+```
+
+This sends one on-chain transaction locking your 10 LAX into the registry contract, then sends the counterparty an encrypted handshake over the relays. Their wallet verifies the channel on-chain — that they really are the other participant, and that your chosen challenge period is within their policy — before treating it as usable.
+
+The deposit is **yours** until you spend it. Opening a channel to someone does not require them to deposit anything; they can top up their side later with `channel deposit` if they want to send payments back.
+
+<Note>
+Amounts on the CLI are in **wei** (1 LAX = 10¹⁸ wei). The challenge period is in **blocks** (144 ≈ 24 hours). Longer periods give you more time to catch a cheating close; shorter periods release funds faster on unilateral closes.
+</Note>
+
+## 4. Pay
+
+By channel id and amount:
+
+```bash
+parallax-wallet channel pay $FLAGS mykey.json 1 500000000000000000   # 0.5 LAX on channel 1
+```
+
+Or by scanning/pasting a merchant's payment URI, which carries the amount and invoice for you:
+
+```bash
+parallax-wallet channel pay $FLAGS --uri "parallax:0xMerchant…?amount=500000000000000000&inv=…" mykey.json
+```
+
+```
+payment complete at seq 3
+```
+
+"Complete" means your wallet holds the counterparty's countersignature — the cryptographic receipt. If the recipient is offline, the command times out but the payment offer keeps retransmitting from a persistent queue; it completes whenever they return, and the command tells you the exact worst-case exposure in the meantime.
+
+The receiving side must be running to countersign — either the interactive daemon:
+
+```bash
+parallax-wallet channel daemon $FLAGS mykey.json
+```
+
+or the [merchant daemon](./merchants) for automated acceptance.
+
+## 5. Check your channels
+
+```bash
+parallax-wallet channel list $FLAGS mykey.json
+```
+
+```
+channel 1  0x1653…c6F  role A  status open  seq 3  balA 8500000000000000000  balB 1500000000000000000  peer 0xA2B5…6060
+```
+
+`balA`/`balB` are the current enforceable balances: deposits, minus withdrawals, adjusted by everything paid in each direction. Flags like `POISONED` (a payment awaiting the counterparty's signature) or `FROZEN` (a close in progress) appear here when relevant.
+
+## 6. Top up or withdraw without closing
+
+```bash
+# add 2 LAX to your side
+parallax-wallet channel deposit $FLAGS mykey.json 1 2000000000000000000
+
+# pull 3 LAX of your balance out, with the counterparty's cooperation
+parallax-wallet channel withdraw $FLAGS mykey.json 1 3000000000000000000
+```
+
+A withdrawal is negotiated over the relays — the counterparty's wallet verifies you're only taking your own balance and countersigns — then lands on-chain, all without interrupting the channel.
+
+## 7. Close
+
+The friendly way (instant, needs the counterparty online):
+
+```bash
+parallax-wallet channel close $FLAGS mykey.json 1
+```
+
+Both wallets agree on the final balances, sign once, and the contract pays out immediately.
+
+The unilateral way (works alone, takes the challenge period):
+
+```bash
+parallax-wallet channel close $FLAGS --unilateral mykey.json 1
+```
+
+Your wallet submits its latest signed state; after the challenge window passes (during which the counterparty could present a newer state — which is correct behavior, not a failure), anyone can trigger settlement and the contract pays out. If a payment is still awaiting the counterparty's signature, the wallet refuses to force-close and shows the exact exposure; add `--force` to proceed deliberately.
+
+## Everyday hygiene
+
+- **Leave the daemon running** when you expect to receive payments — signing is interactive-free but requires the process.
+- **Backups are automatic** (encrypted, to your relays, after every payment) — but read [Backups and recovery](./backup-and-recovery) once so restore day isn't your first encounter with it.
+- For high-value or rarely-touched channels, consider a **[watchtower](./watchtowers)**.

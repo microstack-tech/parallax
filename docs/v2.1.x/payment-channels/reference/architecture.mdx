@@ -1,0 +1,125 @@
+---
+title: "Architecture and Protocol"
+---
+
+This page is the technical tour of the Parallax channel system: the on-chain contract, the off-chain state model, the transport, and the client stack. It condenses the normative specification (Parts 1-4, shipped with the `parallax-channels` repository) for developers integrating with or auditing the system.
+
+## System overview
+
+```
+┌────────────┐   encrypted rumors    ┌────────────┐
+│  Wallet A  │ ◄——— Nostr relays ——► │  Wallet B  │        payments (off-chain)
+│ (channeld) │ ◄——— QR codes ——————► │ (channeld) │
+└─────┬──────┘                       └──────┬─────┘
+      │  open / deposit / withdraw /        │
+      │  close / challenge / settle         │        enforcement (on-chain)
+      ▼                                     ▼
+   ┌──────────────────────────────────────────┐
+   │   ParallaxChannelRegistry  (one contract, │
+   │   all channels, immutable, keyless)       │
+   └──────────────────────────────────────────┘
+              ▲
+              │ challenge only
+        ┌─────┴─────┐
+        │ Watchtower│  (delegated latest states)
+        └───────────┘
+```
+
+Three layers with a strict division of labor:
+
+- **The registry contract** is the enforcement layer and fallback of last resort. It holds deposits, adjudicates disputes with a block-denominated challenge game, and settles balances. It is immutable and keyless — no owner, no pause, no proxy; new versions are separate deployments that coexist.
+- **Nostr is the only payment transport**, and QR the only-when-offline local transport. Relays are trusted for *availability only* — every binding commitment is an EIP-712 signature carried inside encrypted payloads, so no relay can forge or alter anything.
+- **The client** (`parallax-wallet`) enforces the durability and validation rules that the contract cannot see: persist-before-transmit, balance sufficiency against confirmed funding, and never signing conflicting states.
+
+## The state model
+
+Channels are **direct and bidirectional**. All value accounting lives in one signed object per channel:
+
+```
+BalanceProof(
+    uint256 channelId,       // never-reused global id
+    uint64  seq,             // strictly increasing; higher always supersedes
+    uint256 transferredAtoB, // CUMULATIVE wei sent A→B over the channel's lifetime
+    uint256 transferredBtoA, // CUMULATIVE wei sent B→A
+    bytes32 locksRoot,       // reserved, must be zero in v1
+    uint256 lockedAmount     // reserved, must be zero in v1
+)
+```
+
+signed by **both** participants under an EIP-712 domain that pins the chain id and registry address (name `ParallaxChannels`, version `1`), making cross-chain and cross-registry replay structurally impossible. Signatures are 65-byte `(r,s,v)`, `v ∈ {27,28}`, low-`s` enforced, in fixed positional order (`sigA` recovers to participant A).
+
+**Why cumulative amounts rather than balances:** deposits and withdrawals change channel capacity mid-flight without invalidating a single existing signature. Settlement computes final balances at close time:
+
+```
+available = depositA + depositB − withdrawnA − withdrawnB
+balA      = clamp(depositA + transferredBtoA − withdrawnA − transferredAtoB, 0, available)
+balB      = available − balA
+```
+
+The clamps guarantee the contract can never pay out more than the pot or a negative amount, no matter how inconsistent the signed numbers are — an over-spent state costs the over-spender's counterparty, which is why clients validate balance sufficiency *before* countersigning.
+
+A payment is one round trip: the payer signs `seq+1` with their cumulative total increased, the recipient validates and countersigns. **The countersignature is simultaneously the delivery receipt and the enforcement instrument** — one object, two roles.
+
+## The challenge game
+
+Cooperative closes settle instantly on two fresh signatures over explicit final balances. Unilateral closes enter the dispute path:
+
+1. `startClose(proof)` — a participant submits their best dual-signed state (or `startCloseNoProof()` if none exists). The contract records it and starts the challenge window: `challengePeriodBlocks`, chosen at open between 36 (~6 h) and 4320 (~30 d), default 144 (~24 h).
+2. `challenge(proof)` — **anyone** may supersede the recorded state with a strictly-higher-`seq` dual-signed state, any number of times, while `block.number ≤ deadline`. This single permissionless property is what makes watchtowers trustless.
+3. `settle()` — after the deadline, anyone triggers payout.
+
+Periods are denominated in **blocks, never timestamps**: a hashrate slowdown stretches the real-time window, which fails safe for the challenger.
+
+**Penalty.** If the closer's submission was successfully challenged, settlement compares what the closer *claimed* against what the final state gives them; 20% of the over-claim is deducted from the closer — a small fixed amount (0.01 LAX recommended at deployment) goes to the challenger as a gas refund, and **the rest is burned**. Burning is the load-bearing choice: it makes fraud strictly negative-expected-value while removing any profit from *baiting* an honest party into an accidental stale close. A closer whose stale state under-claimed (the honest-crash direction) pays nothing.
+
+## The wire protocol
+
+Channel messages are NIP-17-style gift-wrapped rumors: an unsigned inner event, sealed (signed + NIP-44 v2 encrypted) by the sender to the recipient, wrapped again under a single-use random key. Relays see only the wrap and the recipient key; envelope timestamps are randomized up to 48 h to frustrate traffic analysis, so all ordering logic uses fields inside the payloads.
+
+| Kind | Purpose |
+|---|---|
+| 31910 | public npub↔address linkage (addressable; merchants publish, payers deliver privately in the handshake) |
+| 21901 | invoice |
+| 21902 / 21903 | payment proposal / countersignature (ACK) |
+| 21904 / 21905 | cooperative-close proposal / countersignature |
+| 21906 / 21907 | watchtower delegation / receipt |
+| 21908 | channel handshake (after on-chain open; carries the private linkage) |
+| 21909 | NACK (advisory rejection) |
+| 21910 | encrypted self-backup, wrapped to self |
+| 21911 / 21912 | cooperative-withdraw proposal / countersignature |
+
+Payload conventions: JSON content, all integers as decimal strings, addresses 0x-lowercase, one in-flight payment per channel, idempotent retransmission (duplicates re-ACK identically), and cancellation only by *supersession* — a signed proposal is irrevocable, so voiding it means completing a newer no-op state above it, never re-signing the same sequence number differently.
+
+The messaging identity is derived from the wallet key via HKDF (`info = "parallax/nostr/v1"`), so seed recovery restores it, third parties cannot link it to the address, and no key is ever used under both ECDSA and Schnorr.
+
+**QR transport:** the five payment/close message types also encode as `PLXC1:` + Base45(canonical CBOR) — deterministic byte-exact encoding, small enough that each step of an offline sale is a single phone-scannable code.
+
+## The client stack
+
+`parallax-wallet` contains the full client under `wallet/channels/`:
+
+| Package | Responsibility |
+|---|---|
+| `registry` | contract bindings + a Go mirror of the settlement math and EIP-712 digests, differentially tested byte-for-byte against the deployed contract |
+| `proofstore` | single-file embedded store enforcing the durability invariants: persist-before-transmit, persist-before-ACK, and no-equivocation as a storage-layer rule |
+| `protocol` | the per-channel state machines: payment, validation, deterministic tiebreak for simultaneous proposals, cooperative close/withdraw negotiation, held-up-channel handling |
+| `nostrmod` | relay pool (reconnect, dedup, fan-out), gift-wrap crypto, persistent outbound queue with retransmission, encrypted self-backups, linkage events |
+| `watcher` | chain scanning at confirmation depth, funding crediting, status tracking, automatic challenge/settle through a fee-bumping transaction manager |
+| `qrenc` | the canonical CBOR/Base45 offline codec |
+| `channeld` | composition: one node object wiring all of the above for the CLI, merchant, and tower modes |
+| `merchantd` | REST API, invoice lifecycle, HMAC-signed webhooks from a persistent queue |
+| `towerd` | delegation intake (verified against on-chain participants), registry-wide close monitoring, challenge submission |
+
+Three modes of one binary — interactive wallet, headless merchant, headless tower — differ only in which loops run and which policy applies.
+
+## Registry deployment parameters
+
+| Constant | Value |
+|---|---|
+| Penalty | 20% of the over-claim, burned (minus the refund) |
+| Challenge period bounds | 36 - 4320 blocks (open-time choice) |
+| Challenger gas refund | fixed at deployment; 0.01 LAX recommended |
+| Payout gas cap | 50,000 gas per push; failures park in a pull-payment balance so no receiver can block settlement |
+| Channel ids | global counter, never reused — a settled channel's signatures are permanently dead |
+
+The full normative specification — including the exact typed-data definitions, validation rules, and the threat model — ships with the `parallax-channels` repository.

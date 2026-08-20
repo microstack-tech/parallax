@@ -1,0 +1,122 @@
+---
+title: "Accepting Channel Payments as a Merchant"
+---
+
+The merchant daemon turns a Parallax wallet into an unattended point-of-sale backend: it mints invoices, auto-accepts matching payments with strict validation, exposes a local REST API for your shop software, and fires signed webhooks the instant a payment is countersigned.
+
+## Setup
+
+Extend your channel configuration with a `[merchant]` section:
+
+```toml
+[merchant]
+listen = "127.0.0.1:9735"          # REST API bind address
+auth_token_file = "/etc/parallax/merchant.token"
+webhook_url = "https://shop.example/hooks/parallax"   # optional
+push_payments = false               # only accept payments that match an invoice
+```
+
+Put a strong random string in the token file, then run:
+
+```bash
+parallax-wallet merchant --config channels.toml --channeldata /var/lib/parallax-channels \
+  --passwordfile pw.txt merchant-key.json
+```
+
+```
+merchant daemon: api http://127.0.0.1:9735  address 0x6556…fF7  npub 23cc4a…261d
+```
+
+The daemon runs the full channel node — relay connections, chain watcher, auto-challenge protection — plus the REST surface. Point customers at your npub (publish it once with `nostr link-publish`) so they can open channels to you.
+
+<Note>
+The API binds to localhost by default and authenticates every request with the bearer token. If you place it behind a reverse proxy, terminate TLS there and keep the token secret — it authorizes invoice creation and channel closes.
+</Note>
+
+## Creating invoices
+
+```bash
+curl -s -X POST http://127.0.0.1:9735/v1/invoices \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"amountWei": "500000000000000000", "memo": "espresso", "ttlSeconds": 900, "channelId": 1}'
+```
+
+```json
+{
+  "invoiceId": "a3f23d630c9f45473ea83653ecbe41cb",
+  "amountWei": "500000000000000000",
+  "memo": "espresso",
+  "expiresAt": 1787209658,
+  "channelId": 1,
+  "status": "pending",
+  "uri": "parallax:0x6556…ff7?amount=500000000000000000&inv=a3f23d63…&npub=23cc4a…&relays=wss%3A%2F%2Frelay.damus.io&reg=0x1653…"
+}
+```
+
+Two delivery paths, use either or both:
+
+- **`uri`** — render it as a QR code or payment link. It carries everything a customer's wallet needs, including how to reach you, even if they've never messaged you before.
+- **Relay push** — when `channelId` pins the invoice to an existing channel, the daemon also sends it straight to that customer's wallet over the relays; their wallet can then pay it by id alone.
+
+Invoices are single-use and expire after `ttlSeconds` (default 15 minutes). The daemon countersigns a payment **only if** it exactly matches an open, unexpired invoice — amount to the wei — and the payer's channel balance covers it against confirmed on-chain funding. Everything else is rejected automatically. (Set `push_payments = true` only if you want to accept unsolicited transfers without invoices, e.g. for donations.)
+
+## Order flow
+
+Poll:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9735/v1/invoices/a3f23d63…
+# → { "status": "paid", "paidSeq": 7, "paidByChannel": "2110:0x1653…:1", … }
+```
+
+Or receive a webhook — `status: paid` means the dual-signed state is committed to disk, i.e. the money is cryptographically yours:
+
+```json
+POST /hooks/parallax
+X-Parallax-Signature: 9c1f6e…   (hex HMAC-SHA256 of the body, keyed with your bearer token)
+
+{"invoiceId":"a3f23d63…","channelId":1,"seq":7,"amountWei":"500000000000000000"}
+```
+
+Verify the signature, then fulfill the order:
+
+```python
+import hmac, hashlib
+expected = hmac.new(token.encode(), request.body, hashlib.sha256).hexdigest()
+assert hmac.compare_digest(expected, request.headers["X-Parallax-Signature"])
+```
+
+Webhooks are delivered **at least once** with retries (persisted across daemon restarts, exponential backoff, 24-hour horizon) — deduplicate on `invoiceId`, which is marked paid exactly once no matter how many times the payer's wallet retransmits.
+
+## Managing channels
+
+```bash
+# balances and state for every channel
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9735/v1/channels
+
+# sweep 5 LAX of earnings to your address without closing the channel
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"amountWei":"5000000000000000000"}' \
+  http://127.0.0.1:9735/v1/channels/1/withdraw
+
+# close a channel (cooperative by default; {"mode":"unilateral"} to force)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9735/v1/channels/1/close
+```
+
+Withdrawals are negotiated with the customer's wallet automatically (it verifies you're only taking your earned balance) and settle on-chain while the channel keeps running — the natural way to move revenue to cold storage on a schedule.
+
+Health and metrics for your monitoring stack:
+
+```bash
+curl -s http://127.0.0.1:9735/v1/healthz                          # unauthenticated liveness
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9735/v1/metrics   # Prometheus text format
+```
+
+## Operational notes
+
+- **Deposits count after 3 confirmations** (~30 minutes). A customer's brand-new channel can't pay you until its funding is confirmed — which is why the intended flow is channels opened once and reused for many purchases, not opened at the till.
+- **Run your own relay** if you can. It removes any third party from your payment path and gives your (and your customers') encrypted backups guaranteed retention. The daemon happily uses public relays too.
+- **The daemon is your watchtower** for your own channels — as long as it runs, stale close attempts against you are challenged automatically, so even the shortest challenge periods are safe to accept.
+- **Uptime = revenue**, in the narrow sense that countersigning requires the daemon to be running; a down daemon just means customers' payments queue and complete when you return.
+- No signal at the market stall? The same wallet does [offline QR payments](./offline-qr-payments).

@@ -1,0 +1,69 @@
+---
+title: "Backups and Recovery"
+---
+
+Channel funds are protected by signed states stored on your machine. This page explains what is backed up automatically, how to recover from anything up to and including a destroyed device, and what each failure actually costs.
+
+## What your wallet persists, and when
+
+The wallet's storage discipline is the foundation everything else rests on:
+
+- **Before any signature of yours leaves the device** — over the network or on a QR screen — the signed state is committed to disk. A crash mid-payment can never make your wallet forget what it signed.
+- **Before your wallet acknowledges receiving a payment**, the completed dual-signed state is committed. You can never have confirmed a payment you could later lose.
+- The store **refuses to ever sign two conflicting versions** of the same state — the one act that could genuinely compromise you — as a hard rule of the database layer, not a convention.
+
+All of this lives in a single file (`channels.db` in your `--channeldata` directory). That file, plus your keyfile, is your wallet.
+
+## The automatic safety net: encrypted relay backups
+
+After every completed payment, your wallet encrypts a full snapshot — every channel, its latest signed state, any in-flight items, funding records — and posts it to your configured relays **addressed to itself**. Only a key derived from your seed can decrypt it. To the relay, it is an anonymous sealed blob.
+
+```toml
+[backup]
+enabled = true                        # default
+relays = ["wss://my-paid-relay.example"]  # optional extra relays just for backups
+```
+
+The one thing worth spending money on here: **at least one relay with guaranteed retention** — a paid relay or one you host. Public relays are free to prune old messages; your backup is only as durable as the most reliable relay holding it.
+
+## Recovery scenarios
+
+### Crash or power loss
+
+No action needed. Everything meaningful was on disk before it mattered (see above); on restart the wallet resumes retransmissions, re-issues receipts for anything a counterparty re-sends, and carries on. Interrupted payments complete or cancel cleanly.
+
+### Lost or destroyed device — with your seed
+
+Restore your keyfile from the seed on a new machine, write the same config, and run:
+
+```bash
+parallax-wallet nostr backup-restore --config channels.toml \
+  --channeldata ~/.parallax-channels --passwordfile pw.txt restored-key.json --wait 60s
+```
+
+The wallet derives its messaging identity from the key (the same one as before, deterministically), pulls its encrypted snapshots off the relays, takes the freshest state of every channel, and reconciles against the blockchain before doing anything else — checking whether any channel was closed or disputed while you were gone. Then you're back: balances, channels, everything.
+
+### Lost device — no seed
+
+The seed is the root of everything; without it the channel funds are in the same situation as any other Parallax funds without a key. Back up your seed.
+
+### Total storage loss *and* no relay backup reachable
+
+The narrow worst case: your disk is gone and no relay retained your snapshots. You cannot prove the latest balances anymore — but you are not helpless:
+
+- Ask the counterparty for a **cooperative close** — their wallet still has the latest state, and a cooperative close pays out the true balances by mutual signature.
+- Failing that, close unilaterally with no state. The contract falls back to raw deposits, and the counterparty's challenge (with the true latest state they hold) corrects the balances — which is the system working, not failing. If your no-state close accidentally *over-claimed* relative to the truth, the standard penalty applies: bounded at 20% of the difference. Real money, but bounded — and entirely avoidable with one retained relay backup.
+
+### Restoring on two machines at once
+
+Don't. One wallet identity must live in one place at a time — two instances signing independently is the one behavior the whole design forbids (they would eventually sign conflicting states). Restore replaces a dead wallet; it doesn't clone a live one. If you need multi-device access, put the daemon on one machine and drive it remotely via the [merchant API](./merchants).
+
+## What each failure costs — summary
+
+| Failure | Cost |
+|---|---|
+| Crash, restart, network loss | Nothing — resume is automatic |
+| Device destroyed, seed + relay backup available | Nothing — full restore |
+| Device destroyed, seed only, cooperative counterparty | Nothing — cooperative close on true balances |
+| Device destroyed, seed only, uncooperative counterparty | At most 20% of the gap between raw deposits and true balances |
+| Seed lost | Everything, as with any wallet — protect the seed |

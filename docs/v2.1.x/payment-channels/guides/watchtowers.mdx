@@ -1,0 +1,83 @@
+---
+title: "Watchtowers"
+---
+
+A watchtower is an always-on service that watches the blockchain for cheating close attempts against your channels and challenges them on your behalf while you're offline. This guide covers both sides: delegating to a tower as a wallet user, and running one.
+
+Before either, one sentence of trust model, because it shapes everything: **a tower can be lazy, but never a thief.** The material you hand it fits exactly one on-chain action — submitting your *true latest state* as a challenge. It cannot close your channels, cannot spend anything, cannot lie on your behalf (the contract only accepts states both channel parties signed, newer than what's being challenged). A malicious tower's ceiling is doing nothing, plus knowing your channel balances. That is why delegating to several towers costs nothing and conflicts with nothing.
+
+## Using a tower (wallet side)
+
+Add the tower's npub to your channel config:
+
+```toml
+[channels.towers]
+npubs = ["8f3a…tower-npub…c2d1"]
+```
+
+That's all. From then on your wallet automatically sends every newly countersigned state to each listed tower over the relays (encrypted end-to-end — relays never see the contents), retransmitting until the tower acknowledges receipt. On startup it also brings towers up to date on every open channel.
+
+When do you want one?
+
+| Your situation | Recommendation |
+|---|---|
+| Phone wallet, online most days, default ~24h challenge window | Optional but cheap peace of mind |
+| Going off-grid longer than your challenge window | Yes — this is the exact gap towers close |
+| Merchant with an always-on daemon | Your daemon already self-watches; a tower adds redundancy |
+| High-value channel with a long challenge window | Yes, ideally two independent towers |
+
+The tower earns a small fixed refund (0.01 LAX, paid out of the cheater's penalty) each time it successfully challenges — enough to cover its gas, by design not enough to make "challenging" a business that would attract the wrong incentives.
+
+## Running a tower
+
+A tower is the same `parallax-wallet` binary in a different mode. It needs a keyfile holding a little LAX for challenge gas, a synced node, and a config:
+
+```toml
+[node]
+rpc = "ws://127.0.0.1:8546"
+confirmations = 3
+
+[registries]
+  [[registries.v1]]
+  address = "0x…"
+  chain_id = 2110
+
+[nostr]
+relays = ["wss://relay.damus.io", "wss://your-relay.example"]
+
+[tower]
+enabled = true
+delegators = [                      # npubs allowed to delegate to you
+  "31e1…alice…9df",
+  "23cc…bob…61d",
+]
+open_registration = false           # true = accept anyone (see below)
+min_discrepancy_wei = "1000000000000000"   # ignore closes off by < 0.001 LAX
+max_delegations_per_npub = 1000
+```
+
+```bash
+parallax-wallet tower --config tower.toml --channeldata /var/lib/parallax-tower \
+  --passwordfile pw.txt tower-key.json
+```
+
+```
+tower running: address 0x9A2c…11E npub 8f3a…c2d1 (2 delegators)
+```
+
+What it does, continuously:
+
+1. **Accepts delegations** (encrypted states from your delegators), verifying each against the chain — the signatures must belong to that channel's actual on-chain participants — and keeping only the newest per channel.
+2. **Watches every channel close** on the registry contract, not just delegated ones — a single event stream, cheap to follow.
+3. **Challenges stale closes**: when a close's state is older than a delegated one, it submits the delegated state. The submission is managed until mined — fees are bumped automatically if the transaction stalls, and a loud alarm fires if the challenge window is running out — because landing this one transaction is the entire job.
+4. **Collects the refund** from the cheater's penalty on settlement.
+
+Operational knobs:
+
+- `min_discrepancy_wei` is tower economics, not user safety: closes whose error is smaller than this aren't worth your gas. Users' own wallets still challenge any discrepancy — it's their money.
+- `open_registration = true` turns the tower public: anyone may delegate, bounded by `max_delegations_per_npub` (storage is the only thing a stranger can consume — a delegation is a few kilobytes, and a bogus one is rejected against the chain at intake).
+- Fund the tower key modestly and monitor it; each challenge costs gas up front, recouped by the refund.
+
+## What a tower learns
+
+Delegated states reveal the channel's participants and balance history to the tower — a privacy cost, not a security one. If that matters for your use case, run your own tower; it is a single process and a systemd unit away.

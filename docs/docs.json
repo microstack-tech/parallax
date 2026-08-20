@@ -294,6 +294,37 @@
                 ]
               }
             ]
+          },
+          {
+            "tab": "Payment Channels",
+            "groups": [
+              {
+                "group": "Understanding Channels",
+                "pages": [
+                  "v2.1.x/payment-channels/understanding/what-are-payment-channels",
+                  "v2.1.x/payment-channels/understanding/staying-safe",
+                  "v2.1.x/payment-channels/understanding/instant-payments-anywhere"
+                ]
+              },
+              {
+                "group": "Guides",
+                "pages": [
+                  "v2.1.x/payment-channels/guides/getting-started",
+                  "v2.1.x/payment-channels/guides/merchants",
+                  "v2.1.x/payment-channels/guides/offline-qr-payments",
+                  "v2.1.x/payment-channels/guides/watchtowers",
+                  "v2.1.x/payment-channels/guides/backup-and-recovery"
+                ]
+              },
+              {
+                "group": "Technical Reference",
+                "pages": [
+                  "v2.1.x/payment-channels/reference/architecture",
+                  "v2.1.x/payment-channels/reference/security-model",
+                  "v2.1.x/payment-channels/reference/configuration"
+                ]
+              }
+            ]
           }
         ]
       },

@@ -1,0 +1,71 @@
+---
+title: "Offline QR Payments"
+---
+
+A channel payment needs no blockchain access and no network between the two wallets — only an exchange of small signed messages. When there is no connectivity, those messages travel as **three QR codes** across the counter. This guide shows the flow with the `parallax-wallet` CLI.
+
+## When to use it
+
+- Point of sale with no signal: market stalls, basements, festivals, rural areas.
+- Network outages — payments keep working while the internet doesn't.
+- Air-gapped setups where a device deliberately never touches the network.
+
+The one prerequisite: **an existing, funded channel between payer and merchant**, opened while online. Offline mode spends existing channel balance; it cannot open channels or confirm new deposits.
+
+## The three scans
+
+**Step 1 — merchant displays the invoice.**
+
+```bash
+parallax-wallet channel qr show-invoice $FLAGS --channel 1 --memo "flat white" key.json 500000000000000000
+```
+
+The terminal renders a QR code (plus the raw `PLXC1:…` string beneath it for copy/paste). It encodes the amount, invoice id, channel, and expiry — compact binary, comfortably one phone-scannable code.
+
+**Step 2 — payer scans it and shows the proposal.**
+
+```bash
+parallax-wallet channel qr scan $FLAGS key.json
+# paste or pipe the scanned PLXC1 string, e.g.:
+zbarcam --raw -1 | parallax-wallet channel qr scan $FLAGS key.json
+```
+
+```
+paying 500000000000000000 wei on channel 1 (seq 8); show this code to the merchant
+█▀▀▀▀▀█ ▀█▄▀▀ …
+```
+
+The payer's wallet validated the invoice, signed the new channel state, and **saved it to disk before displaying anything** — the same durability rule as online payments.
+
+**Step 3 — merchant scans the proposal and shows the receipt.**
+
+```bash
+zbarcam --raw -1 | parallax-wallet channel qr scan $FLAGS merchant-key.json
+```
+
+```
+payment received on channel 1 (seq 8); show this code back to the payer
+█▀▀▀▀▀█ ██▄▀▀ …
+```
+
+The merchant's wallet ran the full acceptance checks — invoice match, balance against the channel funding it last saw on-chain, signature validity — countersigned, and persisted. **From the merchant's perspective the payment is now complete**: they hold the dual-signed state and can hand over the goods.
+
+**Step 4 — payer scans the receipt.**
+
+```
+payment COMPLETE at seq 8 on channel 1
+```
+
+The payer verifies the merchant's countersignature and stores the completed state. Done — three codes shown, three scanned, no network anywhere.
+
+## Practical notes
+
+- **Double scans are harmless.** Scanning the same proposal twice re-issues the identical receipt; scanning the same receipt twice is a no-op. The protocol is idempotent by design, so a fumbled scan never double-charges.
+- **If step 3 never happens** — the payer signed but walked away before the merchant countersigned, or vice versa — the payer's wallet marks the channel *held up*: no new payments on it until the situation resolves, and the display shows the exact bounded exposure (at most 20% of that one payment). It resolves by completing the exchange later, cancelling by supersession, or closing the channel. This is the offline equivalent of a network timeout, handled the same way.
+- **Shoulder surfers** who photograph the codes learn this payment's amount and channel — treat the codes like a printed receipt. They cannot steal anything: a captured code is only usable for enforcing the *true* state on-chain.
+- **On reconnection**, each wallet automatically files its encrypted backup to the relays and notifies its watchtowers — no manual step.
+- **Closing offline** works too: the same `qr scan` flow carries cooperative-close signatures (the wallet tells you to submit on-chain once you're back online).
+
+## Sizing your float
+
+Because the merchant verifies balances against the last on-chain funding it saw, offline commerce is a *pre-funded* pattern: load the channel while online with whatever you'd comfortably carry as cash for the day. Merchants accepting offline payments from a regular customer see the customer's cumulative spending across the day's codes and simply stop accepting when the channel balance is spent — exactly like a tab running dry.

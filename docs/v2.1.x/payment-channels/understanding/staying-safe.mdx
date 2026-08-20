@@ -1,0 +1,74 @@
+---
+title: "Staying Safe: How Channels Protect Your Money"
+---
+
+Payment channels move money without waiting for the blockchain, so it is fair to ask: *what exactly keeps my funds safe while they're in a channel?* This page walks through the protections in plain language — what can go wrong, what the system does about it, and the few things that remain your responsibility.
+
+## Prerequisites
+
+Read [What are payment channels?](./what-are-payment-channels) first if you haven't.
+
+## The golden rule: keep your latest receipt
+
+Everything in a channel revolves around one object: the **latest state both parties signed** — the newest line on the bar tab. Whoever holds it can always enforce the correct balances on-chain. Your wallet treats it accordingly:
+
+- It **saves the state to disk before ever sending it** to the other party. A crash at any moment can never make your wallet forget what it signed.
+- It **encrypts a backup of every state and posts it to the messaging relays**, addressed to itself. If your phone falls in a river, a fresh wallet restored from your seed finds those backups and recovers every channel. Nobody else can read them — they are sealed to a key only your seed can derive.
+- It **never signs two different versions of the same tab line**. This rule is enforced in the wallet's storage layer itself, because signing conflicting states is the one mistake the blockchain cannot forgive.
+
+## What if the other party disappears?
+
+Nothing is lost — only time. You close the channel unilaterally by showing the contract your latest signed state. The contract waits out the challenge window (about a day by default) in case the other side has something newer, then pays out the balances. If the other party vanished before ever signing anything, there is a recovery path for that too: the contract falls back to "everyone gets their own deposit back."
+
+The reverse also holds: if *you* drop your phone in the river and never come back, your counterparty closes the channel the same way and your share sits safely at your address on-chain.
+
+## What if the other party cheats?
+
+Cheating in a channel means exactly one thing: **closing with an old state** — a tab from back when the cheater's balance was higher. The defenses stack:
+
+1. **The challenge window.** A unilateral close waits (default ~24 hours, configurable from ~6 hours to ~30 days) before paying anyone. During that window, *anyone* holding the newer signed state can present it, and newer always wins. Your wallet does this automatically the moment it sees a stale close attempt.
+2. **The 20% penalty, burned.** A cheater caught by a challenge forfeits 20% of whatever they tried to over-claim. Crucially, the penalty is **destroyed**, not paid to whoever caught it. This detail matters: if catching cheaters were profitable, a malicious counterparty could *bait* you into looking like a cheater (by hiding their confirmation of your latest payment) and then collect a bounty on you. Burning the penalty makes that trap pointless — the baiter gains nothing.
+3. **The math doesn't work for cheaters.** For cheating to be profitable, the fraudulent close has to go completely unchallenged for the entire window *and* survive the penalty odds. With your own wallet watching, and optionally watchtowers watching too, the realistic chance of that is effectively zero — so a rational counterparty simply never tries.
+
+## Watchtowers: protection while you're offline
+
+The one honest weakness of any payment channel design: challenges need someone awake. If your wallet is off for longer than the challenge window *and* your counterparty picks exactly that moment to cheat, the stale close could slip through.
+
+**Watchtowers** close that gap. A watchtower is a always-on service — run by you, a friend, or a community operator — that you hand a copy of your latest signed states. If it ever sees a stale close against you, it submits the challenge on your behalf and collects a small fixed gas refund from the cheater's penalty.
+
+The critical property: **a watchtower can be lazy, but it can never be a thief.** The material you delegate to it is only usable for one thing — enforcing your *true* latest state. It cannot close your channel, cannot move your money, cannot do anything on-chain except tell the truth for you. The worst a corrupt tower can do is nothing at all (which is why you can delegate to several — they don't conflict), plus it learns your channel balances, which is a privacy consideration rather than a financial one.
+
+Rules of thumb:
+
+- Everyday phone wallet, online most days → the default ~24-hour window plus one watchtower is comfortable.
+- Merchant with an always-on server → your own daemon *is* your watcher; even the ~6-hour minimum window is safe.
+- Large-value channel you rarely touch → pick a longer window and delegate to a tower or two.
+
+## The one bounded risk to understand: unconfirmed payments
+
+There is a brief moment in every payment where you have signed the new tab but haven't yet received the other side's countersignature. Normally this lasts under a second. But a malicious recipient could deliberately withhold their signature while keeping yours.
+
+What does that cost you? Strictly bounded, and only ever about that **one in-flight payment**:
+
+- Your wallet notices and marks the channel as *held up*: it refuses to send further payments on it and shows you exactly what is at stake — **at most 20% of that single payment's amount**, never anything more, and never your other funds.
+- Usually the situation resolves on its own (signatures arrive late all the time over flaky networks). If not, your wallet can cancel the stuck payment by superseding it, or close the channel and accept the small, displayed cost.
+- You can cap this exposure in advance with a per-payment limit in your wallet settings.
+
+Compare it to the analog world: handing a merchant cash and having them claim you didn't. Channels can't abolish counterparty risk on an individual purchase — they bound it to a fraction of one payment and make the griefer earn nothing from the attempt.
+
+## What you rely on, honestly stated
+
+Every security design rests on assumptions. These are the channel system's, in full:
+
+1. **The Parallax chain itself is honest-majority.** If someone controls most of the mining power and censors your challenge for a whole day, channels inherit that problem — as would everything else on the chain.
+2. **You (or a tower) can land one transaction within the challenge window.** Windows are measured in blocks, not clock time, so if the chain slows down, your window stretches with it — the design fails in your favor.
+3. **Your wallet's storage works.** The signed states on your disk are the primary record; relays and backups are the safety net over that.
+4. **Standard cryptography holds.** The same signatures that secure every Parallax transaction secure every channel state.
+
+Notably absent from that list: any company, server, coordinator, or administrator. The channel contract has **no owner, no upgrade switch, and no pause button** — nobody, including its authors, can freeze or take funds in it. The messaging relays are interchangeable and untrusted; they carry sealed envelopes and can at worst delay them, never alter them, and even a total relay outage only pauses payments — enforcement and fund recovery need only the blockchain.
+
+## Read next
+
+- [Instant payments, anywhere](./instant-payments-anywhere)
+- [Backups and recovery in practice](../guides/backup-and-recovery)
+- [Running or using a watchtower](../guides/watchtowers)

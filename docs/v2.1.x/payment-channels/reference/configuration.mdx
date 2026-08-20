@@ -1,0 +1,129 @@
+---
+title: "Configuration and API Reference"
+---
+
+The complete reference for the channel subsystem: the TOML configuration, the `parallax-wallet` channel commands, the merchant REST API, and the payment URI format.
+
+## Configuration file (TOML)
+
+All channel commands take `--config <file>`. Defaults shown where they exist; omitted sections use their defaults.
+
+```toml
+[node]
+rpc = "ws://127.0.0.1:8546"     # Parallax node endpoint (ws:// preferred, http:// works)
+confirmations = 3                # act on chain events at this depth
+
+[registries]                     # one entry per registry deployment; several may coexist
+  [[registries.v1]]
+  address = "0x…"                # ParallaxChannelRegistry address
+  chain_id = 2110
+
+[nostr]
+relays = ["wss://…", "wss://…"]  # 3-5 recommended; at least one with retention
+use_10050 = true                 # honor counterparties' published inbox-relay lists
+publish_10050 = false            # publish your own (merchants: consider true)
+
+[channels]
+default_challenge_period = 144   # blocks; used by `channel open` when --period is omitted
+accept_challenge_period_min = 36 # inbound channels outside [min,max] are refused
+accept_challenge_period_max = 1008
+coop_close_validity_blocks = 18  # lifetime of a signed cooperative close
+withdraw_validity_blocks = 18    # lifetime of a signed withdrawal authorization
+max_inflight_payment_wei = "0"   # cap per outgoing payment; "0" = unlimited
+
+  [channels.towers]
+  npubs = ["<npub-hex>"]         # watchtowers to send every completed state to
+
+[backup]
+enabled = true                   # encrypted self-backups to the relays
+relays = ["wss://…"]             # extra relays used only for backups
+
+[merchant]
+listen = "127.0.0.1:9735"
+auth_token_file = "/path/to/token"
+webhook_url = ""                 # POST target for payment notifications
+push_payments = false            # accept payments with no matching invoice
+sweep_threshold_wei = "0"
+
+[tower]
+enabled = false
+delegators = ["<npub-hex>"]      # who may delegate states to this tower
+open_registration = false        # accept delegations from anyone
+min_discrepancy_wei = "1000000000000000"   # ignore closes off by less than this
+max_delegations_per_npub = 1000
+```
+
+<Note>
+`coop_close_validity_blocks` and `withdraw_validity_blocks` are **block-denominated**. The defaults assume the ~10-minute mainnet block time (18 blocks ≈ 3 hours). On a fast development chain, scale them up or signed messages will expire before they can be delivered.
+</Note>
+
+## CLI reference
+
+All commands share `--config`, `--channeldata <dir>` (location of the channel database), and `--passwordfile`; the keyfile is always the first positional argument, and **flags must precede positional arguments**. Amounts are wei.
+
+### `channel` commands
+
+| Command | Description |
+|---|---|
+| `channel open [flags] <keyfile> <address>` | Open a channel on-chain and handshake the counterparty. Flags: `--npub` (required), `--deposit`, `--period`. |
+| `channel list <keyfile>` | List channels with live balances, sequence numbers, and status flags. `--json` for machine output. |
+| `channel deposit <keyfile> <id> <wei>` | Top up your side of an open channel. |
+| `channel pay [flags] <keyfile> <id> <wei>` | Pay and wait for the countersignature. `--invoice <id>` references an invoice; `--uri <parallax:…>` takes everything from a payment URI (drop `<id> <wei>`); `--wait`. |
+| `channel invoice [flags] <keyfile> <wei>` | Create an invoice; prints its id and payment URI. Flags: `--ttl`, `--memo`, `--channel` (pin + push over the relay). |
+| `channel withdraw <keyfile> <id> <wei>` | Cooperatively withdraw part of your balance while the channel stays open. |
+| `channel close [flags] <keyfile> <id>` | Close: cooperative by default; `--unilateral` for the dispute path; `--force` to accept displayed exposure on a held-up channel. |
+| `channel daemon <keyfile>` | Run the wallet node in the foreground: receive payments, watch the chain, auto-challenge. |
+| `channel qr show-invoice [flags] <keyfile> <wei>` | Create an invoice and render it as a terminal QR code. `--channel` is required. |
+| `channel qr scan <keyfile>` | Read one `PLXC1:` payload from stdin and advance the offline exchange (pipe `zbarcam --raw -1`). |
+
+### `nostr` commands
+
+| Command | Description |
+|---|---|
+| `nostr whoami <keyfile>` | Print the wallet's address and derived messaging identity (npub). |
+| `nostr link-publish <keyfile>` | Publish the signed npub↔address linkage (merchant discoverability). |
+| `nostr link-revoke <keyfile>` | Publish a revocation of the linkage. |
+| `nostr backup-restore <keyfile>` | Recover all channel state from relay self-backups onto a fresh machine, then reconcile against the chain. `--wait` sets the collection window. |
+
+### Daemons
+
+| Command | Description |
+|---|---|
+| `merchant <keyfile>` | Headless merchant: channel node + REST API + webhooks. |
+| `tower <keyfile>` | Watchtower: delegation intake + registry-wide close monitoring + auto-challenge. |
+
+## Merchant REST API
+
+Base URL from `[merchant].listen`. Every endpoint except `/v1/healthz` requires `Authorization: Bearer <token>`.
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/invoices` | Create an invoice. Body: `{"amountWei":"…","memo":"…","ttlSeconds":900,"channelId":1}` (memo, ttl, channelId optional; a pinned channelId also pushes the invoice over the relay). Returns the invoice plus its `parallax:` URI. |
+| `GET /v1/invoices/{id}` | Invoice status: `pending` / `paid` / `expired`, with paying channel and sequence when paid. |
+| `GET /v1/channels` | All channels with balances, roles, status, and flags. |
+| `POST /v1/channels/{id}/close` | Body `{"mode":"coop"}` (default) or `{"mode":"unilateral","force":false}`. Returns `202` once initiated. |
+| `POST /v1/channels/{id}/withdraw` | Body `{"amountWei":"…"}`. Starts the cooperative-withdraw negotiation; settles on-chain automatically once countersigned. |
+| `GET /v1/healthz` | Unauthenticated liveness + connected relay count. |
+| `GET /v1/metrics` | Prometheus text format: channel counts, held-up channels, relay health, outbound queue depth. |
+
+**Webhook contract:** on each paid invoice, one `POST` to `webhook_url` with body `{"invoiceId":"…","channelId":1,"seq":7,"amountWei":"…"}` and header `X-Parallax-Signature: <hex HMAC-SHA256 of the body, keyed with the bearer token>`. Delivery is at-least-once with persistent retries over 24 hours — deduplicate on `invoiceId`.
+
+## Payment URI
+
+```
+parallax:<merchant-address>?amount=<wei>&inv=<invoice-id>&npub=<merchant-npub-hex>&relays=<r1|r2>&reg=<registry-address>
+```
+
+Carries everything a wallet needs to pay a specific invoice, including how to reach the merchant over the relays — usable as a QR code or a clickable link, with no prior contact between the parties.
+
+## Registry contract constants
+
+| Constant | Value |
+|---|---|
+| Penalty on a challenged over-claim | 20%, burned (minus the challenger refund) |
+| Challenge period | per-channel, 36-4320 blocks; wallet default 144 |
+| Challenger gas refund | fixed at deployment (recommended 0.01 LAX) |
+| Deposit crediting (client policy) | 3 confirmations |
+| Settlement payout gas cap | 50,000 per push; failures become pull-payments via `withdrawPending()` |
+
+The contract source, complete interface, and the full protocol specification ship with the `parallax-channels` repository.

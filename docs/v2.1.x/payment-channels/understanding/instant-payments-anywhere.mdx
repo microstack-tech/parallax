@@ -1,0 +1,65 @@
+---
+title: "Instant Payments, Anywhere"
+---
+
+A channel payment is just a small signed message traveling from payer to payee. This page explains how those messages travel — and why the design means your payments work over the public internet, keep working when servers misbehave, and even work with **no internet at all**.
+
+## No payment servers
+
+Most instant-payment systems in the world run on somebody's servers: a card network, a bank, an app company. Those servers can go down, censor, deplatform, or be shut down.
+
+Parallax channels have **no payment servers**. Signed channel states travel over **Nostr** — an open, minimal protocol where simple, interchangeable relay servers forward encrypted notes between public keys. Anyone can run a relay; your wallet connects to several at once; if one disappears, the others carry on; if all *your* relays disappear, you point your wallet at different ones. There is no Parallax-specific infrastructure anywhere in the payment path.
+
+Three properties make this safe to build on:
+
+- **Relays are couriers, not referees.** Every binding commitment in a payment is a blockchain-grade signature *inside* the sealed envelope. A relay cannot forge, alter, or replay a payment — the worst any relay can do is deliver slowly or not at all.
+- **Everything is end-to-end encrypted.** A relay sees only that *some* sealed envelope is addressed to *some* public key. Amounts, balances, channel identities, even the sender — all hidden inside layers of encryption, with timestamps deliberately fuzzed so traffic analysis gets little to work with.
+- **Delivery failures are boring.** Wallets persist every unsent message and retransmit with backoff until acknowledged. A payment interrupted by a dead relay, a dropped connection, or a phone reboot simply resumes — duplicates are recognized and answered identically, so nothing double-spends and nothing gets lost.
+
+Your channel identity on this network is a separate key **derived from your wallet key** — recoverable from your seed, but not linkable to your Parallax address by outside observers. Merchants typically publish the link between their address and their messaging key (so customers can find them); private individuals never need to.
+
+## The payment, step by step
+
+What actually happens in the second after you tap "pay":
+
+1. **Invoice** — the merchant's system sends you a small note: *"0.5 LAX for one espresso, offer valid 15 minutes."*
+2. **Proposal** — your wallet writes the new tab line (your balance down 0.5, theirs up 0.5), signs it, saves it to disk, and sends it.
+3. **Countersignature** — the merchant's wallet checks everything (right amount, valid invoice, sufficient balance, correct signature), signs the same line, saves it, and sends their signature back.
+4. **Done.** Your wallet verifies their signature. Both sides now hold the new mutually-signed state; the payment is complete and enforceable.
+
+One round trip. The merchant's countersignature *is* your receipt — the same object that proves the payment also protects your remaining balance.
+
+## Offline payments: three QR codes
+
+Now the part that surprises people: **the payment above works with both devices in airplane mode.**
+
+Nothing in steps 1-4 requires the blockchain, and the messages are small enough to fit in QR codes. So at a market stall with no signal, in a basement venue, or during an outage:
+
+1. **The merchant shows a QR code** — the invoice. You scan it.
+2. **Your wallet shows a QR code** — your signed proposal. The merchant scans it.
+3. **The merchant's device shows a QR code** — the countersigned receipt. You scan it. Payment complete.
+
+Three scans, perhaps ten seconds, zero connectivity on either side. The signatures exchanged are byte-for-byte the same ones the online path uses, so the payment is exactly as enforceable — when either device later gets back online, it files its encrypted backup and tells its watchtower, and life continues as if the payment had happened online.
+
+Two honest footnotes about the offline mode:
+
+- The merchant's device verifies your balance against the channel funding it *last saw on-chain* — which is why offline commerce uses **pre-funded channels**, established while online. (This mirrors how offline card terminals accept small payments against floor limits — except here the merchant's check is cryptographic, not statistical.)
+- Anyone who photographs your QR codes learns the payment's amount and channel — a privacy consideration at close range, like a paper receipt. What they *cannot* do is steal anything: a scanned code is only useful for telling the blockchain the truth.
+
+## What can and cannot be disrupted
+
+| Scenario | Effect on your money | Effect on payments |
+|---|---|---|
+| One relay goes down | none | none — others carry on |
+| All your relays go down | none | pause; resume on any relay, or pay by QR in person |
+| Internet outage at the point of sale | none | QR path works normally |
+| Relay tries to tamper with a message | none — tampering is cryptographically detectable and ignored | that copy discarded; another delivers |
+| Counterparty offline | none | payments to them pause; your funds recoverable on-chain any time |
+
+The pattern: infrastructure failures can only ever *pause payments*, never touch funds. Fund safety depends only on the blockchain — see [Staying safe](./staying-safe).
+
+## Read next
+
+- [Getting started with the channel wallet](../guides/getting-started)
+- [Accepting channel payments as a merchant](../guides/merchants)
+- [Offline QR payments in practice](../guides/offline-qr-payments)
