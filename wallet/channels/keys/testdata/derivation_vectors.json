@@ -1,0 +1,27 @@
+[
+  {
+    "ikm": "0000000000000000000000000000000000000000000000000000000000000001",
+    "nostrPriv": "bc260e668d4c3c46b75f7a1d0eb13a04ec79781109138f1db3df4b11af891b49",
+    "npubHex": "117bee693fbd61bf74b3e3474089bb1beea2c4da98811bddaff369a69e006ace"
+  },
+  {
+    "ikm": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "nostrPriv": "760917f99c3aecbcff9362727d79a5e34d92487b637fd7a16161c06505290b88",
+    "npubHex": "953cc004790a82ca0a55bf8ad39d1a75c72e02dd527abca774d52984a4623d2c"
+  },
+  {
+    "ikm": "3a550dba9a3036f95a3652ed8a7bf5b369564bee97a7bf7bea72c0edf19a8bac",
+    "nostrPriv": "153e500abbb98e1920608046605e659442453ded0ef0caefaa6fc56cd2f88a42",
+    "npubHex": "154a3fa40cb16d9df04585e804310369c3f6e087060006cada563dc93983b170"
+  },
+  {
+    "ikm": "0dbdf194b50b6af424802c16e968099ae9941b422064272b211a0d62af0df253",
+    "nostrPriv": "f1909c8930a07a7b2a44eeff76f10447891b3ae4298bcae8ccfbc556b8c5cdac",
+    "npubHex": "c1eebda0a1c1999d8d58c4b0a9c5055ff153a143cb5b1bc0ead2534d16228adc"
+  },
+  {
+    "ikm": "368d0d28acda5c75dd789c453be27c68a104268c98000f63736372b1ce22a8a9",
+    "nostrPriv": "f770478f3a7f291a88a0facb79fcdc87e649108e01496f4bf2d1c3c0984bec27",
+    "npubHex": "0f9998e25692c83d53cfbea993942dc5382da3578e6fab3e9c77ddd945d58463"
+  }
+]
