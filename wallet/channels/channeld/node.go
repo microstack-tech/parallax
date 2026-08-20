@@ -164,6 +164,23 @@ func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
 	if len(n.Watchers) > 0 {
 		go n.watchLoop(ctx, watcherInterval)
 	}
+	if n.Cfg.Backup.Enabled {
+		// Reconnect catch-up (Part 2 §11.2): state that completed offline
+		// (QR) gets parked on the relays as soon as we are back.
+		go func() {
+			for i := 0; i < 30; i++ {
+				if n.Pool.Healthy() > 0 {
+					n.afterCompletion(ctx)
+					return
+				}
+				select {
+				case <-time.After(time.Second):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 	n.dispatchLoop(ctx)
 }
 

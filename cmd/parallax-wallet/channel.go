@@ -160,6 +160,7 @@ var commandChannel = cli.Command{
 			},
 			Action: channelClose,
 		},
+		commandChannelQR,
 		{
 			Name:      "daemon",
 			Usage:     "run the wallet channel node (receive payments, watch the chain)",

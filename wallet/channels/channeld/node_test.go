@@ -257,8 +257,8 @@ func TestEndToEndRestoreFromRelayBackup(t *testing.T) {
 		la, err := alice.Store.LatestState(e2eKey)
 		return err == nil && la.Seq == 1
 	})
-	// Wait for a second wrap addressed to alice: the ACK plus her own
-	// self-backup (published after completion).
+	// Wait for a third wrap addressed to alice: the ACK, the startup
+	// backup, and the post-completion backup (which carries seq 1).
 	waitUntil(t, 5*time.Second, "backup on relay", func() bool {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -268,7 +268,7 @@ func TestEndToEndRestoreFromRelayBackup(t *testing.T) {
 				toAlice++
 			}
 		}
-		return toAlice >= 2
+		return toAlice >= 3
 	})
 	cancel() // alice's machine dies
 

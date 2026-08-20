@@ -550,8 +550,13 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 
 	// Mark the invoice paid exactly once; a duplicate proposal after a
 	// completed payment re-ACKs without re-firing (Part 2 §7.2, §7.3.5).
-	if !isNoOp && !e.cfg.PushPayments && msg.InvoiceID != "" {
-		if err := e.store.MarkInvoicePaid(msg.InvoiceID, key, st.Seq); err != nil && !errors.Is(err, proofstore.ErrExists) {
+	// This runs even under push-payments policy: skipping the invoice
+	// REQUIREMENT never skips crediting one that was referenced. An unknown
+	// id under push policy is tolerated (nothing to credit).
+	if !isNoOp && msg.InvoiceID != "" {
+		err := e.store.MarkInvoicePaid(msg.InvoiceID, key, st.Seq)
+		if err != nil && !errors.Is(err, proofstore.ErrExists) &&
+			!(e.cfg.PushPayments && errors.Is(err, proofstore.ErrNotFound)) {
 			return Result{}, err
 		}
 	}
