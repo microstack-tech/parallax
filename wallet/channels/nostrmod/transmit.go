@@ -15,13 +15,23 @@ type Publisher interface {
 }
 
 // Retransmission backoff: 2s, 4s, 8s, … capped at 60s (Part 2 §7.2).
-const (
-	backoffBase = 2  // seconds
-	backoffCap  = 60 // seconds
+// Variables only so the chaos harness can compress time; production code
+// never touches them.
+var (
+	backoffBase int64 = 2  // seconds
+	backoffCap  int64 = 60 // seconds
 )
 
+// SetRetransmitBackoffForTesting compresses the retransmission schedule and
+// returns a restore function. Test-only.
+func SetRetransmitBackoffForTesting(baseSeconds, capSeconds int64) (restore func()) {
+	prevBase, prevCap := backoffBase, backoffCap
+	backoffBase, backoffCap = baseSeconds, capSeconds
+	return func() { backoffBase, backoffCap = prevBase, prevCap }
+}
+
 func nextBackoff(attempts int) int64 {
-	d := int64(backoffBase) << uint(attempts)
+	d := backoffBase << uint(attempts)
 	if d > backoffCap || d <= 0 {
 		return backoffCap
 	}

@@ -20,9 +20,10 @@ import (
 
 // hub is an in-process relay: publishes route to subscribers by p-tag.
 type hub struct {
-	mu   sync.Mutex
-	subs map[string][]chan nostr.Event // recipient pubkey -> inboxes
-	all  []nostr.Event                 // everything published (retention)
+	mu          sync.Mutex
+	subs        map[string][]chan nostr.Event // recipient pubkey -> inboxes
+	all         []nostr.Event                 // everything published (retention)
+	maxRetained int                           // 0 = unlimited; chaos runs cap replay cost
 }
 
 func newHub() *hub {
@@ -40,14 +41,19 @@ type hubConn struct {
 }
 
 func (c *hubConn) Subscribe(ctx context.Context, selfPub string, since nostr.Timestamp) (<-chan nostr.Event, error) {
-	ch := make(chan nostr.Event, 64)
 	c.h.mu.Lock()
 	defer c.h.mu.Unlock()
-	// Replay retained history (lookback), then live.
+	// Replay retained history (lookback), then live. The channel must hold
+	// the full replay: the consumer only starts after Subscribe returns.
+	var history []nostr.Event
 	for _, ev := range c.h.all {
 		if tag := ev.Tags.Find("p"); tag != nil && tag[1] == selfPub {
-			ch <- ev
+			history = append(history, ev)
 		}
+	}
+	ch := make(chan nostr.Event, len(history)+64)
+	for _, ev := range history {
+		ch <- ev
 	}
 	c.h.subs[selfPub] = append(c.h.subs[selfPub], ch)
 	return ch, nil
@@ -57,6 +63,9 @@ func (c *hubConn) Publish(ctx context.Context, ev nostr.Event) error {
 	c.h.mu.Lock()
 	defer c.h.mu.Unlock()
 	c.h.all = append(c.h.all, ev)
+	if c.h.maxRetained > 0 && len(c.h.all) > c.h.maxRetained {
+		c.h.all = append([]nostr.Event(nil), c.h.all[len(c.h.all)-c.h.maxRetained:]...)
+	}
 	if tag := ev.Tags.Find("p"); tag != nil {
 		for _, ch := range c.h.subs[tag[1]] {
 			select {

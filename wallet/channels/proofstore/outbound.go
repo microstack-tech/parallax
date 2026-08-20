@@ -142,6 +142,26 @@ func (s *Store) RemoveOutboundByDedupe(key string) (int, error) {
 	return removed, err
 }
 
+// OutboundAll lists every queued item regardless of schedule (inspection).
+func (s *Store) OutboundAll() ([]OutboundItem, error) {
+	var out []OutboundItem
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketOutbound)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(_, v []byte) error {
+			var item OutboundItem
+			if err := json.Unmarshal(v, &item); err != nil {
+				return err
+			}
+			out = append(out, item)
+			return nil
+		})
+	})
+	return out, err
+}
+
 // OutboundLen reports the queue size (metrics).
 func (s *Store) OutboundLen() (int, error) {
 	n := 0

@@ -46,6 +46,10 @@ type Node struct {
 	Transmitter *nostrmod.Transmitter
 	Watchers    []*watcher.Watcher
 
+	// TransmitInterval paces the outbound queue drain (default 1s; the
+	// per-item backoff still governs retransmission).
+	TransmitInterval time.Duration
+
 	backend Backend
 	evmKey  *ecdsa.PrivateKey // retained for on-chain verbs (open/close/withdraw)
 	log     *slog.Logger
@@ -137,8 +141,12 @@ func (n *Node) Close() error {
 // Run starts the long-lived loops: relay pool, transmitter, watcher ticks,
 // and the inbound dispatcher. Blocks until ctx is done.
 func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
+	transmitInterval := n.TransmitInterval
+	if transmitInterval == 0 {
+		transmitInterval = time.Second
+	}
 	go n.Pool.Run(ctx)
-	go n.Transmitter.Run(ctx, time.Second, func(item proofstore.OutboundItem) {
+	go n.Transmitter.Run(ctx, transmitInterval, func(item proofstore.OutboundItem) {
 		n.log.Warn("outbound gave up", "kind", item.Kind, "dedupe", item.DedupeKey)
 		if item.Kind == protocol.KindProposal {
 			// Give-up on a proposal leaves the channel poisoned (Part 3 §5).
@@ -307,6 +315,14 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 func (n *Node) reactToResult(ctx context.Context, res protocol.Result, peer string, channelID string) error {
 	if res.Completed != nil {
 		n.afterCompletion(ctx)
+	}
+	if res.AdoptedTiebreak && res.Completed != nil {
+		// Our own conflicting proposal at this seq is dead (A-wins tiebreak,
+		// Part 2 §7.5); stop retransmitting it. The abandoned payment intent
+		// is the caller's to re-issue at a fresh seq.
+		n.settleOutbound(protocol.KindProposal, res.Completed.Key, res.Completed.Seq)
+		n.log.Info("tiebreak: adopted counterparty state; local intent needs rebase",
+			"channel", res.Completed.Key.String(), "seq", res.Completed.Seq)
 	}
 	var payload any
 	var kind int
