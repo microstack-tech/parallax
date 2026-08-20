@@ -1,0 +1,130 @@
+package proofstore
+
+import (
+	"encoding/json"
+	"fmt"
+
+	bolt "go.etcd.io/bbolt"
+)
+
+// ---------------------------------------------------------------- invoices
+
+// CreateInvoice stores a new invoice; ErrExists on id collision.
+func (s *Store) CreateInvoice(inv Invoice) error {
+	raw, err := json.Marshal(inv)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketInvoices)
+		if b.Get([]byte(inv.ID)) != nil {
+			return ErrExists
+		}
+		return b.Put([]byte(inv.ID), raw)
+	})
+}
+
+// Invoice returns an invoice by id.
+func (s *Store) Invoice(id string) (Invoice, error) {
+	var inv Invoice
+	err := s.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket(bucketInvoices).Get([]byte(id))
+		if raw == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(raw, &inv)
+	})
+	return inv, err
+}
+
+// MarkInvoicePaid marks an invoice paid exactly once (Part 2 §7.3 step 5):
+// a second call fails with ErrExists so duplicate proposals cannot double-
+// fire webhooks.
+func (s *Store) MarkInvoicePaid(id string, by ChannelKey, seq uint64) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketInvoices)
+		raw := b.Get([]byte(id))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var inv Invoice
+		if err := json.Unmarshal(raw, &inv); err != nil {
+			return err
+		}
+		if inv.Paid {
+			return ErrExists
+		}
+		inv.Paid = true
+		inv.PaidBy = &by
+		inv.PaidSeq = seq
+		out, err := json.Marshal(inv)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), out)
+	})
+}
+
+// ------------------------------------------------------------------ tower
+
+// PutDelegation stores a delegated complete state, keeping only the max seq
+// per channel (Part 2 §9). Returns the seq now on file; a stale delegation
+// is a silent no-op (idempotent intake).
+func (s *Store) PutDelegation(d Delegation) (keptSeq uint64, err error) {
+	if !d.State.Complete() {
+		return 0, fmt.Errorf("%w: delegation state is not dual-signed", ErrBadState)
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return 0, err
+	}
+	key := []byte(d.State.Key.String())
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTower)
+		if prev := b.Get(key); prev != nil {
+			var have Delegation
+			if err := json.Unmarshal(prev, &have); err != nil {
+				return err
+			}
+			if have.State.Seq >= d.State.Seq {
+				keptSeq = have.State.Seq
+				return nil
+			}
+		}
+		keptSeq = d.State.Seq
+		return b.Put(key, raw)
+	})
+	return keptSeq, err
+}
+
+// Delegation returns the max-seq delegated state for a channel.
+func (s *Store) Delegation(key ChannelKey) (Delegation, error) {
+	var d Delegation
+	err := s.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket(bucketTower).Get([]byte(key.String()))
+		if raw == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(raw, &d)
+	})
+	return d, err
+}
+
+// DelegationCount returns the number of channels a delegator has on file
+// (spam cap for open registration, Part 3 §10.2).
+func (s *Store) DelegationCount(delegatorNpub string) (int, error) {
+	n := 0
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketTower).ForEach(func(_, v []byte) error {
+			var d Delegation
+			if err := json.Unmarshal(v, &d); err != nil {
+				return err
+			}
+			if d.DelegatorNpub == delegatorNpub {
+				n++
+			}
+			return nil
+		})
+	})
+	return n, err
+}
