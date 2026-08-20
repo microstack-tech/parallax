@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -105,14 +104,13 @@ func New(cfg Config, dataDir string, evmPriv *ecdsa.PrivateKey, backend Backend,
 	n.Transmitter = nostrmod.NewTransmitter(store, n.Pool, nostrPriv)
 
 	if backend != nil {
-		auth := protocolAuth(evmPriv)
 		for label, entries := range cfg.Registries {
 			for _, e := range entries {
 				w, err := watcher.New(watcher.Config{
 					ChainID:       strconv.FormatUint(e.ChainID, 10),
 					Registry:      util.HexToAddress(e.Address),
 					Confirmations: cfg.Node.Confirmations,
-				}, store, backend, auth(e.ChainID))
+				}, store, backend, evmPriv)
 				if err != nil {
 					store.Close()
 					return nil, fmt.Errorf("channeld: registry %s: %w", label, err)
@@ -125,16 +123,6 @@ func New(cfg Config, dataDir string, evmPriv *ecdsa.PrivateKey, backend Backend,
 		}
 	}
 	return n, nil
-}
-
-func protocolAuth(priv *ecdsa.PrivateKey) func(chainID uint64) *bind.TransactOpts {
-	return func(chainID uint64) *bind.TransactOpts {
-		auth, err := bind.NewKeyedTransactorWithChainID(priv, new(big.Int).SetUint64(chainID))
-		if err != nil {
-			return nil // unreachable: chainID is validated non-zero
-		}
-		return auth
-	}
 }
 
 // Close releases the store.

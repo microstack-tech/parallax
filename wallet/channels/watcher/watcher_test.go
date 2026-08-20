@@ -151,7 +151,7 @@ func (e *simEnv) proofArg(st proofstore.SignedState) registry.ParallaxChannelReg
 
 func newWatcher(t *testing.T, e *simEnv) (*Watcher, *[]string) {
 	t.Helper()
-	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, e.backend, e.bobAuth)
+	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, e.backend, e.bobPriv)
 	if err != nil {
 		t.Fatal(err)
 	}

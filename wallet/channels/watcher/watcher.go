@@ -3,18 +3,19 @@
 // canonical logs, auto-challenges stale closes with the latest complete
 // state, and settles own channels after the deadline.
 //
-// v1 scope: polling scan against a bind.ContractBackend (fine at 10-minute
-// blocks), single-shot transaction submission with per-tick re-evaluation.
-// The keyed tx manager with fee-bumping and the reusable watchcore
-// extraction arrive with the tower work.
+// Transactions go through the keyed TxManager: nonce-pinned, fee-bumped,
+// and resubmitted until mined — the challenge path never fire-and-forgets.
+// Polling scan against a bind.ContractBackend is fine at 10-minute blocks.
 package watcher
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"fmt"
 	"math/big"
 	"strconv"
 
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
@@ -41,24 +42,20 @@ type Config struct {
 }
 
 // Watcher watches one registry for every channel in the store that belongs
-// to it. Auth MAY be nil for a watch-only instance (no challenge/settle).
+// to it. Key MAY be nil for a watch-only instance (no challenge/settle).
 type Watcher struct {
 	cfg      Config
 	store    *proofstore.Store
-	backend  bind.ContractBackend
+	backend  TxBackend
 	contract *registry.ChannelRegistry
-	auth     *bind.TransactOpts
+	txmgr    *TxManager
 
 	// Alarm receives operator-grade alerts (stale close observed, challenge
 	// window nearly exhausted). Optional.
 	Alarm func(format string, args ...any)
-
-	// submitted dedupes in-flight transactions per channel until their
-	// effect is visible on-chain.
-	submitted map[proofstore.ChannelKey]string
 }
 
-func New(cfg Config, store *proofstore.Store, backend bind.ContractBackend, auth *bind.TransactOpts) (*Watcher, error) {
+func New(cfg Config, store *proofstore.Store, backend TxBackend, key *ecdsa.PrivateKey) (*Watcher, error) {
 	if cfg.Confirmations == 0 {
 		cfg.Confirmations = 3
 	}
@@ -66,15 +63,25 @@ func New(cfg Config, store *proofstore.Store, backend bind.ContractBackend, auth
 	if err != nil {
 		return nil, err
 	}
-	return &Watcher{
-		cfg:       cfg,
-		store:     store,
-		backend:   backend,
-		contract:  contract,
-		auth:      auth,
-		submitted: make(map[proofstore.ChannelKey]string),
-	}, nil
+	w := &Watcher{
+		cfg:      cfg,
+		store:    store,
+		backend:  backend,
+		contract: contract,
+	}
+	if key != nil {
+		chainID, ok := new(big.Int).SetString(cfg.ChainID, 10)
+		if !ok {
+			return nil, fmt.Errorf("watcher: bad chain id %q", cfg.ChainID)
+		}
+		w.txmgr = NewTxManager(backend, key, chainID)
+		w.txmgr.Alarm = func(format string, args ...any) { w.alarm(format, args...) }
+	}
+	return w, nil
 }
+
+// TxManager exposes the transaction manager (the tower shares it).
+func (w *Watcher) TxManager() *TxManager { return w.txmgr }
 
 func (w *Watcher) alarm(format string, args ...any) {
 	if w.Alarm != nil {
@@ -95,6 +102,9 @@ func (w *Watcher) Tick(ctx context.Context) (uint64, error) {
 	}
 	cutoff := head - (w.cfg.Confirmations - 1) // logs at or below are confirmed
 
+	if w.txmgr != nil {
+		w.txmgr.Tick(ctx, head)
+	}
 	channels, err := w.store.ListChannels()
 	if err != nil {
 		return head, err
@@ -226,7 +236,7 @@ func (w *Watcher) actOnChannel(ctx context.Context, key proofstore.ChannelKey, h
 	if err != nil {
 		return err
 	}
-	if meta.Status != proofstore.StatusClosing || w.auth == nil {
+	if meta.Status != proofstore.StatusClosing || w.txmgr == nil {
 		return nil
 	}
 
@@ -253,64 +263,31 @@ func (w *Watcher) actOnChannel(ctx context.Context, key proofstore.ChannelKey, h
 	}
 
 	if latest.Seq > onchain.ClosingSeq && head <= deadline {
-		if w.pending(key, "challenge") {
-			if head+alarmBlocksBeforeDeadline > deadline {
-				w.alarm("challenge for %s still unconfirmed with %d blocks to deadline", key, deadline-head)
-			}
-			return nil
+		proof := registry.ParallaxChannelRegistryBalanceProof{
+			ChannelId:       new(big.Int).SetUint64(key.ChannelID),
+			Seq:             latest.Seq,
+			TransferredAtoB: latest.TransferredAtoB.BigInt(),
+			TransferredBtoA: latest.TransferredBtoA.BigInt(),
+			LocksRoot:       latest.LocksRoot,
+			LockedAmount:    latest.LockedAmount.BigInt(),
 		}
-		tx, err := w.contract.Challenge(w.auth,
-			new(big.Int).SetUint64(key.ChannelID),
-			registry.ParallaxChannelRegistryBalanceProof{
-				ChannelId:       new(big.Int).SetUint64(key.ChannelID),
-				Seq:             latest.Seq,
-				TransferredAtoB: latest.TransferredAtoB.BigInt(),
-				TransferredBtoA: latest.TransferredBtoA.BigInt(),
-				LocksRoot:       latest.LocksRoot,
-				LockedAmount:    latest.LockedAmount.BigInt(),
-			},
-			latest.SigA, latest.SigB)
-		if err != nil {
-			return fmt.Errorf("challenge: %w", err)
-		}
-		w.markPending(key, "challenge", tx.Hash().Hex())
-		return nil
+		return w.txmgr.Submit(ctx, "challenge:"+key.String(), head, deadline,
+			func(auth *bind.TransactOpts) (*types.Transaction, error) {
+				return w.contract.Challenge(auth, new(big.Int).SetUint64(key.ChannelID), proof, latest.SigA, latest.SigB)
+			})
 	}
 	if latest.Seq <= onchain.ClosingSeq {
-		w.clearPending(key, "challenge")
+		// Someone's challenge (ours or a tower's) took effect.
+		w.txmgr.Done("challenge:" + key.String())
 	}
 
 	if head > deadline {
-		if w.pending(key, "settle") {
-			return nil
-		}
-		tx, err := w.contract.Settle(w.auth, new(big.Int).SetUint64(key.ChannelID))
-		if err != nil {
-			return fmt.Errorf("settle: %w", err)
-		}
-		w.markPending(key, "settle", tx.Hash().Hex())
+		return w.txmgr.Submit(ctx, "settle:"+key.String(), head, 0,
+			func(auth *bind.TransactOpts) (*types.Transaction, error) {
+				return w.contract.Settle(auth, new(big.Int).SetUint64(key.ChannelID))
+			})
 	}
 	return nil
-}
-
-func pendingKey(key proofstore.ChannelKey, action string) proofstore.ChannelKey {
-	// Piggyback the action into the ChainID field of a copy — cheap composite
-	// map key without a new type.
-	key.ChainID = key.ChainID + "/" + action
-	return key
-}
-
-func (w *Watcher) pending(key proofstore.ChannelKey, action string) bool {
-	_, ok := w.submitted[pendingKey(key, action)]
-	return ok
-}
-
-func (w *Watcher) markPending(key proofstore.ChannelKey, action, txHash string) {
-	w.submitted[pendingKey(key, action)] = txHash
-}
-
-func (w *Watcher) clearPending(key proofstore.ChannelKey, action string) {
-	delete(w.submitted, pendingKey(key, action))
 }
 
 // DedupeKeyFor names outbound-queue entries the watcher settles implicitly.
