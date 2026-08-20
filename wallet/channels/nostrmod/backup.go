@@ -31,19 +31,21 @@ type ChannelSnapshot struct {
 	Deposits   proofstore.Deposits      `json:"deposits"`
 }
 
-// maxSeq is the snapshot-freshness measure for one channel: the highest seq
-// this snapshot knows about, complete or self-signed.
-func (c *ChannelSnapshot) maxSeq() uint64 {
-	var max uint64
+// freshness orders snapshots of one channel: the completed seq dominates
+// (a countersigned state is strictly more information than a journal entry
+// at the same seq — restoring the journal-only variant would forget a
+// countersignature already held), then the highest journaled seq, then the
+// snapshot timestamp.
+func (c *ChannelSnapshot) freshness() (latestSeq, journalSeq uint64) {
 	if c.Latest != nil {
-		max = c.Latest.Seq
+		latestSeq = c.Latest.Seq
 	}
 	for _, st := range c.SelfSigned {
-		if st.Seq > max {
-			max = st.Seq
+		if st.Seq > journalSeq {
+			journalSeq = st.Seq
 		}
 	}
-	return max
+	return latestSeq, journalSeq
 }
 
 // BuildSnapshot reads the full recoverable state out of the store.
@@ -137,17 +139,28 @@ func ParseBackup(wrap nostr.Event, nostrPriv string) (Snapshot, error) {
 // new (Part 3 §4.3).
 func RestoreSnapshots(store *proofstore.Store, snapshots []Snapshot) (restored int, err error) {
 	type best struct {
-		cs        ChannelSnapshot
-		seq       uint64
-		createdAt int64
+		cs         ChannelSnapshot
+		latestSeq  uint64
+		journalSeq uint64
+		createdAt  int64
+	}
+	better := func(a best, b best) bool { // is a fresher than b
+		if a.latestSeq != b.latestSeq {
+			return a.latestSeq > b.latestSeq
+		}
+		if a.journalSeq != b.journalSeq {
+			return a.journalSeq > b.journalSeq
+		}
+		return a.createdAt > b.createdAt
 	}
 	byKey := make(map[proofstore.ChannelKey]best)
 	for _, snap := range snapshots {
 		for _, cs := range snap.Channels {
-			seq := cs.maxSeq()
+			latestSeq, journalSeq := cs.freshness()
+			cand := best{cs: cs, latestSeq: latestSeq, journalSeq: journalSeq, createdAt: snap.CreatedAt}
 			cur, ok := byKey[cs.Meta.Key]
-			if !ok || seq > cur.seq || (seq == cur.seq && snap.CreatedAt > cur.createdAt) {
-				byKey[cs.Meta.Key] = best{cs: cs, seq: seq, createdAt: snap.CreatedAt}
+			if !ok || better(cand, cur) {
+				byKey[cs.Meta.Key] = cand
 			}
 		}
 	}

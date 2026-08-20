@@ -142,6 +142,35 @@ func TestRestoreTakesMaxSeqSnapshot(t *testing.T) {
 	}
 }
 
+// TestRestorePrefersCompletedOverJournaledSeq: a mid-payment snapshot
+// (journal at seq N, no complete state) must lose to a post-completion
+// snapshot (complete at seq N) — restoring the journal-only variant would
+// forget a countersignature already held.
+func TestRestorePrefersCompletedOverJournaledSeq(t *testing.T) {
+	completed := seedStore(t, 4) // complete seq 4 + journal seq 5
+	snapCompleted, err := BuildSnapshot(completed, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Handcraft the mid-payment variant: same journal ceiling (5), but the
+	// latest complete state stripped.
+	snapMid := snapCompleted
+	snapMid.CreatedAt = 100 // newer wall clock must NOT win
+	mid := make([]ChannelSnapshot, len(snapCompleted.Channels))
+	copy(mid, snapCompleted.Channels)
+	mid[0].Latest = nil
+	snapMid.Channels = mid
+
+	dst := openTestStore(t)
+	if _, err := RestoreSnapshots(dst, []Snapshot{snapMid, snapCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := dst.LatestState(backupKey)
+	if err != nil || latest.Seq != 4 {
+		t.Fatalf("journal-only snapshot won: %+v %v", latest, err)
+	}
+}
+
 func TestRestoreNeverOverwritesLiveStore(t *testing.T) {
 	live := seedStore(t, 9)
 	staleSnap, err := BuildSnapshot(seedStore(t, 2), 100)
