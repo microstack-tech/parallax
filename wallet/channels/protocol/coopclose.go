@@ -32,10 +32,10 @@ func domainOf(key proofstore.ChannelKey) (registry.Domain, error) {
 	return registry.Domain{ChainID: chainID, Registry: key.Registry}, nil
 }
 
-// closeBalances computes the explicit final balances from the latest
+// CloseBalances computes the explicit final balances from the latest
 // complete state and the confirmed funding view, using the same clamped
 // settlement math the contract applies (Part 2 §8).
-func (e *Engine) closeBalances(key proofstore.ChannelKey) (balA, balB *big.Int, err error) {
+func (e *Engine) CloseBalances(key proofstore.ChannelKey) (balA, balB *big.Int, err error) {
 	latest, err := e.latestOrZero(key)
 	if err != nil {
 		return nil, nil, err
@@ -79,7 +79,7 @@ func (e *Engine) ProposeCoopClose(key proofstore.ChannelKey, expiryBlock, nowBlo
 		return nil, fmt.Errorf("protocol: expiry block %d not in the future", expiryBlock)
 	}
 
-	balA, balB, err := e.closeBalances(key)
+	balA, balB, err := e.CloseBalances(key)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad balances")}, nil, nil
 	}
 
-	balA, balB, err := e.closeBalances(key)
+	balA, balB, err := e.CloseBalances(key)
 	if err != nil {
 		return Result{}, nil, err
 	}

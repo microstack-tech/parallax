@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/nostrmod"
@@ -177,6 +178,77 @@ func (n *Node) handleHandshake(ctx context.Context, msg protocol.HandshakeMsg, s
 	if err == nil {
 		n.log.Info("channel handshake accepted", "channel", channelID, "peer", opener.Hex())
 	}
+	return err
+}
+
+// Deposit tops up this wallet's column on an open channel.
+func (n *Node) Deposit(ctx context.Context, key proofstore.ChannelKey, amount *big.Int) error {
+	contract, err := n.contractFor(key.ChainID, key.Registry)
+	if err != nil {
+		return err
+	}
+	chainID, _ := new(big.Int).SetString(key.ChainID, 10)
+	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	if err != nil {
+		return err
+	}
+	auth.Context = ctx
+	auth.Value = amount
+	tx, err := contract.Deposit(auth, new(big.Int).SetUint64(key.ChannelID))
+	if err != nil {
+		return err
+	}
+	_, err = bind.WaitMined(ctx, n.backend, tx)
+	return err
+}
+
+// UnilateralClose starts the on-chain dispute at the latest complete state
+// (or with no proof when none exists). Refused by local policy while
+// self-signed states are outstanding — closing below a seq the counterparty
+// may hold walks into the penalty (Part 2 §7.4); pass force to accept the
+// displayed exposure deliberately.
+func (n *Node) UnilateralClose(ctx context.Context, key proofstore.ChannelKey, force bool) error {
+	journal, err := n.Store.SelfSigned(key)
+	if err != nil {
+		return err
+	}
+	if len(journal) > 0 && !force {
+		exposure, _ := n.Engine.PoisonedExposure(key)
+		return fmt.Errorf("channeld: channel is poisoned; closing now risks a penalty of %s wei — use force to accept", exposure)
+	}
+
+	contract, err := n.contractFor(key.ChainID, key.Registry)
+	if err != nil {
+		return err
+	}
+	chainID, _ := new(big.Int).SetString(key.ChainID, 10)
+	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	if err != nil {
+		return err
+	}
+	auth.Context = ctx
+
+	latest, lerr := n.Store.LatestState(key)
+	var tx *types.Transaction
+	if lerr != nil {
+		tx, err = contract.StartCloseNoProof(auth, new(big.Int).SetUint64(key.ChannelID))
+	} else {
+		tx, err = contract.StartClose(auth,
+			new(big.Int).SetUint64(key.ChannelID),
+			registry.ParallaxChannelRegistryBalanceProof{
+				ChannelId:       new(big.Int).SetUint64(key.ChannelID),
+				Seq:             latest.Seq,
+				TransferredAtoB: latest.TransferredAtoB.BigInt(),
+				TransferredBtoA: latest.TransferredBtoA.BigInt(),
+				LocksRoot:       latest.LocksRoot,
+				LockedAmount:    latest.LockedAmount.BigInt(),
+			},
+			latest.SigA, latest.SigB)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = bind.WaitMined(ctx, n.backend, tx)
 	return err
 }
 

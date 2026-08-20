@@ -14,12 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with parallax. If not, see <http://www.gnu.org/licenses/>.
 
-// parallax-wallet is the offline wallet management tool for the Parallax
-// client suite. It consolidates the previous parallaxkey (single-keyfile
+// parallax-wallet is the wallet management tool for the Parallax client
+// suite. It consolidates the previous parallaxkey (single-keyfile
 // operations) and "parallax account" (keystore-directory operations) into
-// a single binary modeled after Bitcoin Core's bitcoin-wallet. It never
-// talks to a running node; RPC-backed wallet commands live in
-// parallax-cli.
+// a single binary modeled after Bitcoin Core's bitcoin-wallet. The key and
+// account operations are fully offline; RPC-backed node wallet commands
+// live in parallax-cli. The payment-channel commands ("channel", "nostr")
+// are the exception: per the Parallax Channels spec they talk to a running
+// node over RPC and to Nostr relays.
 package main
 
 import (
@@ -100,6 +102,12 @@ func init() {
 		commandSignMessage,
 		commandVerifyMessage,
 		commandSignTx,
+
+		// Payment-channel operations (Parallax Channels spec). Unlike the
+		// key operations above, these talk to a running node over RPC and
+		// to Nostr relays.
+		commandChannel,
+		commandNostr,
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 	cli.CommandHelpTemplate = flags.OriginCommandHelpTemplate
