@@ -131,6 +131,25 @@ type WithdrawProposalMsg struct {
 	Relays         []string `json:"relays,omitempty"`
 }
 
+// TowerDelegationMsg is kind 21906 (Part 2 §6.6): the complete dual-signed
+// state entrusted to a tower for watch-and-challenge.
+type TowerDelegationMsg struct {
+	V         int       `json:"v"`
+	Registry  string    `json:"registry"`
+	ChainID   string    `json:"chainId"`
+	ChannelID string    `json:"channelId"`
+	State     WireState `json:"state"`
+	Note      string    `json:"note,omitempty"`
+}
+
+// TowerReceiptMsg is kind 21907.
+type TowerReceiptMsg struct {
+	V         int    `json:"v"`
+	ChannelID string `json:"channelId"`
+	Seq       string `json:"seq"`
+	OK        bool   `json:"ok"`
+}
+
 // InvoiceMsg is kind 21901.
 type InvoiceMsg struct {
 	V          int      `json:"v"`

@@ -109,6 +109,7 @@ func init() {
 		commandChannel,
 		commandMerchant,
 		commandNostr,
+		commandTower,
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 	cli.CommandHelpTemplate = flags.OriginCommandHelpTemplate

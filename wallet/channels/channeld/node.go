@@ -53,6 +53,10 @@ type Node struct {
 	// (merchant webhooks, Part 3 §9). Called on the dispatcher goroutine.
 	OnPayment func(invoiceID string, state *proofstore.SignedState)
 
+	// DelegationHandler, when set (tower mode), processes inbound 21906
+	// messages and returns the 21907 receipt.
+	DelegationHandler func(ctx context.Context, msg protocol.TowerDelegationMsg, sender string) (*protocol.TowerReceiptMsg, error)
+
 	backend Backend
 	evmKey  *ecdsa.PrivateKey // retained for on-chain verbs (open/close/withdraw)
 	log     *slog.Logger
@@ -60,6 +64,9 @@ type Node struct {
 
 // EVMKey exposes the wallet key for on-chain transaction building.
 func (n *Node) EVMKey() *ecdsa.PrivateKey { return n.evmKey }
+
+// Backend exposes the chain backend (nil for offline nodes).
+func (n *Node) Backend() Backend { return n.backend }
 
 // New assembles a node from configuration, the EVM key, and a data
 // directory holding the proof store. The Nostr identity is derived from the
@@ -158,7 +165,7 @@ func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
 		go func() {
 			for i := 0; i < 30; i++ {
 				if n.Pool.Healthy() > 0 {
-					n.afterCompletion(ctx)
+					n.afterCompletion(ctx, nil)
 					return
 				}
 				select {
@@ -264,7 +271,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 			return err
 		}
 		n.settleOutbound(protocol.KindProposal, key, complete.Seq)
-		n.afterCompletion(ctx)
+		n.afterCompletion(ctx, complete)
 		return nil
 
 	case protocol.KindNack:
@@ -362,6 +369,44 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		}
 		return nil
 
+	case protocol.KindTowerDelegation:
+		if n.DelegationHandler == nil {
+			return nil // not running a tower
+		}
+		var msg protocol.TowerDelegationMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		receipt, err := n.DelegationHandler(ctx, msg, sender)
+		if err != nil {
+			return err
+		}
+		return n.sendDirect(ctx, sender, protocol.KindTowerReceipt, receipt, msg.ChannelID)
+
+	case protocol.KindTowerReceipt:
+		var msg protocol.TowerReceiptMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		key, ok := n.channelByID(msg.ChannelID)
+		if !ok {
+			return nil
+		}
+		seq, err := strconv.ParseUint(msg.Seq, 10, 64)
+		if err != nil {
+			return nil
+		}
+		// Receipts for seq >= our delegation settle its retransmission.
+		for s := seq; ; s-- {
+			if removed, _ := n.Store.RemoveOutboundByDedupe(watcher.DedupeKeyFor(protocol.KindTowerDelegation, key, s)); removed == 0 && s != seq {
+				break
+			}
+			if s == 0 {
+				break
+			}
+		}
+		return nil
+
 	case protocol.KindHandshake:
 		var msg protocol.HandshakeMsg
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
@@ -379,7 +424,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 // of retransmitted).
 func (n *Node) reactToResult(ctx context.Context, res protocol.Result, peer string, channelID string, ackKind int) error {
 	if res.Completed != nil {
-		n.afterCompletion(ctx)
+		n.afterCompletion(ctx, res.Completed)
 	}
 	if res.AdoptedTiebreak && res.Completed != nil {
 		// Our own conflicting proposal at this seq is dead (A-wins tiebreak,
@@ -425,15 +470,65 @@ func (n *Node) sendDirect(ctx context.Context, peer string, kind int, payload an
 	return nil
 }
 
-// afterCompletion publishes the self-backup after every completed state
-// change (Part 2 §6.10). Tower delegation joins this hook in the tower
-// phase.
-func (n *Node) afterCompletion(ctx context.Context) {
-	if !n.Cfg.Backup.Enabled {
+// afterCompletion runs after every completed state change: self-backup
+// (Part 2 §6.10) and tower delegation (Part 2 §9). state MAY be nil (bulk
+// catch-up: delegate the latest state of every channel).
+func (n *Node) afterCompletion(ctx context.Context, state *proofstore.SignedState) {
+	if n.Cfg.Backup.Enabled {
+		if _, err := nostrmod.PublishBackup(ctx, n.Store, n.Pool, n.NostrPriv); err != nil {
+			n.log.Error("self-backup", "err", err)
+		}
+	}
+	if len(n.Cfg.Channels.Towers.Npubs) == 0 {
 		return
 	}
-	if _, err := nostrmod.PublishBackup(ctx, n.Store, n.Pool, n.NostrPriv); err != nil {
-		n.log.Error("self-backup", "err", err)
+	if state != nil {
+		n.delegate(*state)
+		return
+	}
+	metas, err := n.Store.ListChannels()
+	if err != nil {
+		return
+	}
+	for _, meta := range metas {
+		if meta.Status == proofstore.StatusSettled {
+			continue
+		}
+		if latest, err := n.Store.LatestState(meta.Key); err == nil {
+			n.delegate(latest)
+		}
+	}
+}
+
+// delegate queues a 21906 for every configured tower; retransmission stops
+// on the 21907 receipt.
+func (n *Node) delegate(st proofstore.SignedState) {
+	msg := protocol.TowerDelegationMsg{
+		V:         1,
+		Registry:  strings.ToLower(st.Key.Registry.Hex()),
+		ChainID:   st.Key.ChainID,
+		ChannelID: strconv.FormatUint(st.Key.ChannelID, 10),
+		State:     protocol.ToWire(st),
+	}
+	content, err := protocol.EncodePayload(msg)
+	if err != nil {
+		n.log.Error("delegation encode", "err", err)
+		return
+	}
+	now := time.Now().Unix()
+	for _, npub := range n.Cfg.Channels.Towers.Npubs {
+		_, err := n.Store.EnqueueOutbound(proofstore.OutboundItem{
+			DedupeKey: watcher.DedupeKeyFor(protocol.KindTowerDelegation, st.Key, st.Seq),
+			ToNpub:    npub,
+			Kind:      protocol.KindTowerDelegation,
+			Content:   content,
+			Tags:      [][]string{{"ch", msg.ChannelID}},
+			RumorTime: now,
+			ExpiresAt: now + 24*3600,
+		})
+		if err != nil {
+			n.log.Error("delegation enqueue", "err", err)
+		}
 	}
 }
 

@@ -110,6 +110,40 @@ func (s *Store) Delegation(key ChannelKey) (Delegation, error) {
 	return d, err
 }
 
+// TowerWatermark returns the tower's confirmed-scan watermark for one
+// registry (0 = never scanned).
+func (s *Store) TowerWatermark(chainID string, registryAddr string) (uint64, error) {
+	var v uint64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTower)
+		raw := b.Get([]byte("__watermark:" + chainID + ":" + registryAddr))
+		if raw != nil {
+			var item struct {
+				Block uint64 `json:"block"`
+			}
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return err
+			}
+			v = item.Block
+		}
+		return nil
+	})
+	return v, err
+}
+
+// SetTowerWatermark advances the tower's confirmed-scan watermark.
+func (s *Store) SetTowerWatermark(chainID string, registryAddr string, block uint64) error {
+	raw, err := json.Marshal(struct {
+		Block uint64 `json:"block"`
+	}{block})
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketTower).Put([]byte("__watermark:"+chainID+":"+registryAddr), raw)
+	})
+}
+
 // DelegationCount returns the number of channels a delegator has on file
 // (spam cap for open registration, Part 3 §10.2).
 func (s *Store) DelegationCount(delegatorNpub string) (int, error) {

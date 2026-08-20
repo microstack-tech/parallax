@@ -37,6 +37,11 @@ type Config struct {
 		CoopCloseValidityBlocks  uint64 `toml:"coop_close_validity_blocks"`
 		WithdrawValidityBlocks   uint64 `toml:"withdraw_validity_blocks"`
 		MaxInflightPaymentWei    string `toml:"max_inflight_payment_wei"` // "0" = unlimited
+
+		// Towers to delegate every completed state to (client side).
+		Towers struct {
+			Npubs []string `toml:"npubs"`
+		} `toml:"towers"`
 	} `toml:"channels"`
 
 	Backup struct {
@@ -53,10 +58,11 @@ type Config struct {
 	} `toml:"merchant"`
 
 	Tower struct {
-		Enabled           bool     `toml:"enabled"`
-		Delegators        []string `toml:"delegators"`
-		OpenRegistration  bool     `toml:"open_registration"`
-		MinDiscrepancyWei string   `toml:"min_discrepancy_wei"`
+		Enabled               bool     `toml:"enabled"`
+		Delegators            []string `toml:"delegators"`
+		OpenRegistration      bool     `toml:"open_registration"`
+		MinDiscrepancyWei     string   `toml:"min_discrepancy_wei"`
+		MaxDelegationsPerNpub int      `toml:"max_delegations_per_npub"`
 	} `toml:"tower"`
 }
 
@@ -77,6 +83,7 @@ func DefaultConfig() Config {
 	cfg.Channels.WithdrawValidityBlocks = 18
 	cfg.Channels.MaxInflightPaymentWei = "0"
 	cfg.Backup.Enabled = true
+	cfg.Tower.MaxDelegationsPerNpub = 1000
 	return cfg
 }
 
