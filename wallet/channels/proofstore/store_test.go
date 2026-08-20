@@ -211,6 +211,33 @@ func TestLateAckAfterSupersessionProposal(t *testing.T) {
 	}
 }
 
+func TestTiebreakAdoption(t *testing.T) {
+	s := openStore(t)
+	newChannel(t, s, RoleB)
+
+	// B journals its own N+1 proposal...
+	if err := s.PutSelfSigned(state(1, 0, 5, RoleB)); err != nil {
+		t.Fatal(err)
+	}
+	// ...then adopts A's conflicting N+1 (A-wins tiebreak). The plain path
+	// must refuse; the explicit tiebreak path must accept and prune B's
+	// discarded variant.
+	adopted := state(1, 7, 0, RoleA, RoleB)
+	if err := s.PutComplete(adopted); !errors.Is(err, ErrEquivocation) {
+		t.Fatalf("plain complete allowed tiebreak adoption: %v", err)
+	}
+	if err := s.PutCompleteTiebreak(adopted); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := s.SelfSigned(testKey); len(out) != 0 {
+		t.Fatalf("discarded variant not pruned: %+v", out)
+	}
+	latest, _ := s.LatestState(testKey)
+	if latest.Seq != 1 || latest.TransferredAtoB.BigInt().Int64() != 7 {
+		t.Fatalf("adopted state not stored: %+v", latest)
+	}
+}
+
 func TestPersistenceAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "proofs.db")

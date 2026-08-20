@@ -208,6 +208,21 @@ func (s *Store) PutSelfSigned(st SignedState) error {
 // supersession by a strictly higher state are the only legal clears
 // (Part 3 §4.2 monotonicity).
 func (s *Store) PutComplete(st SignedState) error {
+	return s.putComplete(st, false)
+}
+
+// PutCompleteTiebreak is PutComplete with the one narrow W3 exception the
+// simultaneous-proposal tiebreak requires (Part 2 §7.5): participant B,
+// holding its own journaled self-signed N+1, adopts and countersigns A's
+// *different* N+1. The discarded variant can never complete — completing it
+// would need A's signature over it, which A's own W3 forbids — and it is
+// pruned here, so no two complete states at one seq can ever exist locally.
+// Callers MUST use this only for the A-wins adoption path.
+func (s *Store) PutCompleteTiebreak(st SignedState) error {
+	return s.putComplete(st, true)
+}
+
+func (s *Store) putComplete(st SignedState, allowTiebreak bool) error {
 	if !st.Complete() {
 		return fmt.Errorf("%w: state is not dual-signed", ErrBadState)
 	}
@@ -240,7 +255,7 @@ func (s *Store) PutComplete(st SignedState) error {
 		}
 
 		ss := cb.Bucket(bucketSelfSigned)
-		if prev := ss.Get(seqKey(st.Seq)); prev != nil {
+		if prev := ss.Get(seqKey(st.Seq)); prev != nil && !allowTiebreak {
 			prevDigest, err := digestOf(prev)
 			if err != nil {
 				return err

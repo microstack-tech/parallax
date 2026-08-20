@@ -87,11 +87,22 @@ func (k ChannelKey) domain() (registry.Domain, error) {
 	return registry.Domain{ChainID: chainID, Registry: k.Registry}, nil
 }
 
+// Status is the watcher-owned view of the channel's on-chain state,
+// recomputed from canonical logs (Part 3 §7).
+type Status string
+
+const (
+	StatusOpen    Status = "open"
+	StatusClosing Status = "closing"
+	StatusSettled Status = "settled"
+)
+
 // ChannelMeta is the per-channel metadata record (Part 3 §4.1). Poisoned and
 // FrozenUntilBlock are persisted so both survive restarts (Part 3 §5).
 type ChannelMeta struct {
 	Key              ChannelKey   `json:"key"`
 	Role             Role         `json:"role"`
+	Status           Status       `json:"status"`
 	PeerNpub         string       `json:"peerNpub"` // 64-char x-only hex
 	PeerAddress      util.Address `json:"peerAddress"`
 	ChallengePeriod  uint32       `json:"challengePeriodBlocks"`
