@@ -29,6 +29,7 @@ import (
 // so does the simulated backend in tests.
 type Backend interface {
 	bind.ContractBackend
+	bind.DeployBackend // receipt lookups for WaitMined
 }
 
 // Node wires the channel subsystem together for one wallet identity.
@@ -288,8 +289,15 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		n.submitCoopClose(ctx, ready)
 		return nil
 
+	case protocol.KindHandshake:
+		var msg protocol.HandshakeMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		return n.handleHandshake(ctx, msg, sender)
+
 	default:
-		return nil // invoices/handshakes/tower kinds arrive with later phases
+		return nil // invoices/tower kinds arrive with later phases
 	}
 }
 
@@ -353,10 +361,16 @@ func (n *Node) settleOutbound(kind int, key proofstore.ChannelKey, seq uint64) {
 }
 
 func (n *Node) submitCoopClose(ctx context.Context, ready *protocol.CoopCloseReady) {
-	// On-chain submission through the watcher's registry binding arrives
-	// with the CLI close verb; both sides hold the pair either way.
 	n.log.Info("cooperative close fully signed",
 		"channel", ready.Key.String(), "balanceA", ready.BalanceA, "balanceB", ready.BalanceB)
+	if n.backend == nil {
+		return // offline node: the counterparty submits, or the CLI does later
+	}
+	if err := n.SubmitCoopClose(ctx, ready); err != nil {
+		// Not loss-capable: the counterparty holds the same pair and the
+		// freeze holds until expiry either way.
+		n.log.Error("cooperative close submission", "err", err)
+	}
 }
 
 // channelByID resolves a bare wire channel id against the store. Ambiguity

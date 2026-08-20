@@ -100,6 +100,21 @@ type CoopCloseProposalMsg struct {
 	Relays       []string `json:"relays,omitempty"`
 }
 
+// HandshakeMsg is kind 21908 (Part 2 §6.8), sent by the opener after the
+// on-chain open; the linkage privately binds the opener's npub to its EVM
+// address without a public 31910.
+type HandshakeMsg struct {
+	V          int    `json:"v"`
+	ChannelID  string `json:"channelId"`
+	Registry   string `json:"registry"`
+	ChainID    string `json:"chainId"`
+	EVMAddress string `json:"evmAddress"`
+	Linkage    struct {
+		EVMSig string `json:"evmSig"`
+	} `json:"linkage"`
+	Relays []string `json:"relays,omitempty"`
+}
+
 // InvoiceMsg is kind 21901.
 type InvoiceMsg struct {
 	V          int      `json:"v"`

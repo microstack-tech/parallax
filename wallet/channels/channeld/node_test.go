@@ -3,6 +3,7 @@ package channeld
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"math/big"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/nostrmod"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/protocol"
 )
 
 // hub is an in-process relay: publishes route to subscribers by p-tag.
@@ -98,9 +100,26 @@ func newTestNode(t *testing.T, h *hub, key *ecdsa.PrivateKey) *Node {
 	}
 	t.Cleanup(func() { n.Close() })
 	// Swap the production dialer for the hub.
-	n.Pool = nostrmod.NewPool(h.dialer(), cfg.AllRelays(), n.SelfPub, nostrmod.PoolConfig{})
-	n.Transmitter = nostrmod.NewTransmitter(n.Store, n.Pool, n.NostrPriv)
+	n.Pool = newHubPool(h, n.SelfPub)
+	n.Transmitter = newHubTransmitter(n)
 	return n
+}
+
+func newHubPool(h *hub, selfPub string) *nostrmod.Pool {
+	return nostrmod.NewPool(h.dialer(), []string{"wss://hub"}, selfPub, nostrmod.PoolConfig{})
+}
+
+func newHubTransmitter(n *Node) *nostrmod.Transmitter {
+	return nostrmod.NewTransmitter(n.Store, n.Pool, n.NostrPriv)
+}
+
+func decodeHandshake(t *testing.T, content string) protocol.HandshakeMsg {
+	t.Helper()
+	var msg protocol.HandshakeMsg
+	if err := json.Unmarshal([]byte(content), &msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
 }
 
 func linkChannel(t *testing.T, a, b *Node) {
