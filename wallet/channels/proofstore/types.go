@@ -115,6 +115,21 @@ type ChannelMeta struct {
 	// a restart can neither forget the freeze nor re-sign different
 	// balances while a signed close is live (Part 1 §7.4, Part 4 R5).
 	PendingClose *PendingCoopClose `json:"pendingClose,omitempty"`
+
+	// PendingWithdraw is the outstanding withdraw negotiation this wallet
+	// proposed (Part 2 §6.10); needed to verify the countersign and to
+	// assemble the on-chain submission after a restart.
+	PendingWithdraw *PendingWithdraw `json:"pendingWithdraw,omitempty"`
+}
+
+// PendingWithdraw records a proposed cooperative withdraw until submission
+// or expiry.
+type PendingWithdraw struct {
+	Participant    util.Address `json:"participant"`
+	TotalWithdrawn U256         `json:"totalWithdrawn"`
+	ExpiryBlock    uint64       `json:"expiryBlock"`
+	MySig          []byte       `json:"mySig,omitempty"`
+	PeerSig        []byte       `json:"peerSig,omitempty"`
 }
 
 // PendingCoopClose records a signed cooperative close from proposal until

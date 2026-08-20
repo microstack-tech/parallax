@@ -142,6 +142,15 @@ var commandChannel = cli.Command{
 			Action: channelInvoice,
 		},
 		{
+			Name:      "withdraw",
+			Usage:     "cooperatively withdraw from a channel while it stays open",
+			ArgsUsage: "<keyfile> <channel-id> <amount-wei>",
+			Flags: []cli.Flag{
+				passphraseFlag, channelConfigFlag, channelDataDirFlag, channelWaitFlag,
+			},
+			Action: channelWithdraw,
+		},
+		{
 			Name:      "close",
 			Usage:     "close a channel (cooperative by default)",
 			ArgsUsage: "<keyfile> <channel-id>",
@@ -486,6 +495,52 @@ func channelInvoice(ctx *cli.Context) error {
 		fmt.Println("note: run the merchant daemon so the invoice reaches the payer and payments are countersigned")
 	}
 	return nil
+}
+
+func channelWithdraw(ctx *cli.Context) error {
+	node, cleanup, err := newChannelNode(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	key := argChannel(node, ctx, 1)
+	amount := argWei(ctx, 2)
+
+	dep, err := node.Store.Deposits(key)
+	if err != nil {
+		return err
+	}
+	meta, err := node.Store.Meta(key)
+	if err != nil {
+		return err
+	}
+	before := dep.WithdrawnA.BigInt()
+	if meta.Role == proofstore.RoleB {
+		before = dep.WithdrawnB.BigInt()
+	}
+	want := new(big.Int).Add(before, amount)
+
+	return runNodeFor(node, func(runCtx context.Context) error {
+		if err := node.Withdraw(runCtx, key, amount); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(ctx.Duration(channelWaitFlag.Name))
+		for time.Now().Before(deadline) {
+			dep, err := node.Store.Deposits(key)
+			if err == nil {
+				got := dep.WithdrawnA.BigInt()
+				if meta.Role == proofstore.RoleB {
+					got = dep.WithdrawnB.BigInt()
+				}
+				if got.Cmp(want) >= 0 {
+					fmt.Printf("withdrawal confirmed on-chain: cumulative %s wei\n", got)
+					return nil
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		return fmt.Errorf("withdrawal not confirmed yet; the proposal keeps retransmitting until its expiry")
+	})
 }
 
 func channelClose(ctx *cli.Context) error {

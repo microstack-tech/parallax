@@ -35,6 +35,7 @@ type Config struct {
 		AcceptChallengePeriodMin uint32 `toml:"accept_challenge_period_min"`
 		AcceptChallengePeriodMax uint32 `toml:"accept_challenge_period_max"`
 		CoopCloseValidityBlocks  uint64 `toml:"coop_close_validity_blocks"`
+		WithdrawValidityBlocks   uint64 `toml:"withdraw_validity_blocks"`
 		MaxInflightPaymentWei    string `toml:"max_inflight_payment_wei"` // "0" = unlimited
 	} `toml:"channels"`
 
@@ -73,6 +74,7 @@ func DefaultConfig() Config {
 	cfg.Channels.AcceptChallengePeriodMin = 36
 	cfg.Channels.AcceptChallengePeriodMax = 1008
 	cfg.Channels.CoopCloseValidityBlocks = 18
+	cfg.Channels.WithdrawValidityBlocks = 18
 	cfg.Channels.MaxInflightPaymentWei = "0"
 	cfg.Backup.Enabled = true
 	return cfg

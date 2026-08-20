@@ -202,6 +202,11 @@ func (n *Node) unfreezeExpired(head uint64) {
 				n.log.Error("unfreeze", "channel", meta.Key.String(), "err", err)
 			}
 		}
+		if meta.PendingWithdraw != nil {
+			if err := n.Engine.SweepWithdraw(meta.Key, head); err != nil {
+				n.log.Error("withdraw sweep", "channel", meta.Key.String(), "err", err)
+			}
+		}
 	}
 }
 
@@ -313,6 +318,44 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 			return err
 		}
 		return n.handleInvoice(msg, sender)
+
+	case protocol.KindWithdrawProposal:
+		var msg protocol.WithdrawProposalMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		res, ready, err := n.Engine.HandleWithdrawProposal(msg, sender, nowBlock)
+		if err != nil {
+			return err
+		}
+		// The proposer is the payee and submits; the responder only returns
+		// the countersignature. (ready is the responder's copy of the pair,
+		// unused here.)
+		_ = ready
+		return n.reactToResult(ctx, res, sender, msg.ChannelID, protocol.KindWithdrawAck)
+
+	case protocol.KindWithdrawAck:
+		var msg protocol.AckMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		key, ok := n.channelByID(msg.ChannelID)
+		if !ok {
+			return nil
+		}
+		ready, err := n.Engine.HandleWithdrawAck(key, msg)
+		if err != nil {
+			return err
+		}
+		n.settleOutbound(protocol.KindWithdrawProposal, key, 0)
+		if n.backend != nil {
+			if err := n.SubmitWithdraw(ctx, ready); err != nil {
+				// Not loss-capable: retry on the next ack retransmission or
+				// re-propose after expiry.
+				n.log.Error("withdraw submission", "err", err)
+			}
+		}
+		return nil
 
 	case protocol.KindHandshake:
 		var msg protocol.HandshakeMsg

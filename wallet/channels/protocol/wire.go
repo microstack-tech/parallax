@@ -29,6 +29,8 @@ const (
 	KindHandshake         = 21908
 	KindNack              = 21909
 	KindSelfBackup        = 21910
+	KindWithdrawProposal  = 21911
+	KindWithdrawAck       = 21912
 )
 
 // NACK reasons (Part 2 §6.9).
@@ -113,6 +115,20 @@ type HandshakeMsg struct {
 		EVMSig string `json:"evmSig"`
 	} `json:"linkage"`
 	Relays []string `json:"relays,omitempty"`
+}
+
+// WithdrawProposalMsg is kind 21911 (Part 2 §6.10): the proposer signs the
+// on-chain Withdraw struct for its own address.
+type WithdrawProposalMsg struct {
+	V              int      `json:"v"`
+	ChannelID      string   `json:"channelId"`
+	Registry       string   `json:"registry"`
+	ChainID        string   `json:"chainId"`
+	Participant    string   `json:"participant"`
+	TotalWithdrawn string   `json:"totalWithdrawn"`
+	ExpiryBlock    string   `json:"expiryBlock"`
+	Sig            string   `json:"sig"`
+	Relays         []string `json:"relays,omitempty"`
 }
 
 // InvoiceMsg is kind 21901.

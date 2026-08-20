@@ -30,6 +30,10 @@ func newChainNode(t *testing.T, h *hub, key *ecdsa.PrivateKey, backend Backend, 
 	cfg.Nostr.Relays = []string{"wss://hub"}
 	cfg.Merchant.PushPayments = true
 	cfg.Backup.Enabled = false // keep the hub log readable
+	// The auto-miner commits every 20ms (~50 blocks/s): block-denominated
+	// validity windows must scale with block time (Part 3 §11 note).
+	cfg.Channels.CoopCloseValidityBlocks = 10_000
+	cfg.Channels.WithdrawValidityBlocks = 10_000
 
 	n, err := New(cfg, t.TempDir(), key, backend, nil)
 	if err != nil {

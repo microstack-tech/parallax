@@ -97,6 +97,37 @@ func (n *Node) CoopClose(ctx context.Context, key proofstore.ChannelKey) error {
 	return err
 }
 
+// Withdraw proposes a cooperative withdraw of amountWei to this wallet and
+// queues the 21911 for delivery; on-chain submission happens when the
+// countersignature (21912) arrives.
+func (n *Node) Withdraw(ctx context.Context, key proofstore.ChannelKey, amountWei *big.Int) error {
+	head := n.headBlock(ctx)
+	expiry := head + n.Cfg.Channels.WithdrawValidityBlocks
+	prop, err := n.Engine.ProposeWithdraw(key, amountWei, expiry, head)
+	if err != nil {
+		return err
+	}
+	meta, err := n.Store.Meta(key)
+	if err != nil {
+		return err
+	}
+	content, err := protocol.EncodePayload(prop)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	_, err = n.Store.EnqueueOutbound(proofstore.OutboundItem{
+		DedupeKey: watcher.DedupeKeyFor(protocol.KindWithdrawProposal, key, 0),
+		ToNpub:    meta.PeerNpub,
+		Kind:      protocol.KindWithdrawProposal,
+		Content:   content,
+		Tags:      [][]string{{"ch", prop.ChannelID}},
+		RumorTime: now,
+		ExpiresAt: now + int64(n.Cfg.Channels.WithdrawValidityBlocks)*600,
+	})
+	return err
+}
+
 // RestoreFromBackups drains the relay pool for wait, collects self-backups,
 // and restores the freshest snapshot per channel. The caller MUST run a
 // watcher pass before signing anything new (Part 3 §4.3).

@@ -58,11 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/invoices/{id}", s.auth(s.getInvoice))
 	mux.HandleFunc("GET /v1/channels", s.auth(s.listChannels))
 	mux.HandleFunc("POST /v1/channels/{id}/close", s.auth(s.closeChannel))
-	mux.HandleFunc("POST /v1/channels/{id}/withdraw", s.auth(func(w http.ResponseWriter, r *http.Request) {
-		// Cooperative-withdraw negotiation has no wire-protocol kinds yet
-		// (spec gap flagged for a Part 2 revision); sweep by close+reopen.
-		writeError(w, http.StatusNotImplemented, "cooperative withdraw negotiation is not implemented in this client; sweep via close and reopen")
-	}))
+	mux.HandleFunc("POST /v1/channels/{id}/withdraw", s.auth(s.withdraw))
 	return mux
 }
 
@@ -246,6 +242,40 @@ func (s *Server) closeChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "initiated"})
+}
+
+type withdrawRequest struct {
+	AmountWei string `json:"amountWei"`
+}
+
+// withdraw initiates the cooperative-withdraw negotiation (Part 2 §6.10);
+// on-chain submission follows automatically when the countersign arrives.
+func (s *Server) withdraw(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad channel id")
+		return
+	}
+	key, found := s.channelKey(id)
+	if !found {
+		writeError(w, http.StatusNotFound, "unknown channel")
+		return
+	}
+	var req withdrawRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad json: "+err.Error())
+		return
+	}
+	amount, ok := new(big.Int).SetString(req.AmountWei, 10)
+	if !ok || amount.Sign() <= 0 {
+		writeError(w, http.StatusBadRequest, "bad amountWei")
+		return
+	}
+	if err := s.node.Withdraw(r.Context(), key, amount); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "negotiating"})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {

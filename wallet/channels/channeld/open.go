@@ -252,6 +252,29 @@ func (n *Node) UnilateralClose(ctx context.Context, key proofstore.ChannelKey, f
 	return err
 }
 
+// SubmitWithdraw sends the fully signed cooperative withdraw on-chain.
+func (n *Node) SubmitWithdraw(ctx context.Context, ready *protocol.WithdrawReady) error {
+	contract, err := n.contractFor(ready.Key.ChainID, ready.Key.Registry)
+	if err != nil {
+		return err
+	}
+	chainID, _ := new(big.Int).SetString(ready.Key.ChainID, 10)
+	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	if err != nil {
+		return err
+	}
+	auth.Context = ctx
+	tx, err := contract.CooperativeWithdraw(auth,
+		new(big.Int).SetUint64(ready.Key.ChannelID),
+		ready.Participant, ready.TotalWithdrawn,
+		ready.ExpiryBlock, ready.SigA, ready.SigB)
+	if err != nil {
+		return err
+	}
+	_, err = bind.WaitMined(ctx, n.backend, tx)
+	return err
+}
+
 // SubmitCoopClose sends the fully signed cooperative close on-chain.
 func (n *Node) SubmitCoopClose(ctx context.Context, ready *protocol.CoopCloseReady) error {
 	contract, err := n.contractFor(ready.Key.ChainID, ready.Key.Registry)

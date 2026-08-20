@@ -110,6 +110,7 @@ accept_challenge_period_max = 1008
 # would be a 36-second signature validity, too tight for public-relay
 # delivery. 300 blocks = 10 minutes.
 coop_close_validity_blocks = 300
+withdraw_validity_blocks = 300
 
 [merchant]
 push_payments = true
