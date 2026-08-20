@@ -50,6 +50,10 @@ type Node struct {
 	// per-item backoff still governs retransmission).
 	TransmitInterval time.Duration
 
+	// OnPayment fires when an inbound payment completes against an invoice
+	// (merchant webhooks, Part 3 §9). Called on the dispatcher goroutine.
+	OnPayment func(invoiceID string, state *proofstore.SignedState)
+
 	backend Backend
 	evmKey  *ecdsa.PrivateKey // retained for on-chain verbs (open/close/withdraw)
 	log     *slog.Logger
@@ -231,6 +235,9 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err != nil {
 			return err
 		}
+		if res.Completed != nil && msg.InvoiceID != "" && n.OnPayment != nil {
+			n.OnPayment(msg.InvoiceID, res.Completed)
+		}
 		return n.reactToResult(ctx, res, sender, msg.State.ChannelID, protocol.KindAck)
 
 	case protocol.KindAck:
@@ -299,6 +306,13 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		n.settleOutbound(protocol.KindCoopCloseProposal, key, 0)
 		n.submitCoopClose(ctx, ready)
 		return nil
+
+	case protocol.KindInvoice:
+		var msg protocol.InvoiceMsg
+		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
+			return err
+		}
+		return n.handleInvoice(msg, sender)
 
 	case protocol.KindHandshake:
 		var msg protocol.HandshakeMsg

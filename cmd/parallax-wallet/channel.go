@@ -74,6 +74,23 @@ var (
 		Usage: "how long to wait for asynchronous completion",
 		Value: 60 * time.Second,
 	}
+	channelTTLFlag = cli.DurationFlag{
+		Name:  "ttl",
+		Usage: "invoice validity",
+		Value: 15 * time.Minute,
+	}
+	channelPinFlag = cli.Uint64Flag{
+		Name:  "channel",
+		Usage: "pin the invoice to a channel id (also sends it over the relay)",
+	}
+	channelMemoFlag = cli.StringFlag{
+		Name:  "memo",
+		Usage: "invoice memo",
+	}
+	channelURIFlag = cli.StringFlag{
+		Name:  "uri",
+		Usage: "pay a parallax: payment URI (amount and invoice come from it)",
+	}
 )
 
 var commandChannel = cli.Command{
@@ -107,12 +124,22 @@ var commandChannel = cli.Command{
 		{
 			Name:      "pay",
 			Usage:     "pay over a channel and wait for the countersignature",
-			ArgsUsage: "<keyfile> <channel-id> <amount-wei>",
+			ArgsUsage: "<keyfile> [<channel-id> <amount-wei>]",
 			Flags: []cli.Flag{
 				passphraseFlag, channelConfigFlag, channelDataDirFlag,
-				channelInvoiceFlag, channelWaitFlag,
+				channelInvoiceFlag, channelURIFlag, channelWaitFlag,
 			},
 			Action: channelPay,
+		},
+		{
+			Name:      "invoice",
+			Usage:     "create an invoice and print its payment URI",
+			ArgsUsage: "<keyfile> <amount-wei>",
+			Flags: []cli.Flag{
+				passphraseFlag, channelConfigFlag, channelDataDirFlag,
+				channelTTLFlag, channelPinFlag, channelMemoFlag, jsonFlag,
+			},
+			Action: channelInvoice,
 		},
 		{
 			Name:      "close",
@@ -387,12 +414,38 @@ func channelPay(ctx *cli.Context) error {
 		return err
 	}
 	defer cleanup()
-	key := argChannel(node, ctx, 1)
-	amount := argWei(ctx, 2)
+
+	var key proofstore.ChannelKey
+	var amount *big.Int
+	invoiceID := ctx.String(channelInvoiceFlag.Name)
+	if uri := ctx.String(channelURIFlag.Name); uri != "" {
+		req, err := channeld.ParsePaymentURI(uri)
+		if err != nil {
+			return err
+		}
+		metas, err := node.Store.ListChannels()
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, meta := range metas {
+			if meta.PeerAddress == req.Merchant && meta.Status == proofstore.StatusOpen {
+				key, found = meta.Key, true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("no open channel with merchant %s — open one first", req.Merchant.Hex())
+		}
+		amount, invoiceID = req.AmountWei, req.InvoiceID
+	} else {
+		key = argChannel(node, ctx, 1)
+		amount = argWei(ctx, 2)
+	}
 
 	before, _ := node.Store.LatestState(key)
 	return runNodeFor(node, func(runCtx context.Context) error {
-		if err := node.Pay(runCtx, key, amount, ctx.String(channelInvoiceFlag.Name)); err != nil {
+		if err := node.Pay(runCtx, key, amount, invoiceID); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(ctx.Duration(channelWaitFlag.Name))
@@ -407,6 +460,32 @@ func channelPay(ctx *cli.Context) error {
 		exposure, _ := node.Engine.PoisonedExposure(key)
 		return fmt.Errorf("no countersignature yet; the proposal keeps retransmitting from the persistent queue. Channel exposure if closed now: %s wei", exposure)
 	})
+}
+
+func channelInvoice(ctx *cli.Context) error {
+	node, cleanup, err := newChannelNode(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	inv, uri, err := node.CreateInvoice(argWei(ctx, 1),
+		ctx.String(channelMemoFlag.Name), ctx.Duration(channelTTLFlag.Name), ctx.Uint64(channelPinFlag.Name))
+	if err != nil {
+		return err
+	}
+	if ctx.Bool(jsonFlag.Name) {
+		mustPrintJSON(map[string]any{
+			"invoiceId": inv.ID, "amountWei": inv.AmountWei.BigInt().String(),
+			"expiresAt": inv.ExpiresAt, "uri": uri,
+		})
+		return nil
+	}
+	fmt.Printf("invoice: %s\nexpires: %s\nuri:     %s\n", inv.ID, time.Unix(inv.ExpiresAt, 0), uri)
+	if inv.ChannelID != 0 {
+		fmt.Println("note: run the merchant daemon so the invoice reaches the payer and payments are countersigned")
+	}
+	return nil
 }
 
 func channelClose(ctx *cli.Context) error {

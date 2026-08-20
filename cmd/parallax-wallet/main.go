@@ -107,6 +107,7 @@ func init() {
 		// key operations above, these talk to a running node over RPC and
 		// to Nostr relays.
 		commandChannel,
+		commandMerchant,
 		commandNostr,
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
