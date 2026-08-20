@@ -64,6 +64,39 @@ func TestCoopCloseHappyPath(t *testing.T) {
 	}
 }
 
+func TestCoopCloseDuplicateProposalReAcks(t *testing.T) {
+	alice, bob, key := setupPair(t, Config{}, Config{})
+	prop, err := alice.engine.ProposeCoopClose(key, nowBlock+18, nowBlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res1, ready1, err := bob.engine.HandleCoopCloseProposal(*prop, alice.npub, nowBlock)
+	if err != nil || res1.Ack == nil {
+		t.Fatalf("first: %+v %v", res1, err)
+	}
+
+	// The retransmitted proposal must re-ACK with the same countersignature,
+	// not NACK the responder's own freeze (Part 2 §7.2).
+	res2, ready2, err := bob.engine.HandleCoopCloseProposal(*prop, alice.npub, nowBlock)
+	if err != nil || res2.Ack == nil || ready2 == nil {
+		t.Fatalf("duplicate: %+v %v", res2, err)
+	}
+	if res2.Ack.Sig != res1.Ack.Sig || res2.Ack.StateHash != res1.Ack.StateHash {
+		t.Fatal("duplicate coop-close ack differs")
+	}
+	if ready2.BalanceA.Cmp(ready1.BalanceA) != 0 {
+		t.Fatal("ready pairs disagree")
+	}
+
+	// A different close while frozen still NACKs.
+	other := *prop
+	other.ExpiryBlock = "999999"
+	res3, _, err := bob.engine.HandleCoopCloseProposal(other, alice.npub, nowBlock)
+	if err != nil || res3.Nack == nil || res3.Nack.Reason != NackFrozen {
+		t.Fatalf("different close while frozen accepted: %+v %v", res3, err)
+	}
+}
+
 func TestCoopCloseBalanceMismatchRejected(t *testing.T) {
 	alice, bob, key := setupPair(t, Config{}, Config{})
 	prop, err := alice.engine.ProposeCoopClose(key, nowBlock+18, nowBlock)

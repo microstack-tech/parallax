@@ -141,9 +141,6 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 	if meta.Status != proofstore.StatusOpen && meta.Status != proofstore.StatusClosing {
 		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackUnknownChannel, "channel settled")}, nil, nil
 	}
-	if frozen(meta, nowBlock) {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackFrozen, "close already pending")}, nil, nil
-	}
 
 	expiry, err := strconv.ParseUint(msg.ExpiryBlock, 10, 64)
 	if err != nil || expiry <= nowBlock {
@@ -153,6 +150,32 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 	wantB, okB := new(big.Int).SetString(msg.BalanceB, 10)
 	if !okA || !okB || wantA.Sign() < 0 || wantB.Sign() < 0 {
 		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad balances")}, nil, nil
+	}
+
+	// Retransmission of the close we already countersigned: re-ACK
+	// idempotently instead of NACKing our own freeze (Part 2 §7.2 applies to
+	// 21904/21905 the same as to payments).
+	if pc := meta.PendingClose; pc != nil && len(pc.MySig) == 65 &&
+		pc.ExpiryBlock == expiry && pc.BalanceA.BigInt().Cmp(wantA) == 0 && pc.BalanceB.BigInt().Cmp(wantB) == 0 {
+		digest, err := coopCloseDigest(key, wantA, wantB, expiry)
+		if err != nil {
+			return Result{}, nil, err
+		}
+		peerSig, err := parseSig(msg.Sig)
+		if err != nil || VerifySignedBy(digest, peerSig, meta.PeerAddress) != nil {
+			return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad signature")}, nil, nil
+		}
+		ack := &AckMsg{
+			V:         1,
+			ChannelID: msg.ChannelID,
+			Seq:       "0",
+			StateHash: digest.Hex(),
+			Sig:       "0x" + util.Bytes2Hex(pc.MySig),
+		}
+		return Result{Ack: ack}, e.readyPair(key, meta.Role, wantA, wantB, expiry, pc.MySig, peerSig), nil
+	}
+	if frozen(meta, nowBlock) {
+		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackFrozen, "close already pending")}, nil, nil
 	}
 
 	balA, balB, err := e.CloseBalances(key)

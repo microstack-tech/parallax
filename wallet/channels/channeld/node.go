@@ -164,19 +164,23 @@ func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
 }
 
 func (n *Node) watchLoop(ctx context.Context, interval time.Duration) {
+	tick := func() {
+		for _, w := range n.Watchers {
+			head, err := w.Tick(ctx)
+			if err != nil {
+				n.log.Error("watcher tick", "err", err)
+				continue
+			}
+			n.unfreezeExpired(head)
+		}
+	}
+	tick() // sync immediately at start: one-shot CLI verbs rely on it
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			for _, w := range n.Watchers {
-				head, err := w.Tick(ctx)
-				if err != nil {
-					n.log.Error("watcher tick", "err", err)
-					continue
-				}
-				n.unfreezeExpired(head)
-			}
+			tick()
 		case <-ctx.Done():
 			return
 		}
@@ -227,7 +231,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err != nil {
 			return err
 		}
-		return n.reactToResult(ctx, res, sender, msg.State.ChannelID)
+		return n.reactToResult(ctx, res, sender, msg.State.ChannelID, protocol.KindAck)
 
 	case protocol.KindAck:
 		var msg protocol.AckMsg
@@ -272,13 +276,12 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err != nil {
 			return err
 		}
-		if err := n.reactToResult(ctx, res, sender, msg.ChannelID); err != nil {
-			return err
-		}
+		// Settle on-chain first: we hold the complete pair, and submission
+		// must not depend on the relay accepting our countersignature.
 		if ready != nil {
 			n.submitCoopClose(ctx, ready)
 		}
-		return nil
+		return n.reactToResult(ctx, res, sender, msg.ChannelID, protocol.KindCoopCloseAck)
 
 	case protocol.KindCoopCloseAck:
 		var msg protocol.AckMsg
@@ -312,7 +315,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 // reactToResult transmits the engine's response (direct sends, no queue:
 // ACKs and NACKs are re-issued idempotently on duplicate proposals instead
 // of retransmitted).
-func (n *Node) reactToResult(ctx context.Context, res protocol.Result, peer string, channelID string) error {
+func (n *Node) reactToResult(ctx context.Context, res protocol.Result, peer string, channelID string, ackKind int) error {
 	if res.Completed != nil {
 		n.afterCompletion(ctx)
 	}
@@ -328,8 +331,10 @@ func (n *Node) reactToResult(ctx context.Context, res protocol.Result, peer stri
 	var kind int
 	switch {
 	case res.Ack != nil:
-		payload, kind = res.Ack, protocol.KindAck
+		payload, kind = res.Ack, ackKind
 	case res.Nack != nil:
+		n.log.Warn("nacking inbound message", "channel", channelID,
+			"re", res.Nack.Re, "reason", res.Nack.Reason, "detail", res.Nack.Detail)
 		payload, kind = res.Nack, protocol.KindNack
 	default:
 		return nil

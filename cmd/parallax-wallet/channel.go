@@ -230,7 +230,7 @@ func newChannelNode(ctx *cli.Context, needChain bool) (*channeld.Node, func(), e
 func runNodeFor(node *channeld.Node, fn func(ctx context.Context) error) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go node.Run(ctx, 15*time.Second)
+	go node.Run(ctx, 5*time.Second)
 	return fn(ctx)
 }
 
@@ -306,11 +306,21 @@ func channelOpen(ctx *cli.Context) error {
 }
 
 func channelList(ctx *cli.Context) error {
-	node, cleanup, err := newChannelNode(ctx, false)
+	// Prefer a chain-connected node so balances reflect a fresh watcher
+	// pass; fall back to the offline store view when the RPC is down.
+	node, cleanup, err := newChannelNode(ctx, true)
+	if err != nil {
+		node, cleanup, err = newChannelNode(ctx, false)
+	}
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	for _, w := range node.Watchers {
+		if _, err := w.Tick(context.Background()); err != nil {
+			return err
+		}
+	}
 
 	metas, err := node.Store.ListChannels()
 	if err != nil {
@@ -443,7 +453,7 @@ func channelDaemon(ctx *cli.Context) error {
 		<-sig
 		cancel()
 	}()
-	node.Run(runCtx, 30*time.Second)
+	node.Run(runCtx, 5*time.Second)
 	return nil
 }
 

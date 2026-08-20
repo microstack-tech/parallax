@@ -23,9 +23,11 @@ package proofstore
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 var (
@@ -59,6 +61,9 @@ type Store struct {
 func Open(path string) (*Store, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 3 * time.Second})
 	if err != nil {
+		if errors.Is(err, bolterrors.ErrTimeout) {
+			return nil, fmt.Errorf("proofstore: %s is locked by another process (a channel daemon on the same data dir?)", path)
+		}
 		return nil, err
 	}
 	// Defense in depth: bbolt defaults to NoSync=false; pin it anyway.
