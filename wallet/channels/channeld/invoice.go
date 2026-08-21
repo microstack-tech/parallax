@@ -48,7 +48,7 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 }
 
 // InvoiceURI renders the bootstrap URI (Part 2 §6.1):
-// parallax:<evmAddress>?amount=<wei>&inv=<id>&npub=<hex>&relays=<r1|r2>&reg=<registry>
+// parallax:<evmAddress>?amount=<wei>&inv=<id>&npub=<hex>&relays=<r1|r2>&reg=<registry>[&ch=<id>]
 func (n *Node) InvoiceURI(inv proofstore.Invoice) string {
 	var reg string
 	for _, entries := range n.Cfg.Registries {
@@ -62,6 +62,21 @@ func (n *Node) InvoiceURI(inv proofstore.Invoice) string {
 	q.Set("inv", inv.ID)
 	q.Set("npub", n.SelfPub)
 	q.Set("relays", strings.Join(n.Cfg.Nostr.Relays, "|"))
+	if inv.ChannelID != 0 {
+		// A pinned invoice is only payable on that channel: the URI must
+		// carry the pin, or a payer with several channels to this merchant
+		// proposes on the wrong one and gets NACKed after the irrevocable
+		// journal write. The pin also names the authoritative registry.
+		q.Set("ch", strconv.FormatUint(inv.ChannelID, 10))
+		if metas, err := n.Store.ListChannels(); err == nil {
+			for _, meta := range metas {
+				if meta.Key.ChannelID == inv.ChannelID && meta.Status == proofstore.StatusOpen {
+					reg = strings.ToLower(meta.Key.Registry.Hex())
+					break
+				}
+			}
+		}
+	}
 	q.Set("reg", reg)
 	return "parallax:" + strings.ToLower(n.Signer.Address().Hex()) + "?" + q.Encode()
 }
@@ -74,6 +89,7 @@ type PaymentRequest struct {
 	Npub      string
 	Relays    []string
 	Registry  util.Address
+	ChannelID uint64 // nonzero: the invoice is pinned to this channel
 }
 
 // ParsePaymentURI parses a parallax: URI.
@@ -106,11 +122,19 @@ func ParsePaymentURI(uri string) (PaymentRequest, error) {
 		}
 		req.Registry = util.HexToAddress(reg)
 	}
+	if ch := q.Get("ch"); ch != "" {
+		if req.ChannelID, err = strconv.ParseUint(ch, 10, 64); err != nil {
+			return req, fmt.Errorf("channeld: bad channel pin %q", ch)
+		}
+	}
 	return req, nil
 }
 
 // ChannelForRequest picks the channel to pay a parsed payment URI on: the
-// first open channel with the URI's merchant.
+// pinned channel when the URI names one (a pinned invoice is only payable
+// there — anything else the merchant NACKs after the payer's irrevocable
+// journal write), else the first open channel with the URI's merchant,
+// filtered by the URI's registry when it names one.
 func (n *Node) ChannelForRequest(req PaymentRequest) (proofstore.ChannelKey, error) {
 	metas, err := n.Store.ListChannels()
 	if err != nil {
@@ -120,7 +144,16 @@ func (n *Node) ChannelForRequest(req PaymentRequest) (proofstore.ChannelKey, err
 		if meta.PeerAddress != req.Merchant || meta.Status != proofstore.StatusOpen {
 			continue
 		}
+		if req.ChannelID != 0 && meta.Key.ChannelID != req.ChannelID {
+			continue
+		}
+		if req.Registry != (util.Address{}) && meta.Key.Registry != req.Registry {
+			continue
+		}
 		return meta.Key, nil
+	}
+	if req.ChannelID != 0 {
+		return proofstore.ChannelKey{}, fmt.Errorf("channeld: the invoice is pinned to channel %d, which is not an open channel with merchant %s", req.ChannelID, req.Merchant.Hex())
 	}
 	return proofstore.ChannelKey{}, fmt.Errorf("channeld: no open channel with merchant %s — open one first", req.Merchant.Hex())
 }
