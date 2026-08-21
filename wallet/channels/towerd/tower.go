@@ -7,7 +7,6 @@ package towerd
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -51,7 +50,14 @@ type Tower struct {
 	Alarm func(format string, args ...any)
 }
 
-func New(cfg Config, store *proofstore.Store, backend watcher.TxBackend, key *ecdsa.PrivateKey) (*Tower, error) {
+// New wires a tower to one registry. txmgr MUST be the shared per-chain
+// manager for the submitting key (channeld's TxManagerFor when a channel
+// node runs alongside): a second manager on the same key races nonce
+// allocation and one submission silently replaces the other.
+func New(cfg Config, store *proofstore.Store, backend watcher.TxBackend, txmgr *watcher.TxManager) (*Tower, error) {
+	if txmgr == nil {
+		return nil, fmt.Errorf("towerd: nil transaction manager")
+	}
 	if cfg.Confirmations == 0 {
 		cfg.Confirmations = 3
 	}
@@ -62,18 +68,16 @@ func New(cfg Config, store *proofstore.Store, backend watcher.TxBackend, key *ec
 	if err != nil {
 		return nil, err
 	}
-	chainID, ok := new(big.Int).SetString(cfg.ChainID, 10)
-	if !ok {
-		return nil, fmt.Errorf("towerd: bad chain id %q", cfg.ChainID)
-	}
 	t := &Tower{
 		cfg:      cfg,
 		store:    store,
 		backend:  backend,
 		contract: contract,
-		txmgr:    watcher.NewTxManager(backend, key, chainID),
+		txmgr:    txmgr,
 	}
-	t.txmgr.Alarm = func(format string, args ...any) { t.alarm(format, args...) }
+	if t.txmgr.Alarm == nil {
+		t.txmgr.Alarm = func(format string, args ...any) { t.alarm(format, args...) }
+	}
 	return t, nil
 }
 

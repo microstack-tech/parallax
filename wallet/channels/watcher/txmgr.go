@@ -55,6 +55,15 @@ type TxManager struct {
 
 	mu      sync.Mutex
 	pending map[string]*pendingTx
+
+	// submitMu serializes nonce allocation-to-send across Submit calls, and
+	// nextNonce tracks the nonce past the manager's own broadcasts:
+	// PendingNonceAt alone lags behind a broadcast the pool has not yet
+	// registered, and two intents allocated against that stale view would
+	// pick the same nonce — one silently replacing the other.
+	submitMu   sync.Mutex
+	nextNonce  uint64
+	nonceKnown bool
 }
 
 func NewTxManager(backend TxBackend, key *ecdsa.PrivateKey, chainID *big.Int) *TxManager {
@@ -101,9 +110,18 @@ func (m *TxManager) Submit(ctx context.Context, id string, head, deadline uint64
 	}
 	m.mu.Unlock()
 
+	m.submitMu.Lock()
+	defer m.submitMu.Unlock()
+
 	nonce, err := m.backend.PendingNonceAt(ctx, m.from)
 	if err != nil {
 		return err
+	}
+	// The higher of the chain's pending view and our own allocation counter:
+	// the chain view wins after external transactions or mined history, the
+	// counter wins while our last broadcast is still propagating.
+	if m.nonceKnown && m.nextNonce > nonce {
+		nonce = m.nextNonce
 	}
 	gasPrice, err := m.backend.SuggestGasPrice(ctx)
 	if err != nil {
@@ -113,6 +131,7 @@ func (m *TxManager) Submit(ctx context.Context, id string, head, deadline uint64
 	if err := m.send(ctx, id, p, head); err != nil {
 		return err
 	}
+	m.nextNonce, m.nonceKnown = nonce+1, true
 	m.mu.Lock()
 	m.pending[id] = p
 	m.mu.Unlock()

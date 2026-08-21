@@ -8,6 +8,7 @@ import (
 
 	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/registry"
 )
 
@@ -95,6 +96,61 @@ func TestTxManagerFeeBumpsUntilMined(t *testing.T) {
 	}
 	if onchain.DepositB.Cmp(lax(6)) != 0 { // 5 from setup + 1 now
 		t.Fatalf("deposit not applied: %s", onchain.DepositB)
+	}
+}
+
+// laggingNonceBackend serves PendingNonceAt from a stale snapshot,
+// simulating a node whose pending pool has not yet registered the
+// previous broadcast (or a second manager on the same key).
+type laggingNonceBackend struct {
+	TxBackend
+	nonce uint64
+}
+
+func (b *laggingNonceBackend) PendingNonceAt(ctx context.Context, account util.Address) (uint64, error) {
+	return b.nonce, nil
+}
+
+// TestTxManagerDistinctNoncesOnLaggingBackend: nonce allocation must not
+// trust PendingNonceAt alone — two intents allocated against a lagging view
+// pick the same nonce, and the second transaction silently replaces the
+// first (a challenge or settle that never lands).
+func TestTxManagerDistinctNoncesOnLaggingBackend(t *testing.T) {
+	e := setupSim(t)
+	base, err := e.backend.PendingNonceAt(context.Background(), e.bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lagging := &laggingNonceBackend{TxBackend: e.backend, nonce: base}
+	mgr := NewTxManager(lagging, e.bobPriv, big.NewInt(1337))
+
+	contract, err := registry.NewChannelRegistry(e.regAddr, lagging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nonces []uint64
+	submit := func(id string) {
+		err := mgr.Submit(context.Background(), id, 10, 0,
+			func(auth *bind.TransactOpts) (*types.Transaction, error) {
+				nonces = append(nonces, auth.Nonce.Uint64())
+				auth.Value = lax(1)
+				return contract.Deposit(auth, big.NewInt(1))
+			})
+		if err != nil {
+			t.Logf("submit %s: %v", id, err)
+		}
+	}
+	submit("challenge:a")
+	submit("settle:b")
+
+	if len(nonces) != 2 {
+		t.Fatalf("expected two builds, got %d", len(nonces))
+	}
+	if nonces[0] == nonces[1] {
+		t.Fatalf("nonce collision: both intents allocated nonce %d", nonces[0])
+	}
+	if nonces[1] != nonces[0]+1 {
+		t.Fatalf("nonces not sequential: %v", nonces)
 	}
 }
 

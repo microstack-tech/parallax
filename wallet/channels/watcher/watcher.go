@@ -10,7 +10,6 @@ package watcher
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
@@ -43,7 +42,10 @@ type Config struct {
 }
 
 // Watcher watches one registry for every channel in the store that belongs
-// to it. Key MAY be nil for a watch-only instance (no challenge/settle).
+// to it. txmgr MAY be nil for a watch-only instance (no challenge/settle);
+// everything submitting with one key on one chain MUST share one manager
+// (channeld owns it per chain, the tower reuses it) so nonce allocation is
+// never split across managers.
 type Watcher struct {
 	cfg      Config
 	store    *proofstore.Store
@@ -56,7 +58,7 @@ type Watcher struct {
 	Alarm func(format string, args ...any)
 }
 
-func New(cfg Config, store *proofstore.Store, backend TxBackend, key *ecdsa.PrivateKey) (*Watcher, error) {
+func New(cfg Config, store *proofstore.Store, backend TxBackend, txmgr *TxManager) (*Watcher, error) {
 	if cfg.Confirmations == 0 {
 		cfg.Confirmations = 3
 	}
@@ -69,14 +71,10 @@ func New(cfg Config, store *proofstore.Store, backend TxBackend, key *ecdsa.Priv
 		store:    store,
 		backend:  backend,
 		contract: contract,
+		txmgr:    txmgr,
 	}
-	if key != nil {
-		chainID, ok := new(big.Int).SetString(cfg.ChainID, 10)
-		if !ok {
-			return nil, fmt.Errorf("watcher: bad chain id %q", cfg.ChainID)
-		}
-		w.txmgr = NewTxManager(backend, key, chainID)
-		w.txmgr.Alarm = func(format string, args ...any) { w.alarm(format, args...) }
+	if txmgr != nil && txmgr.Alarm == nil {
+		txmgr.Alarm = func(format string, args ...any) { w.alarm(format, args...) }
 	}
 	return w, nil
 }

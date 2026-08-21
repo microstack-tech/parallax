@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -59,7 +60,17 @@ type Node struct {
 
 	backend Backend
 	evmKey  *ecdsa.PrivateKey // retained for on-chain verbs (open/close/withdraw)
+	txmgrs  map[string]*watcher.TxManager
 	log     *slog.Logger
+}
+
+// TxManagerFor returns the shared per-chain transaction manager (nil when
+// the node is offline or the chain is unknown). Everything submitting with
+// this node's key on a chain — watchers, the tower daemon — MUST go through
+// this one manager, or their nonce allocations race and one transaction
+// silently replaces the other.
+func (n *Node) TxManagerFor(chainID string) *watcher.TxManager {
+	return n.txmgrs[chainID]
 }
 
 // EVMKey exposes the wallet key for on-chain transaction building.
@@ -112,13 +123,20 @@ func New(cfg Config, dataDir string, evmPriv *ecdsa.PrivateKey, backend Backend,
 	n.Transmitter = nostrmod.NewTransmitter(store, n.Pool, nostrPriv)
 
 	if backend != nil {
+		n.txmgrs = make(map[string]*watcher.TxManager)
 		for label, entries := range cfg.Registries {
 			for _, e := range entries {
+				chainID := strconv.FormatUint(e.ChainID, 10)
+				txmgr := n.txmgrs[chainID]
+				if txmgr == nil {
+					txmgr = watcher.NewTxManager(backend, evmPriv, new(big.Int).SetUint64(e.ChainID))
+					n.txmgrs[chainID] = txmgr
+				}
 				w, err := watcher.New(watcher.Config{
-					ChainID:       strconv.FormatUint(e.ChainID, 10),
+					ChainID:       chainID,
 					Registry:      util.HexToAddress(e.Address),
 					Confirmations: cfg.Node.Confirmations,
-				}, store, backend, evmPriv)
+				}, store, backend, txmgr)
 				if err != nil {
 					store.Close()
 					return nil, fmt.Errorf("channeld: registry %s: %w", label, err)

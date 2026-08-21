@@ -157,7 +157,8 @@ func (e *simEnv) proofArg(st proofstore.SignedState) registry.ParallaxChannelReg
 
 func newWatcher(t *testing.T, e *simEnv) (*Watcher, *[]string) {
 	t.Helper()
-	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, e.backend, e.bobPriv)
+	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, e.backend,
+		NewTxManager(e.backend, e.bobPriv, big.NewInt(1337)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +390,8 @@ func TestTickContinuesPastFailingChannel(t *testing.T) {
 		TxBackend: e.backend,
 		failTopic: util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000001"),
 	}
-	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, failing, e.bobPriv)
+	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, failing,
+		NewTxManager(failing, e.bobPriv, big.NewInt(1337)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -68,19 +68,22 @@ func towerDaemon(ctx *cli.Context) error {
 		}
 	}
 
-	// One tower instance per configured registry.
+	// One tower instance per configured registry, sharing the node's
+	// per-chain transaction manager so tower and watcher submissions on the
+	// same key never race nonces.
 	var towers []*towerd.Tower
 	for label, entries := range cfg.Registries {
 		for _, e := range entries {
+			chainID := fmt.Sprintf("%d", e.ChainID)
 			t, err := towerd.New(towerd.Config{
-				ChainID:               fmt.Sprintf("%d", e.ChainID),
+				ChainID:               chainID,
 				Registry:              util.HexToAddress(e.Address),
 				Confirmations:         cfg.Node.Confirmations,
 				Delegators:            delegators,
 				OpenRegistration:      cfg.Tower.OpenRegistration,
 				MaxDelegationsPerNpub: cfg.Tower.MaxDelegationsPerNpub,
 				MinDiscrepancyWei:     minDiscrepancy,
-			}, node.Store, node.Backend(), node.EVMKey())
+			}, node.Store, node.Backend(), node.TxManagerFor(chainID))
 			if err != nil {
 				return fmt.Errorf("tower for registry %s: %w", label, err)
 			}

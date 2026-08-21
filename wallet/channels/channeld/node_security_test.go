@@ -11,7 +11,9 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 
 	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind/backends"
 	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/validation"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/protocol"
 )
@@ -267,6 +269,43 @@ func TestTowerReceiptSettlesLowerSeqs(t *testing.T) {
 	}
 	if n, _ := alice.Store.OutboundLen(); n != 0 {
 		t.Fatalf("delegation at seq 3 not settled by kept-seq-5 receipt: %d queued", n)
+	}
+}
+
+// TestWatchersShareTxManagerPerChain: everything submitting with the node's
+// key on one chain must share a single transaction manager, or nonce
+// allocations race and one transaction silently replaces another.
+func TestWatchersShareTxManagerPerChain(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := backends.NewSimulatedBackend(validation.GenesisAlloc{}, 30_000_000)
+	defer backend.Close()
+
+	cfg := DefaultConfig()
+	cfg.Registries = map[string][]RegistryEntry{
+		"v1": {{Address: "0x0000000000000000000000000000000000001111", ChainID: 1337}},
+		"v2": {{Address: "0x0000000000000000000000000000000000002222", ChainID: 1337}},
+	}
+	cfg.Nostr.Relays = []string{"wss://hub"}
+	n, err := New(cfg, t.TempDir(), key, backend, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+
+	if len(n.Watchers) != 2 {
+		t.Fatalf("watchers: %d", len(n.Watchers))
+	}
+	mgr := n.TxManagerFor("1337")
+	if mgr == nil {
+		t.Fatal("no shared manager for chain 1337")
+	}
+	for _, w := range n.Watchers {
+		if w.TxManager() != mgr {
+			t.Fatal("watcher runs its own transaction manager")
+		}
 	}
 }
 

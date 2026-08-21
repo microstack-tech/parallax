@@ -111,12 +111,14 @@ func TestTowerChallengesScriptedCheater(t *testing.T) {
 	nodeA := newNode(t, h, alicePriv, backend, regAddr, nil)
 	nodeB := newNode(t, h, bobPriv, backend, regAddr, []string{towerNode.SelfPub})
 
+	// Production wiring: the tower shares the channel node's per-chain
+	// transaction manager (same key, one nonce allocator).
 	tower, err := towerd.New(towerd.Config{
 		ChainID:       "1337",
 		Registry:      regAddr,
 		Confirmations: 3,
 		Delegators:    map[string]bool{nodeB.SelfPub: true},
-	}, towerNode.Store, backend, towerPriv)
+	}, towerNode.Store, backend, towerNode.TxManagerFor("1337"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +316,7 @@ func TestTickRescansFailedReactRange(t *testing.T) {
 		Registry:      regAddr,
 		Confirmations: 3,
 		Delegators:    map[string]bool{"bob-npub": true},
-	}, store, flaky, towerPriv)
+	}, store, flaky, watcher.NewTxManager(flaky, towerPriv, big.NewInt(1337)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +408,7 @@ func TestTowerRejectsBadDelegations(t *testing.T) {
 		Registry:      regAddr,
 		Confirmations: 3,
 		Delegators:    map[string]bool{nodeB.SelfPub: true},
-	}, towerStore, backend, towerPriv)
+	}, towerStore, backend, watcher.NewTxManager(backend, towerPriv, big.NewInt(1337)))
 	if err != nil {
 		t.Fatal(err)
 	}
