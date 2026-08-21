@@ -248,9 +248,16 @@ func (n *Node) qrCloseCountersign(env qrenc.Envelope) (QRResult, error) {
 		ExpiryBlock: strconv.FormatUint(env.Expiry, 10),
 		Sig:         "0x" + util.Bytes2Hex(env.Sig1),
 	}
-	// nowBlock 0: an offline scanner has no live head — the stale watermark
-	// must not feed the expiry checks (a lagging view would falsely trip the
-	// close horizon), and 0 keeps every conservative check conservative.
+	// The confirmed-scan watermark is a lower bound on the real head, so an
+	// expiry at or below it is already past: countersigning would re-arm a
+	// freeze the chain has released, and a live close can never be falsely
+	// rejected here (expiry <= watermark <= head).
+	if wm := n.bestKnownBlock(key); wm > 0 && env.Expiry <= wm {
+		return QRResult{}, fmt.Errorf("channeld: cooperative close expired at block %d (last scanned block %d)", env.Expiry, wm)
+	}
+	// The engine still runs at nowBlock 0: a lagging watermark would falsely
+	// trip the close-horizon bound on a legitimate near-horizon expiry, so
+	// the horizon skip is the accepted offline residual (Part 2 §11).
 	res, ready, err := n.Engine.HandleCoopCloseProposal(msg, meta.PeerNpub, 0)
 	if err != nil {
 		return QRResult{}, err
