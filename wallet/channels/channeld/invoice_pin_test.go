@@ -67,6 +67,32 @@ func TestCreateInvoiceFailsClosedOnAmbiguousPin(t *testing.T) {
 	}
 }
 
+// TestUnpinnedRequestIgnoresRegistryHint: for an unpinned invoice the URI's
+// reg= parameter is a bootstrap hint (which registry to open a channel on),
+// not a constraint — the merchant accepts payment on any shared open
+// channel. A multi-registry merchant stamps ONE registry on the URI, so
+// filtering by it would reject a customer whose only open channel with the
+// merchant lives on the other registry.
+func TestUnpinnedRequestIgnoresRegistryHint(t *testing.T) {
+	h := newHub()
+	alice := newTestNode(t, h, nil)
+	bob := newTestNode(t, h, nil)
+	linkChannel(t, alice, bob) // alice's only channel with bob, on the v1 registry
+
+	req := PaymentRequest{
+		Merchant:  bob.Signer.Address(),
+		AmountWei: big.NewInt(1e9),
+		Registry:  decoyKey.Registry, // URI hint names the other registry
+	}
+	key, err := alice.ChannelForRequest(req)
+	if err != nil {
+		t.Fatalf("unpinned payment rejected over the URI's registry hint: %v", err)
+	}
+	if key != e2eKey {
+		t.Fatalf("wrong channel selected: %s", key)
+	}
+}
+
 // TestPayURIHonorsPinnedInvoice: merchants mint channel-pinned invoices, so
 // the payment URI must carry the pin and the payer must select that channel.
 // Picking any open channel with the merchant makes the merchant NACK a

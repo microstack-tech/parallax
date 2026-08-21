@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"math/big"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -67,9 +69,12 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 // InvoiceURI renders the bootstrap URI (Part 2 §6.1):
 // parallax:<evmAddress>?amount=<wei>&inv=<id>&npub=<hex>&relays=<r1|r2>&reg=<registry>[&ch=<id>]
 func (n *Node) InvoiceURI(inv proofstore.Invoice) string {
+	// For unpinned invoices reg= is a bootstrap hint only (which registry a
+	// channel-less payer should open on); pick it deterministically rather
+	// than by map iteration order.
 	var reg string
-	for _, entries := range n.Cfg.Registries {
-		if len(entries) > 0 {
+	for _, label := range slices.Sorted(maps.Keys(n.Cfg.Registries)) {
+		if entries := n.Cfg.Registries[label]; len(entries) > 0 {
 			reg = strings.ToLower(entries[0].Address)
 			break
 		}
@@ -147,8 +152,12 @@ func ParsePaymentURI(uri string) (PaymentRequest, error) {
 // ChannelForRequest picks the channel to pay a parsed payment URI on: the
 // pinned channel when the URI names one (a pinned invoice is only payable
 // there — anything else the merchant NACKs after the payer's irrevocable
-// journal write), else the first open channel with the URI's merchant,
-// filtered by the URI's registry when it names one.
+// journal write), qualified by the URI's registry since the bare pin is
+// ambiguous across coexisting registries; else the first open channel with
+// the URI's merchant. For unpinned requests the URI's registry is only a
+// bootstrap hint (the merchant accepts any shared open channel), never a
+// filter: a multi-registry merchant stamps one registry on the URI, and
+// filtering by it would reject a valid channel on the other.
 func (n *Node) ChannelForRequest(req PaymentRequest) (proofstore.ChannelKey, error) {
 	metas, err := n.Store.ListChannels()
 	if err != nil {
@@ -158,11 +167,13 @@ func (n *Node) ChannelForRequest(req PaymentRequest) (proofstore.ChannelKey, err
 		if meta.PeerAddress != req.Merchant || meta.Status != proofstore.StatusOpen {
 			continue
 		}
-		if req.ChannelID != 0 && meta.Key.ChannelID != req.ChannelID {
-			continue
-		}
-		if req.Registry != (util.Address{}) && meta.Key.Registry != req.Registry {
-			continue
+		if req.ChannelID != 0 {
+			if meta.Key.ChannelID != req.ChannelID {
+				continue
+			}
+			if req.Registry != (util.Address{}) && meta.Key.Registry != req.Registry {
+				continue
+			}
 		}
 		return meta.Key, nil
 	}
