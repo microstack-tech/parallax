@@ -15,6 +15,7 @@ import (
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/protocol"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/registry"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/watcher"
 )
 
 // contractFor returns a binding for one configured registry deployment.
@@ -32,6 +33,17 @@ func (n *Node) contractFor(chainID string, regAddr util.Address) (*registry.Chan
 	return nil, fmt.Errorf("channeld: registry %s (chain %s) not configured", regAddr.Hex(), chainID)
 }
 
+// managerFor returns the shared per-chain transaction manager the on-chain
+// verbs MUST submit through (see TxManagerFor): bind auto-nonce against the
+// chain's lagging pending view would silently replace a challenge the
+// watcher just broadcast with the same key.
+func (n *Node) managerFor(chainID string) (*watcher.TxManager, error) {
+	if mgr := n.txmgrs[chainID]; mgr != nil {
+		return mgr, nil
+	}
+	return nil, fmt.Errorf("channeld: no transaction manager for chain %s", chainID)
+}
+
 // OpenChannel opens a channel on-chain as participant A, records it locally,
 // and queues the 21908 handshake carrying the private linkage (Part 2 §6.8).
 // The counterparty's npub comes from its published linkage or a payment URI.
@@ -46,19 +58,16 @@ func (n *Node) OpenChannel(ctx context.Context, chainID uint64, regAddr, counter
 		return key, err
 	}
 
-	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, new(big.Int).SetUint64(chainID))
+	mgr, err := n.managerFor(chain)
 	if err != nil {
 		return key, err
 	}
-	auth.Context = ctx
-	auth.Value = deposit
-	tx, err := contract.Open(auth, counterparty, period)
+	receipt, err := mgr.Transact(ctx, "open", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		auth.Value = deposit
+		return contract.Open(auth, counterparty, period)
+	})
 	if err != nil {
 		return key, fmt.Errorf("channeld: open: %w", err)
-	}
-	receipt, err := bind.WaitMined(ctx, n.backend, tx)
-	if err != nil {
-		return key, err
 	}
 
 	var channelID uint64
@@ -187,18 +196,14 @@ func (n *Node) Deposit(ctx context.Context, key proofstore.ChannelKey, amount *b
 	if err != nil {
 		return err
 	}
-	chainID, _ := new(big.Int).SetString(key.ChainID, 10)
-	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	mgr, err := n.managerFor(key.ChainID)
 	if err != nil {
 		return err
 	}
-	auth.Context = ctx
-	auth.Value = amount
-	tx, err := contract.Deposit(auth, new(big.Int).SetUint64(key.ChannelID))
-	if err != nil {
-		return err
-	}
-	_, err = bind.WaitMined(ctx, n.backend, tx)
+	_, err = mgr.Transact(ctx, "deposit", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		auth.Value = amount
+		return contract.Deposit(auth, new(big.Int).SetUint64(key.ChannelID))
+	})
 	return err
 }
 
@@ -221,19 +226,16 @@ func (n *Node) UnilateralClose(ctx context.Context, key proofstore.ChannelKey, f
 	if err != nil {
 		return err
 	}
-	chainID, _ := new(big.Int).SetString(key.ChainID, 10)
-	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	mgr, err := n.managerFor(key.ChainID)
 	if err != nil {
 		return err
 	}
-	auth.Context = ctx
-
 	latest, lerr := n.Store.LatestState(key)
-	var tx *types.Transaction
-	if lerr != nil {
-		tx, err = contract.StartCloseNoProof(auth, new(big.Int).SetUint64(key.ChannelID))
-	} else {
-		tx, err = contract.StartClose(auth,
+	_, err = mgr.Transact(ctx, "close", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		if lerr != nil {
+			return contract.StartCloseNoProof(auth, new(big.Int).SetUint64(key.ChannelID))
+		}
+		return contract.StartClose(auth,
 			new(big.Int).SetUint64(key.ChannelID),
 			registry.ParallaxChannelRegistryBalanceProof{
 				ChannelId:       new(big.Int).SetUint64(key.ChannelID),
@@ -244,11 +246,7 @@ func (n *Node) UnilateralClose(ctx context.Context, key proofstore.ChannelKey, f
 				LockedAmount:    latest.LockedAmount.BigInt(),
 			},
 			latest.SigA, latest.SigB)
-	}
-	if err != nil {
-		return err
-	}
-	_, err = bind.WaitMined(ctx, n.backend, tx)
+	})
 	return err
 }
 
@@ -258,20 +256,16 @@ func (n *Node) SubmitWithdraw(ctx context.Context, ready *protocol.WithdrawReady
 	if err != nil {
 		return err
 	}
-	chainID, _ := new(big.Int).SetString(ready.Key.ChainID, 10)
-	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	mgr, err := n.managerFor(ready.Key.ChainID)
 	if err != nil {
 		return err
 	}
-	auth.Context = ctx
-	tx, err := contract.CooperativeWithdraw(auth,
-		new(big.Int).SetUint64(ready.Key.ChannelID),
-		ready.Participant, ready.TotalWithdrawn,
-		ready.ExpiryBlock, ready.SigA, ready.SigB)
-	if err != nil {
-		return err
-	}
-	_, err = bind.WaitMined(ctx, n.backend, tx)
+	_, err = mgr.Transact(ctx, "withdraw", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return contract.CooperativeWithdraw(auth,
+			new(big.Int).SetUint64(ready.Key.ChannelID),
+			ready.Participant, ready.TotalWithdrawn,
+			ready.ExpiryBlock, ready.SigA, ready.SigB)
+	})
 	return err
 }
 
@@ -281,19 +275,15 @@ func (n *Node) SubmitCoopClose(ctx context.Context, ready *protocol.CoopCloseRea
 	if err != nil {
 		return err
 	}
-	chainID, _ := new(big.Int).SetString(ready.Key.ChainID, 10)
-	auth, err := bind.NewKeyedTransactorWithChainID(n.evmKey, chainID)
+	mgr, err := n.managerFor(ready.Key.ChainID)
 	if err != nil {
 		return err
 	}
-	auth.Context = ctx
-	tx, err := contract.CooperativeClose(auth,
-		new(big.Int).SetUint64(ready.Key.ChannelID),
-		ready.BalanceA, ready.BalanceB,
-		ready.ExpiryBlock, ready.SigA, ready.SigB)
-	if err != nil {
-		return err
-	}
-	_, err = bind.WaitMined(ctx, n.backend, tx)
+	_, err = mgr.Transact(ctx, "coopclose", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return contract.CooperativeClose(auth,
+			new(big.Int).SetUint64(ready.Key.ChannelID),
+			ready.BalanceA, ready.BalanceB,
+			ready.ExpiryBlock, ready.SigA, ready.SigB)
+	})
 	return err
 }

@@ -39,6 +39,7 @@ type pendingTx struct {
 	submittedAt uint64      // head at last (re)submission
 	bumps       int
 	deadline    uint64 // 0 = none; alarm fires as head approaches it
+	noBump      bool   // synchronous Transact intent: the caller owns retries
 }
 
 // TxManager tracks keyed transaction intents until they are mined,
@@ -127,7 +128,7 @@ func (m *TxManager) Submit(ctx context.Context, id string, head, deadline uint64
 		return err
 	}
 	p := &pendingTx{build: build, nonce: nonce, gasPrice: gasPrice, deadline: deadline}
-	if err := m.send(ctx, id, p, head); err != nil {
+	if _, err := m.send(ctx, id, p, head); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -157,21 +158,66 @@ func (m *TxManager) allocateNonce(ctx context.Context) (uint64, error) {
 	return nonce, nil
 }
 
-func (m *TxManager) send(ctx context.Context, id string, p *pendingTx, head uint64) error {
+func (m *TxManager) send(ctx context.Context, id string, p *pendingTx, head uint64) (*types.Transaction, error) {
 	auth, err := bind.NewKeyedTransactorWithChainID(m.key, m.chainID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	auth.Context = ctx
 	auth.Nonce = new(big.Int).SetUint64(p.nonce)
 	auth.GasPrice = new(big.Int).Set(p.gasPrice)
 	tx, err := p.build(auth)
 	if err != nil {
-		return fmt.Errorf("tx %s: %w", id, err)
+		return nil, fmt.Errorf("tx %s: %w", id, err)
 	}
 	p.txHashes = append(p.txHashes, tx.Hash())
 	p.submittedAt = head
-	return nil
+	return tx, nil
+}
+
+// Transact runs one synchronous keyed transaction through the manager's
+// nonce serialization and waits for it to mine. Everything submitting with
+// the manager's key on its chain MUST allocate nonces here — bind's
+// auto-nonce reads the chain's lagging pending view and silently replaces a
+// challenge the manager just broadcast. The intent is tracked until mined so
+// concurrent Submits never reuse its nonce, but it is never fee-bumped: the
+// caller is waiting and owns retries.
+func (m *TxManager) Transact(ctx context.Context, label string,
+	build func(*bind.TransactOpts) (*types.Transaction, error)) (*types.Receipt, error) {
+	m.submitMu.Lock()
+	tx, id, err := func() (*types.Transaction, string, error) {
+		defer m.submitMu.Unlock()
+		nonce, err := m.allocateNonce(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		gasPrice, err := m.backend.SuggestGasPrice(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		id := fmt.Sprintf("%s:nonce-%d", label, nonce)
+		p := &pendingTx{build: build, nonce: nonce, gasPrice: gasPrice, noBump: true}
+		tx, err := m.send(ctx, id, p, 0)
+		if err != nil {
+			return nil, "", err
+		}
+		m.mu.Lock()
+		m.pending[id] = p
+		m.mu.Unlock()
+		return tx, id, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+
+	receipt, err := bind.WaitMined(ctx, m.backend, tx)
+	if err != nil {
+		// The broadcast may still mine: keep the reservation until a Tick
+		// reaps its receipt, so the nonce is not reused underneath it.
+		return nil, err
+	}
+	m.Done(id)
+	return receipt, nil
 }
 
 // Tick drives every pending intent: reap mined ones, fee-bump stale ones,
@@ -218,11 +264,11 @@ func (m *TxManager) Tick(ctx context.Context, head uint64) {
 				id, int64(p.deadline)-int64(head), p.txHashes[len(p.txHashes)-1].Hex(), p.bumps)
 		}
 
-		if head >= p.submittedAt+bumpAfterBlocks && p.bumps < maxBumps {
+		if !p.noBump && head >= p.submittedAt+bumpAfterBlocks && p.bumps < maxBumps {
 			// Same nonce, 25% higher price: replaces the stuck transaction.
 			p.gasPrice.Add(p.gasPrice, new(big.Int).Div(new(big.Int).Mul(p.gasPrice, big.NewInt(bumpPercent)), big.NewInt(100)))
 			p.bumps++
-			if err := m.send(ctx, id, p, head); err != nil {
+			if _, err := m.send(ctx, id, p, head); err != nil {
 				// "already known" / "underpriced" races are benign; anything
 				// else waits for the next tick.
 				if !benignResubmitError(err) {
