@@ -13,6 +13,13 @@ import (
 
 var ErrNoPendingClose = errors.New("protocol: no pending cooperative close")
 
+// DefaultCoopCloseHorizonBlocks bounds how far in the future a cooperative
+// close may expire (one week at 10-minute blocks, matching the channel-open
+// accept_challenge_period_max ceiling). A signed close freezes the channel
+// until it settles or expires (Part 1 §7.4), so an unbounded expiry would
+// let an authenticated peer freeze the channel essentially forever.
+const DefaultCoopCloseHorizonBlocks = 1008
+
 // CoopCloseReady is a fully dual-signed cooperative close, ready for either
 // party to submit on-chain (Part 2 §6.5).
 type CoopCloseReady struct {
@@ -77,6 +84,12 @@ func (e *Engine) ProposeCoopClose(key proofstore.ChannelKey, expiryBlock, nowBlo
 	}
 	if expiryBlock <= nowBlock {
 		return nil, fmt.Errorf("protocol: expiry block %d not in the future", expiryBlock)
+	}
+	// An unknown head (offline node, nowBlock 0) cannot judge the horizon;
+	// online nodes bound the freeze they sign themselves into.
+	if nowBlock > 0 && expiryBlock > nowBlock+e.cfg.coopCloseHorizon() {
+		return nil, fmt.Errorf("protocol: expiry block %d beyond the close horizon (max %d ahead)",
+			expiryBlock, e.cfg.coopCloseHorizon())
 	}
 
 	balA, balB, err := e.CloseBalances(key)
@@ -145,6 +158,12 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 	expiry, err := strconv.ParseUint(msg.ExpiryBlock, 10, 64)
 	if err != nil || expiry <= nowBlock {
 		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
+	}
+	// Countersigning freezes us until expiry, so the expiry must be bounded:
+	// an unbounded one is a free permanent-freeze grenade for the peer.
+	// nowBlock 0 (offline node) cannot judge the horizon and skips it.
+	if nowBlock > 0 && expiry > nowBlock+e.cfg.coopCloseHorizon() {
+		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "expiry beyond the close horizon")}, nil, nil
 	}
 	wantA, okA := new(big.Int).SetString(msg.BalanceA, 10)
 	wantB, okB := new(big.Int).SetString(msg.BalanceB, 10)

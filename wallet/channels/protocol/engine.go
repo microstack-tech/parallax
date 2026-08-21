@@ -28,6 +28,17 @@ type Config struct {
 	// MaxInflightWei caps a single outgoing payment, bounding poisoned
 	// exposure ex ante (Part 4 R2). nil or zero = unlimited.
 	MaxInflightWei *big.Int
+	// CoopCloseHorizonBlocks caps how far past the current head a
+	// cooperative-close expiry may lie (freeze bound); zero applies
+	// DefaultCoopCloseHorizonBlocks.
+	CoopCloseHorizonBlocks uint64
+}
+
+func (c Config) coopCloseHorizon() uint64 {
+	if c.CoopCloseHorizonBlocks == 0 {
+		return DefaultCoopCloseHorizonBlocks
+	}
+	return c.CoopCloseHorizonBlocks
 }
 
 // Engine drives one wallet's side of the channel protocol. All methods for a

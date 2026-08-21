@@ -91,8 +91,9 @@ func New(cfg Config, dataDir string, evmPriv *ecdsa.PrivateKey, backend Backend,
 	signer := protocol.NewKeySigner(evmPriv)
 	maxInflight, _ := cfg.MaxInflight()
 	engine := protocol.New(store, signer, protocol.Config{
-		PushPayments:   cfg.Merchant.PushPayments,
-		MaxInflightWei: maxInflight,
+		PushPayments:           cfg.Merchant.PushPayments,
+		MaxInflightWei:         maxInflight,
+		CoopCloseHorizonBlocks: cfg.Channels.CoopCloseHorizonBlocks,
 	})
 
 	n := &Node{
