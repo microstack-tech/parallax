@@ -2,6 +2,7 @@ package channeld
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -17,6 +18,53 @@ func linkSecondChannel(t *testing.T, a, b *Node) proofstore.ChannelKey {
 	key2.ChannelID = 2
 	linkChannelAt(t, a, b, key2)
 	return key2
+}
+
+// TestCreateInvoiceFailsClosedOnAmbiguousPin: an invoice pin is a bare
+// channel id, which coexisting registries both number from 1. Resolving the
+// pin by first match stamps the wrong reg= on the URI — the customer's
+// ChannelForRequest then filters on that registry, finds no match, and a
+// perfectly valid pinned invoice becomes unpayable. Minting must fail closed
+// on an ambiguous pin, and an unambiguous pin must stamp its channel's
+// registry regardless of config iteration order.
+func TestCreateInvoiceFailsClosedOnAmbiguousPin(t *testing.T) {
+	h := newHub()
+	merchant := newTestNodeWith(t, h, func(cfg *Config) {
+		cfg.Registries["v2"] = []RegistryEntry{{Address: decoyKey.Registry.Hex(), ChainID: 2110}}
+	})
+	customer := newTestNode(t, h, nil)
+	linkChannel(t, merchant, customer) // channel 1 on the v1 registry
+	addDecoyChannel(t, merchant)       // channel 1 on the v2 registry
+
+	if _, _, err := merchant.CreateInvoice(big.NewInt(1e9), "", time.Hour, 1); !errors.Is(err, ErrAmbiguousChannel) {
+		t.Fatalf("ambiguous pin minted an invoice: %v", err)
+	}
+
+	// Channel 7 exists only on the v2 registry: the pin resolves uniquely
+	// and the URI must carry v2, whatever order the config map iterates in.
+	only := decoyKey
+	only.ChannelID = 7
+	err := merchant.Store.CreateChannel(proofstore.ChannelMeta{
+		Key:         only,
+		Role:        proofstore.RoleA,
+		Status:      proofstore.StatusOpen,
+		PeerNpub:    customer.SelfPub,
+		PeerAddress: customer.Signer.Address(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, uri, err := merchant.CreateInvoice(big.NewInt(1e9), "", time.Hour, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParsePaymentURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Registry != only.Registry {
+		t.Fatalf("pinned URI stamped registry %s, want %s", req.Registry.Hex(), only.Registry.Hex())
+	}
 }
 
 // TestPayURIHonorsPinnedInvoice: merchants mint channel-pinned invoices, so

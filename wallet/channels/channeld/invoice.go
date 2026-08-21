@@ -29,6 +29,23 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 	if ttl <= 0 {
 		ttl = DefaultInvoiceTTL
 	}
+	if channelID != 0 {
+		// A pin is a bare id, which coexisting registries both number from 1:
+		// resolve it fail-closed now, or the URI gets stamped with an
+		// arbitrary registry and the customer's channel filter rejects a
+		// perfectly valid pinned invoice.
+		key, err := n.ChannelKeyByID(channelID)
+		if err != nil {
+			return proofstore.Invoice{}, "", err
+		}
+		meta, err := n.Store.Meta(key)
+		if err != nil {
+			return proofstore.Invoice{}, "", err
+		}
+		if meta.Status != proofstore.StatusOpen {
+			return proofstore.Invoice{}, "", fmt.Errorf("channeld: pinned channel %d is not open", channelID)
+		}
+	}
 	var idBytes [16]byte
 	if _, err := rand.Read(idBytes[:]); err != nil {
 		return proofstore.Invoice{}, "", err
@@ -68,13 +85,10 @@ func (n *Node) InvoiceURI(inv proofstore.Invoice) string {
 		// proposes on the wrong one and gets NACKed after the irrevocable
 		// journal write. The pin also names the authoritative registry.
 		q.Set("ch", strconv.FormatUint(inv.ChannelID, 10))
-		if metas, err := n.Store.ListChannels(); err == nil {
-			for _, meta := range metas {
-				if meta.Key.ChannelID == inv.ChannelID && meta.Status == proofstore.StatusOpen {
-					reg = strings.ToLower(meta.Key.Registry.Hex())
-					break
-				}
-			}
+		// CreateInvoice fails closed on ambiguous pins, so the bare id
+		// resolves to at most one channel — whose registry is authoritative.
+		if key, err := n.ChannelKeyByID(inv.ChannelID); err == nil {
+			reg = strings.ToLower(key.Registry.Hex())
 		}
 	}
 	q.Set("reg", reg)

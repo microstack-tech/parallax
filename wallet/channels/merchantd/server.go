@@ -116,6 +116,12 @@ func (s *Server) createInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inv, uri, err := s.node.CreateInvoice(amount, req.Memo, time.Duration(req.TTLSeconds)*time.Second, req.ChannelID)
+	if errors.Is(err, channeld.ErrAmbiguousChannel) {
+		// Same contract as close/withdraw: an ambiguous bare id is the
+		// caller's to qualify, not a server fault.
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
