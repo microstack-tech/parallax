@@ -82,10 +82,16 @@ type AckMsg struct {
 type NackMsg struct {
 	V         int    `json:"v"`
 	ChannelID string `json:"channelId"`
-	Re        string `json:"re"` // kind being nacked, e.g. "21902"
-	Seq       string `json:"seq"`
-	Reason    string `json:"reason"`
-	Detail    string `json:"detail,omitempty"`
+	// Registry and ChainID qualify the bare channel id across coexisting
+	// registries: a NACK carries no signed state, so without them a receiver
+	// holding the same id (and an outstanding proposal at the same seq) with
+	// the same peer on another registry cannot tell which channel is meant.
+	Registry string `json:"registry,omitempty"`
+	ChainID  string `json:"chainId,omitempty"`
+	Re       string `json:"re"` // kind being nacked, e.g. "21902"
+	Seq      string `json:"seq"`
+	Reason   string `json:"reason"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // CoopCloseProposalMsg is kind 21904.

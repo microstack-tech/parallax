@@ -133,6 +133,13 @@ func decodeHandshake(t *testing.T, content string) protocol.HandshakeMsg {
 
 func linkChannel(t *testing.T, a, b *Node) {
 	t.Helper()
+	linkChannelAt(t, a, b, e2eKey)
+}
+
+// linkChannelAt records key as an open funded channel between a (role A) and
+// b (role B) in both stores.
+func linkChannelAt(t *testing.T, a, b *Node, key proofstore.ChannelKey) {
+	t.Helper()
 	deposits := proofstore.Deposits{
 		DepositA:         proofstore.NewU256(big.NewInt(10e9)),
 		DepositB:         proofstore.NewU256(big.NewInt(5e9)),
@@ -144,7 +151,7 @@ func linkChannel(t *testing.T, a, b *Node) {
 		peer *Node
 	}{{a, proofstore.RoleA, b}, {b, proofstore.RoleB, a}} {
 		err := p.n.Store.CreateChannel(proofstore.ChannelMeta{
-			Key:             e2eKey,
+			Key:             key,
 			Role:            p.role,
 			Status:          proofstore.StatusOpen,
 			PeerNpub:        p.peer.SelfPub,
@@ -154,7 +161,7 @@ func linkChannel(t *testing.T, a, b *Node) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := p.n.Store.PutDeposits(e2eKey, deposits); err != nil {
+		if err := p.n.Store.PutDeposits(key, deposits); err != nil {
 			t.Fatal(err)
 		}
 	}

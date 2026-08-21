@@ -307,19 +307,34 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		// NACKs carry no verifiable state, so the sender scoping above is the
-		// whole authorization: only the counterparty of a matching channel may
-		// poison it. HandleNack itself no-ops unless the seq matches an
-		// outstanding self-signed entry, selecting among candidates.
-		for _, key := range n.channelsForPeer(msg.ChannelID, sender) {
+		// NACKs carry no verifiable state, so sender scoping is the whole
+		// authorization: only the counterparty of a matching channel may
+		// poison it. HandleNack matches on seq alone, which cannot separate
+		// same-peer channels sharing the bare id across coexisting
+		// registries — the message's registry qualifier does.
+		candidates := n.channelsForPeer(msg.ChannelID, sender)
+		if msg.Registry != "" && util.IsHexAddress(msg.Registry) {
+			reg := util.HexToAddress(msg.Registry)
+			var scoped []proofstore.ChannelKey
+			for _, key := range candidates {
+				if key.Registry == reg && (msg.ChainID == "" || key.ChainID == msg.ChainID) {
+					scoped = append(scoped, key)
+				}
+			}
+			candidates = scoped
+		}
+		for _, key := range candidates {
 			poisoned, err := n.Engine.HandleNack(key, msg)
+			if err != nil {
+				return err
+			}
 			if poisoned {
 				exposure, _ := n.Engine.PoisonedExposure(key)
 				n.log.Warn("channel poisoned by NACK", "channel", key.String(),
 					"reason", msg.Reason, "exposureWei", exposure)
-			}
-			if err != nil {
-				return err
+				// Seq alone cannot tell a legacy unqualified NACK's target
+				// apart from its same-peer twins; poison one channel, not all.
+				return nil
 			}
 		}
 		return nil

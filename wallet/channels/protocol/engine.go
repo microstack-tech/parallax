@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
@@ -145,10 +146,12 @@ func (e *Engine) refreshPoisonedFlag(key proofstore.ChannelKey) error {
 	return nil
 }
 
-func nack(channelID uint64, re int, seq uint64, reason, detail string) *NackMsg {
+func nack(key proofstore.ChannelKey, re int, seq uint64, reason, detail string) *NackMsg {
 	return &NackMsg{
 		V:         1,
-		ChannelID: strconv.FormatUint(channelID, 10),
+		ChannelID: strconv.FormatUint(key.ChannelID, 10),
+		Registry:  strings.ToLower(key.Registry.Hex()),
+		ChainID:   key.ChainID,
 		Re:        strconv.Itoa(re),
 		Seq:       strconv.FormatUint(seq, 10),
 		Reason:    reason,
@@ -414,7 +417,7 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 
 	meta, err := e.store.Meta(key)
 	if err != nil {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackUnknownChannel, "")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackUnknownChannel, "")}, nil
 	}
 	// Check 1a: authenticated sender is the channel counterparty. Unknown
 	// senders referencing known channels are dropped, not answered
@@ -423,15 +426,15 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 		return Result{Dropped: true}, nil
 	}
 	if meta.Status != proofstore.StatusOpen {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackUnknownChannel, "channel not open")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackUnknownChannel, "channel not open")}, nil
 	}
 	if frozen(meta, nowBlock) {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackFrozen, "")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackFrozen, "")}, nil
 	}
 
 	// Check 3: reserved lock fields must be zero in v1.
 	if st.LocksRoot != (util.Hash{}) || st.LockedAmount.BigInt().Sign() != 0 {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackLocksNonzero, "")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackLocksNonzero, "")}, nil
 	}
 
 	latest, err := e.latestOrZero(key)
@@ -465,7 +468,7 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 	// ordinary flow; a gap is legal only for supersessions of proposals this
 	// side never countersigned (Part 2 §7.4), which check 4 constrains.
 	if st.Seq <= latest.Seq {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackBadSeq,
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackBadSeq,
 			fmt.Sprintf("latest complete seq %d", latest.Seq))}, nil
 	}
 
@@ -475,7 +478,7 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 	prole := peerRole(meta.Role)
 	delta := new(big.Int).Sub(outboundOf(&st, prole), outboundOf(&latest, prole))
 	if delta.Sign() < 0 || outboundOf(&st, meta.Role).Cmp(outboundOf(&latest, meta.Role)) != 0 {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackPolicy, "non-monotone amounts")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackPolicy, "non-monotone amounts")}, nil
 	}
 	isNoOp := delta.Sign() == 0
 
@@ -487,10 +490,10 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 	}
 	peerSig := st.SigOf(prole)
 	if len(peerSig) != 65 || VerifySignedBy(digest, peerSig, meta.PeerAddress) != nil {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackPolicy, "bad signature")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackPolicy, "bad signature")}, nil
 	}
 	if len(st.SigOf(meta.Role)) != 0 {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackPolicy, "proposal carries my signature slot")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackPolicy, "proposal carries my signature slot")}, nil
 	}
 
 	// Tiebreak (§7.5): both sides proposed the same seq.
@@ -536,7 +539,7 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 		return Result{}, err
 	}
 	if balanceOf(prole, &st, dep).Sign() < 0 {
-		return Result{Nack: nack(key.ChannelID, KindProposal, st.Seq, NackInsufficientBalance, "")}, nil
+		return Result{Nack: nack(key, KindProposal, st.Seq, NackInsufficientBalance, "")}, nil
 	}
 
 	// Countersign. W2 barrier: commit the complete state before the ACK is
@@ -589,25 +592,25 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 // checkInvoice validates §7.3 check 5; nil means pass.
 func (e *Engine) checkInvoice(key proofstore.ChannelKey, invoiceID string, delta *big.Int, nowUnix int64, seq uint64) *NackMsg {
 	if invoiceID == "" {
-		return nack(key.ChannelID, KindProposal, seq, NackPolicy, "push payments disabled")
+		return nack(key, KindProposal, seq, NackPolicy, "push payments disabled")
 	}
 	inv, err := e.store.Invoice(invoiceID)
 	if err != nil {
-		return nack(key.ChannelID, KindProposal, seq, NackPolicy, "unknown invoice")
+		return nack(key, KindProposal, seq, NackPolicy, "unknown invoice")
 	}
 	if inv.Paid {
 		// Idempotent duplicate of a completed payment is handled upstream by
 		// the digest match; a *new* state paying a spent invoice is refused.
-		return nack(key.ChannelID, KindProposal, seq, NackPolicy, "invoice already paid")
+		return nack(key, KindProposal, seq, NackPolicy, "invoice already paid")
 	}
 	if nowUnix > inv.ExpiresAt {
-		return nack(key.ChannelID, KindProposal, seq, NackExpiredInvoice, "")
+		return nack(key, KindProposal, seq, NackExpiredInvoice, "")
 	}
 	if inv.AmountWei.BigInt().Cmp(delta) != 0 {
-		return nack(key.ChannelID, KindProposal, seq, NackPolicy, "amount does not match invoice")
+		return nack(key, KindProposal, seq, NackPolicy, "amount does not match invoice")
 	}
 	if inv.ChannelID != 0 && inv.ChannelID != key.ChannelID {
-		return nack(key.ChannelID, KindProposal, seq, NackPolicy, "invoice pinned to another channel")
+		return nack(key, KindProposal, seq, NackPolicy, "invoice pinned to another channel")
 	}
 	return nil
 }

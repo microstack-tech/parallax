@@ -166,38 +166,38 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 
 	meta, err := e.store.Meta(key)
 	if err != nil {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackUnknownChannel, "")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackUnknownChannel, "")}, nil, nil
 	}
 	if senderNpub != meta.PeerNpub {
 		return Result{Dropped: true}, nil, nil
 	}
 	if meta.Status != proofstore.StatusOpen {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackUnknownChannel, "channel not open")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackUnknownChannel, "channel not open")}, nil, nil
 	}
 	if frozen(meta, nowBlock) {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackFrozen, "")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackFrozen, "")}, nil, nil
 	}
 	if empty, err := e.journalEmpty(key); err != nil {
 		return Result{}, nil, err
 	} else if !empty {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "self-signed state outstanding")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "self-signed state outstanding")}, nil, nil
 	}
 
 	expiry, err := strconv.ParseUint(msg.ExpiryBlock, 10, 64)
 	if err != nil || expiry <= nowBlock {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
 	}
 	if !util.IsHexAddress(msg.Participant) {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "bad participant")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "bad participant")}, nil, nil
 	}
 	participant := util.HexToAddress(msg.Participant)
 	// The proposer only ever withdraws to itself.
 	if participant != meta.PeerAddress {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "participant is not the proposer")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "participant is not the proposer")}, nil, nil
 	}
 	total, ok := new(big.Int).SetString(msg.TotalWithdrawn, 10)
 	if !ok || total.Sign() <= 0 {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "bad totalWithdrawn")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "bad totalWithdrawn")}, nil, nil
 	}
 
 	// Strict cumulative increase against confirmed figures (mirrors the
@@ -212,14 +212,14 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 		withdrawn = dep.WithdrawnB.BigInt()
 	}
 	if total.Cmp(withdrawn) <= 0 {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "totalWithdrawn does not increase")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "totalWithdrawn does not increase")}, nil, nil
 	}
 	ent, err := e.entitlement(key, prole)
 	if err != nil {
 		return Result{}, nil, err
 	}
 	if total.Cmp(ent) > 0 {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackInsufficientBalance, "exceeds entitlement")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackInsufficientBalance, "exceeds entitlement")}, nil, nil
 	}
 
 	digest, err := withdrawDigest(key, participant, total, expiry)
@@ -228,7 +228,7 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 	}
 	peerSig, err := parseSig(msg.Sig)
 	if err != nil || VerifySignedBy(digest, peerSig, meta.PeerAddress) != nil {
-		return Result{Nack: nack(channelID, KindWithdrawProposal, 0, NackPolicy, "bad signature")}, nil, nil
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "bad signature")}, nil, nil
 	}
 
 	mySig, err := e.signer.SignDigest(digest)

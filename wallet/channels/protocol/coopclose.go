@@ -146,29 +146,29 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 
 	meta, err := e.store.Meta(key)
 	if err != nil {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackUnknownChannel, "")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackUnknownChannel, "")}, nil, nil
 	}
 	if senderNpub != meta.PeerNpub {
 		return Result{Dropped: true}, nil, nil
 	}
 	if meta.Status != proofstore.StatusOpen && meta.Status != proofstore.StatusClosing {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackUnknownChannel, "channel settled")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackUnknownChannel, "channel settled")}, nil, nil
 	}
 
 	expiry, err := strconv.ParseUint(msg.ExpiryBlock, 10, 64)
 	if err != nil || expiry <= nowBlock {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
 	}
 	// Countersigning freezes us until expiry, so the expiry must be bounded:
 	// an unbounded one is a free permanent-freeze grenade for the peer.
 	// nowBlock 0 (offline node) cannot judge the horizon and skips it.
 	if nowBlock > 0 && expiry > nowBlock+e.cfg.coopCloseHorizon() {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "expiry beyond the close horizon")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "expiry beyond the close horizon")}, nil, nil
 	}
 	wantA, okA := new(big.Int).SetString(msg.BalanceA, 10)
 	wantB, okB := new(big.Int).SetString(msg.BalanceB, 10)
 	if !okA || !okB || wantA.Sign() < 0 || wantB.Sign() < 0 {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad balances")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "bad balances")}, nil, nil
 	}
 
 	// Retransmission of the close we already countersigned: re-ACK
@@ -182,7 +182,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 		}
 		peerSig, err := parseSig(msg.Sig)
 		if err != nil || VerifySignedBy(digest, peerSig, meta.PeerAddress) != nil {
-			return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad signature")}, nil, nil
+			return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "bad signature")}, nil, nil
 		}
 		ack := &AckMsg{
 			V:         1,
@@ -194,7 +194,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 		return Result{Ack: ack}, e.readyPair(key, meta.Role, wantA, wantB, expiry, pc.MySig, peerSig), nil
 	}
 	if frozen(meta, nowBlock) {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackFrozen, "close already pending")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackFrozen, "close already pending")}, nil, nil
 	}
 
 	balA, balB, err := e.CloseBalances(key)
@@ -202,7 +202,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 		return Result{}, nil, err
 	}
 	if balA.Cmp(wantA) != 0 || balB.Cmp(wantB) != 0 {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "balances do not match local view")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "balances do not match local view")}, nil, nil
 	}
 
 	digest, err := coopCloseDigest(key, balA, balB, expiry)
@@ -211,7 +211,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 	}
 	peerSig, err := parseSig(msg.Sig)
 	if err != nil || VerifySignedBy(digest, peerSig, meta.PeerAddress) != nil {
-		return Result{Nack: nack(channelID, KindCoopCloseProposal, 0, NackPolicy, "bad signature")}, nil, nil
+		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackPolicy, "bad signature")}, nil, nil
 	}
 
 	mySig, err := e.signer.SignDigest(digest)

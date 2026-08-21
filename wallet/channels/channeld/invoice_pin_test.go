@@ -15,31 +15,7 @@ func linkSecondChannel(t *testing.T, a, b *Node) proofstore.ChannelKey {
 	t.Helper()
 	key2 := e2eKey
 	key2.ChannelID = 2
-	deposits := proofstore.Deposits{
-		DepositA:         proofstore.NewU256(big.NewInt(10e9)),
-		DepositB:         proofstore.NewU256(big.NewInt(5e9)),
-		LastScannedBlock: 1,
-	}
-	for _, p := range []struct {
-		n    *Node
-		role proofstore.Role
-		peer *Node
-	}{{a, proofstore.RoleA, b}, {b, proofstore.RoleB, a}} {
-		err := p.n.Store.CreateChannel(proofstore.ChannelMeta{
-			Key:             key2,
-			Role:            p.role,
-			Status:          proofstore.StatusOpen,
-			PeerNpub:        p.peer.SelfPub,
-			PeerAddress:     p.peer.Signer.Address(),
-			ChallengePeriod: 144,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := p.n.Store.PutDeposits(key2, deposits); err != nil {
-			t.Fatal(err)
-		}
-	}
+	linkChannelAt(t, a, b, key2)
 	return key2
 }
 
