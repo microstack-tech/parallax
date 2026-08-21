@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/chantest"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 )
@@ -204,5 +205,59 @@ func TestMerchantWebhookRetries(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if attempts.Load() != final {
 		t.Fatal("delivered webhook kept retrying")
+	}
+}
+
+// TestCloseRefusesAmbiguousBareChannelID: with coexisting registries both
+// holding a channel id, a bare-id close must be refused — first-match
+// resolution would freeze or force-close the wrong channel. The qualified
+// <chainId>:<registry>:<id> form still works.
+func TestCloseRefusesAmbiguousBareChannelID(t *testing.T) {
+	env := chantest.NewPair(t)
+	merchant := env.Bob
+
+	decoy := env.Key
+	decoy.Registry = util.HexToAddress("0x0000000000000000000000000000000000001111")
+	err := merchant.Node.Store.CreateChannel(proofstore.ChannelMeta{
+		Key:             decoy,
+		Role:            proofstore.RoleB,
+		Status:          proofstore.StatusOpen,
+		PeerNpub:        strings.Repeat("cd", 32),
+		PeerAddress:     env.Alice.Node.Signer.Address(),
+		ChallengePeriod: 144,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(merchant.Node, testToken, nil)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	code, raw := api(t, ts, "POST", "/v1/channels/1/close", testToken, nil)
+	if code != http.StatusConflict {
+		t.Fatalf("ambiguous bare-id close not refused: %d %s", code, raw)
+	}
+	for _, key := range []proofstore.ChannelKey{env.Key, decoy} {
+		meta, err := merchant.Node.Store.Meta(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.FrozenUntilBlock != 0 || meta.PendingClose != nil {
+			t.Fatalf("channel %s frozen by an ambiguous close", key)
+		}
+	}
+
+	// The qualified reference disambiguates.
+	code, raw = api(t, ts, "POST", "/v1/channels/"+env.Key.String()+"/close", testToken, nil)
+	if code != http.StatusAccepted {
+		t.Fatalf("qualified close refused: %d %s", code, raw)
+	}
+	meta, _ := merchant.Node.Store.Meta(env.Key)
+	if meta.PendingClose == nil {
+		t.Fatal("qualified close did not initiate")
+	}
+	if decoyMeta, _ := merchant.Node.Store.Meta(decoy); decoyMeta.PendingClose != nil {
+		t.Fatal("qualified close hit the decoy channel")
 	}
 }

@@ -3,6 +3,7 @@ package channeld
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -189,6 +190,34 @@ func TestNackRoutesAcrossCoexistingRegistries(t *testing.T) {
 	meta, _ := alice.Store.Meta(e2eKey)
 	if !meta.Poisoned {
 		t.Fatal("bob's NACK did not poison bob's channel")
+	}
+}
+
+// TestChannelRefResolution: user-supplied bare ids must fail closed when
+// coexisting registries share the id; the qualified form disambiguates.
+func TestChannelRefResolution(t *testing.T) {
+	h := newHub()
+	alice := newTestNode(t, h, nil)
+	bob := newTestNode(t, h, nil)
+	linkChannel(t, alice, bob)
+	addDecoyChannel(t, alice)
+
+	if _, err := alice.ChannelKeyByID(1); !errors.Is(err, ErrAmbiguousChannel) {
+		t.Fatalf("ambiguous bare id resolved: %v", err)
+	}
+	for _, want := range []proofstore.ChannelKey{e2eKey, decoyKey} {
+		key, err := alice.ParseChannelRef(want.String())
+		if err != nil || key != want {
+			t.Fatalf("qualified ref %s: %+v %v", want, key, err)
+		}
+	}
+	// A unique bare id still resolves.
+	key, err := bob.ParseChannelRef("1")
+	if err != nil || key != e2eKey {
+		t.Fatalf("unique bare id: %+v %v", key, err)
+	}
+	if _, err := bob.ParseChannelRef("7"); err == nil {
+		t.Fatal("unknown id resolved")
 	}
 }
 

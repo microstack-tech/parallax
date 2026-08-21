@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -123,10 +122,12 @@ func (s *Server) createInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 	// Push the 21901 to the pinned channel's counterparty when known.
 	if req.ChannelID != 0 {
-		if key, found := s.channelKey(req.ChannelID); found {
+		if key, err := s.node.ChannelKeyByID(req.ChannelID); err == nil {
 			if err := s.node.SendInvoice(key, inv); err != nil {
 				s.log.Warn("invoice relay send", "err", err)
 			}
+		} else {
+			s.log.Warn("invoice relay send", "err", err)
 		}
 	}
 	writeJSON(w, http.StatusCreated, invoiceResponse{
@@ -214,20 +215,15 @@ type closeRequest struct {
 }
 
 func (s *Server) closeChannel(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad channel id")
-		return
-	}
-	key, found := s.channelKey(id)
-	if !found {
-		writeError(w, http.StatusNotFound, "unknown channel")
+	key, ok := s.resolveChannel(w, r)
+	if !ok {
 		return
 	}
 	var req closeRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req) // empty body = defaults
 	}
+	var err error
 	switch req.Mode {
 	case "", "coop":
 		err = s.node.CoopClose(r.Context(), key)
@@ -251,14 +247,8 @@ type withdrawRequest struct {
 // withdraw initiates the cooperative-withdraw negotiation (Part 2 §6.10);
 // on-chain submission follows automatically when the countersign arrives.
 func (s *Server) withdraw(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad channel id")
-		return
-	}
-	key, found := s.channelKey(id)
-	if !found {
-		writeError(w, http.StatusNotFound, "unknown channel")
+	key, ok := s.resolveChannel(w, r)
+	if !ok {
 		return
 	}
 	var req withdrawRequest
@@ -294,15 +284,18 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "parallax_outbound_queue %d\n", queueLen)
 }
 
-func (s *Server) channelKey(id uint64) (proofstore.ChannelKey, bool) {
-	metas, err := s.node.Store.ListChannels()
-	if err != nil {
-		return proofstore.ChannelKey{}, false
-	}
-	for _, meta := range metas {
-		if meta.Key.ChannelID == id {
-			return meta.Key, true
-		}
+// resolveChannel resolves the {id} path value — a bare id, or the qualified
+// <chainId>:<registry>:<id> form when ids collide across coexisting
+// registries — writing the error response itself on failure.
+func (s *Server) resolveChannel(w http.ResponseWriter, r *http.Request) (proofstore.ChannelKey, bool) {
+	key, err := s.node.ParseChannelRef(r.PathValue("id"))
+	switch {
+	case err == nil:
+		return key, true
+	case errors.Is(err, channeld.ErrAmbiguousChannel):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusNotFound, err.Error())
 	}
 	return proofstore.ChannelKey{}, false
 }

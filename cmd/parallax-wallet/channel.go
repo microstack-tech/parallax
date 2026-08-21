@@ -22,7 +22,6 @@ import (
 	"math/big"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -279,22 +278,15 @@ func argWei(ctx *cli.Context, index int) *big.Int {
 	return v
 }
 
+// argChannel resolves a channel argument: a bare decimal id, or the
+// qualified <chainId>:<registry>:<id> form when coexisting registries share
+// the id.
 func argChannel(node *channeld.Node, ctx *cli.Context, index int) proofstore.ChannelKey {
-	id, err := strconv.ParseUint(ctx.Args().Get(index), 10, 64)
-	if err != nil {
-		utils.Fatalf("bad channel id %q", ctx.Args().Get(index))
-	}
-	metas, err := node.Store.ListChannels()
+	key, err := node.ParseChannelRef(ctx.Args().Get(index))
 	if err != nil {
 		utils.Fatalf("%v", err)
 	}
-	for _, meta := range metas {
-		if meta.Key.ChannelID == id {
-			return meta.Key
-		}
-	}
-	utils.Fatalf("unknown channel %d", id)
-	return proofstore.ChannelKey{}
+	return key
 }
 
 func channelOpen(ctx *cli.Context) error {
