@@ -3,12 +3,16 @@ package towerd_test
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"math/big"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	parallax "github.com/ParallaxProtocol/parallax/v2"
 	"github.com/ParallaxProtocol/parallax/v2/crypto"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind/backends"
@@ -17,9 +21,11 @@ import (
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/channeld"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/chantest"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/nostrmod"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/protocol"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/registry"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/towerd"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/watcher"
 )
 
 func lax(n int64) *big.Int { return new(big.Int).Mul(big.NewInt(n), big.NewInt(1e18)) }
@@ -227,6 +233,142 @@ func TestTowerChallengesScriptedCheater(t *testing.T) {
 	}
 	if len(alarms) == 0 {
 		t.Fatal("tower never alarmed about the stale close")
+	}
+}
+
+// flakyCallBackend injects failures into contract view calls (GetChannel),
+// simulating a transiently failing RPC during react().
+type flakyCallBackend struct {
+	watcher.TxBackend
+	fail atomic.Bool
+}
+
+func (b *flakyCallBackend) CallContract(ctx context.Context, msg parallax.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	if b.fail.Load() {
+		return nil, errors.New("injected rpc failure")
+	}
+	return b.TxBackend.CallContract(ctx, msg, blockNumber)
+}
+
+func dualSignedState(t *testing.T, key proofstore.ChannelKey, seq uint64, tAB *big.Int, alicePriv, bobPriv *ecdsa.PrivateKey) proofstore.SignedState {
+	t.Helper()
+	st := proofstore.SignedState{
+		Key:             key,
+		Seq:             seq,
+		TransferredAtoB: proofstore.NewU256(tAB),
+		TransferredBtoA: proofstore.NewU256(nil),
+		LockedAmount:    proofstore.NewU256(nil),
+	}
+	digest, err := st.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.SigA, err = protocol.NewKeySigner(alicePriv).SignDigest(digest); err != nil {
+		t.Fatal(err)
+	}
+	if st.SigB, err = protocol.NewKeySigner(bobPriv).SignDigest(digest); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// TestTickRescansFailedReactRange: a CloseStarted event whose react() failed
+// transiently (RPC error) must be scanned again on the next tick — advancing
+// the watermark past it would silently drop the challenge and let the stale
+// close settle.
+func TestTickRescansFailedReactRange(t *testing.T) {
+	alicePriv, _ := crypto.GenerateKey() // cheater
+	bobPriv, _ := crypto.GenerateKey()   // delegator (victim)
+	towerPriv, _ := crypto.GenerateKey()
+	alice := crypto.PubkeyToAddress(alicePriv.PublicKey)
+	bob := crypto.PubkeyToAddress(bobPriv.PublicKey)
+	towerAddr := crypto.PubkeyToAddress(towerPriv.PublicKey)
+
+	backend := backends.NewSimulatedBackend(validation.GenesisAlloc{
+		alice: {Balance: lax(100)}, bob: {Balance: lax(100)}, towerAddr: {Balance: lax(10)},
+	}, 30_000_000)
+	defer backend.Close()
+	auth, err := bind.NewKeyedTransactorWithChainID(alicePriv, big.NewInt(1337))
+	if err != nil {
+		t.Fatal(err)
+	}
+	regAddr, _, contract, err := registry.DeployChannelRegistry(auth, backend, big.NewInt(1e16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.Value = lax(10)
+	if _, err := contract.Open(auth, bob, 36); err != nil {
+		t.Fatal(err)
+	}
+	auth.Value = nil
+	backend.Commit()
+
+	flaky := &flakyCallBackend{TxBackend: backend}
+	store, err := proofstore.Open(filepath.Join(t.TempDir(), "tower.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tower, err := towerd.New(towerd.Config{
+		ChainID:       "1337",
+		Registry:      regAddr,
+		Confirmations: 3,
+		Delegators:    map[string]bool{"bob-npub": true},
+	}, store, flaky, towerPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tower.Alarm = func(format string, args ...any) { t.Logf("alarm: "+format, args...) }
+
+	key := proofstore.ChannelKey{ChainID: "1337", Registry: regAddr, ChannelID: 1}
+	latest := dualSignedState(t, key, 5, lax(3), alicePriv, bobPriv)
+	if _, err := tower.HandleDelegation(context.Background(), protocol.TowerDelegationMsg{
+		V:         1,
+		Registry:  strings.ToLower(regAddr.Hex()),
+		ChainID:   "1337",
+		ChannelID: "1",
+		State:     protocol.ToWire(latest),
+	}, "bob-npub"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice force-closes at stale seq 2.
+	stale := dualSignedState(t, key, 2, lax(1), alicePriv, bobPriv)
+	proof := registry.ParallaxChannelRegistryBalanceProof{
+		ChannelId:       big.NewInt(1),
+		Seq:             stale.Seq,
+		TransferredAtoB: stale.TransferredAtoB.BigInt(),
+		TransferredBtoA: stale.TransferredBtoA.BigInt(),
+		LocksRoot:       stale.LocksRoot,
+		LockedAmount:    stale.LockedAmount.BigInt(),
+	}
+	if _, err := contract.StartClose(auth, big.NewInt(1), proof, stale.SigA, stale.SigB); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		backend.Commit()
+	}
+
+	// Tick 1: the RPC fails while reacting to the confirmed CloseStarted.
+	flaky.fail.Store(true)
+	if _, err := tower.Tick(context.Background()); err != nil {
+		t.Logf("tick during outage: %v", err)
+	}
+	flaky.fail.Store(false)
+
+	// Tick 2: the RPC is back; the event must be re-scanned and challenged.
+	if _, err := tower.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	backend.Commit() // mine the challenge
+
+	onchain, err := contract.GetChannel(nil, big.NewInt(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onchain.ClosingSeq != 5 || onchain.LastChallenger != towerAddr {
+		t.Fatalf("failed react range never re-scanned: on-chain seq %d challenger %s",
+			onchain.ClosingSeq, onchain.LastChallenger.Hex())
 	}
 }
 

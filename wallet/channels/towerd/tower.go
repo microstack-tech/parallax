@@ -172,6 +172,11 @@ func (t *Tower) Tick(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return head, err
 	}
+	// The watermark may only advance past events that were reacted to:
+	// react() is the tower's sole evaluation of a CloseStarted, so skipping
+	// a transiently failed one would silently drop its challenge window.
+	// firstFailed pins the watermark so the failed range is re-scanned.
+	var firstFailed uint64
 	for iter.Next() {
 		ev := iter.Event
 		key := proofstore.ChannelKey{
@@ -181,9 +186,19 @@ func (t *Tower) Tick(ctx context.Context) (uint64, error) {
 		}
 		if err := t.react(ctx, key, head); err != nil {
 			t.alarm("tower react on %s: %v", key, err)
+			if firstFailed == 0 || ev.Raw.BlockNumber < firstFailed {
+				firstFailed = ev.Raw.BlockNumber
+			}
 		}
 	}
-	return head, t.store.SetTowerWatermark(t.cfg.ChainID, t.cfg.Registry.Hex(), cutoff)
+	if err := iter.Error(); err != nil {
+		return head, err // incomplete scan: keep the old watermark
+	}
+	mark := cutoff
+	if firstFailed > 0 {
+		mark = firstFailed - 1
+	}
+	return head, t.store.SetTowerWatermark(t.cfg.ChainID, t.cfg.Registry.Hex(), mark)
 }
 
 // react evaluates one closing channel against the delegation store.
