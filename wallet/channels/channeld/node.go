@@ -187,10 +187,12 @@ func (n *Node) watchLoop(ctx context.Context, interval time.Duration) {
 		for _, w := range n.Watchers {
 			head, err := w.Tick(ctx)
 			if err != nil {
+				// Partial per-channel failures still return a valid head.
 				n.log.Error("watcher tick", "err", err)
-				continue
 			}
-			n.unfreezeExpired(head)
+			if head > 0 {
+				n.unfreezeExpired(head)
+			}
 		}
 	}
 	tick() // sync immediately at start: one-shot CLI verbs rely on it

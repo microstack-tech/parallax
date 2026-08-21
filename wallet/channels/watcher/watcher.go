@@ -11,6 +11,7 @@ package watcher
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -109,6 +110,9 @@ func (w *Watcher) Tick(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return head, err
 	}
+	// One failing channel must not starve the rest: every channel gets its
+	// scan-and-act pass each tick, and the failures are reported joined.
+	var errs []error
 	for _, meta := range channels {
 		if meta.Key.ChainID != w.cfg.ChainID || meta.Key.Registry != w.cfg.Registry {
 			continue
@@ -117,13 +121,14 @@ func (w *Watcher) Tick(ctx context.Context) (uint64, error) {
 			continue
 		}
 		if err := w.scanChannel(ctx, meta, cutoff); err != nil {
-			return head, fmt.Errorf("scan channel %s: %w", meta.Key, err)
+			errs = append(errs, fmt.Errorf("scan channel %s: %w", meta.Key, err))
+			continue // an unscanned channel must not be acted on blindly
 		}
 		if err := w.actOnChannel(ctx, meta.Key, head); err != nil {
-			return head, fmt.Errorf("act on channel %s: %w", meta.Key, err)
+			errs = append(errs, fmt.Errorf("act on channel %s: %w", meta.Key, err))
 		}
 	}
-	return head, nil
+	return head, errors.Join(errs...)
 }
 
 // scanChannel advances the confirmed-log watermark, crediting funding

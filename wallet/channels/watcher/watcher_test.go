@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	parallax "github.com/ParallaxProtocol/parallax/v2"
 	"github.com/ParallaxProtocol/parallax/v2/crypto"
+	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind/backends"
 	"github.com/ParallaxProtocol/parallax/v2/util"
@@ -109,9 +111,13 @@ func setupSim(t *testing.T) *simEnv {
 
 // dualSigned builds a complete state signed by both on-chain keys.
 func (e *simEnv) dualSigned(t *testing.T, seq uint64, tAB, tBA *big.Int) proofstore.SignedState {
+	return e.dualSignedFor(t, e.key, seq, tAB, tBA)
+}
+
+func (e *simEnv) dualSignedFor(t *testing.T, key proofstore.ChannelKey, seq uint64, tAB, tBA *big.Int) proofstore.SignedState {
 	t.Helper()
 	st := proofstore.SignedState{
-		Key:             e.key,
+		Key:             key,
 		Seq:             seq,
 		TransferredAtoB: proofstore.NewU256(tAB),
 		TransferredBtoA: proofstore.NewU256(tBA),
@@ -319,6 +325,90 @@ func TestHonestCloseNoChallengeJustSettle(t *testing.T) {
 	aliceAfter, _ := e.backend.BalanceAt(ctx, e.alice, nil)
 	if got := new(big.Int).Sub(aliceAfter, aliceBefore); got.Cmp(lax(7)) != 0 {
 		t.Fatalf("honest closer payout: got %s want %s", got, lax(7))
+	}
+}
+
+// failFilterBackend fails any log filter naming the given channel-id topic,
+// simulating one channel whose scan range persistently errors.
+type failFilterBackend struct {
+	TxBackend
+	failTopic util.Hash
+}
+
+func (b *failFilterBackend) FilterLogs(ctx context.Context, q parallax.FilterQuery) ([]types.Log, error) {
+	for _, alts := range q.Topics {
+		for _, topic := range alts {
+			if topic == b.failTopic {
+				return nil, fmt.Errorf("injected filter failure for %s", topic.Hex())
+			}
+		}
+	}
+	return b.TxBackend.FilterLogs(ctx, q)
+}
+
+// TestTickContinuesPastFailingChannel: one persistently failing channel must
+// not starve the others of scanning — a stale close on a later channel still
+// has to be auto-challenged (the loss-capable path the watcher exists for).
+func TestTickContinuesPastFailingChannel(t *testing.T) {
+	e := setupSim(t)
+	ctx := context.Background()
+
+	// Channel 2: alice opens a second channel against bob; bob tracks it.
+	e.aliceAuth.Value = lax(10)
+	if _, err := e.contract.Open(e.aliceAuth, e.bob, 36); err != nil {
+		t.Fatal(err)
+	}
+	e.aliceAuth.Value = nil
+	e.backend.Commit()
+	key2 := proofstore.ChannelKey{ChainID: "1337", Registry: e.regAddr, ChannelID: 2}
+	err := e.store.CreateChannel(proofstore.ChannelMeta{
+		Key:             key2,
+		Role:            proofstore.RoleB,
+		Status:          proofstore.StatusOpen,
+		PeerNpub:        "alice-npub",
+		PeerAddress:     e.alice,
+		ChallengePeriod: 36,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Channel 2's true latest state is seq 5; alice force-closes at seq 2.
+	latest := e.dualSignedFor(t, key2, 5, lax(3), new(big.Int))
+	if err := e.store.PutComplete(latest); err != nil {
+		t.Fatal(err)
+	}
+	stale := e.dualSignedFor(t, key2, 2, lax(1), new(big.Int))
+	if _, err := e.contract.StartClose(e.aliceAuth, big.NewInt(2), e.proofArg(stale), stale.SigA, stale.SigB); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(3) // confirm CloseStarted
+
+	// Channel 1 (which sorts first) fails every scan.
+	failing := &failFilterBackend{
+		TxBackend: e.backend,
+		failTopic: util.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000001"),
+	}
+	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, failing, e.bobPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head, err := w.Tick(ctx)
+	if err == nil {
+		t.Fatal("channel 1's injected failure not reported")
+	}
+	if head == 0 {
+		t.Fatal("head not returned alongside the partial failure")
+	}
+	e.commit(1) // mine the challenge
+
+	onchain, err := e.contract.GetChannel(nil, big.NewInt(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onchain.ClosingSeq != 5 {
+		t.Fatalf("channel 2 starved by channel 1's failure: on-chain seq %d, want 5", onchain.ClosingSeq)
 	}
 }
 
