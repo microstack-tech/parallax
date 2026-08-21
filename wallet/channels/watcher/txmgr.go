@@ -56,6 +56,12 @@ type TxManager struct {
 	mu      sync.Mutex
 	pending map[string]*pendingTx
 
+	// tickMu serializes Tick against itself: in tower mode the node's watch
+	// loop and the tower's tick loop drive the same shared per-chain manager
+	// from two goroutines, and the bump path mutates per-intent state
+	// (gasPrice, bumps, txHashes) that only this lock guards.
+	tickMu sync.Mutex
+
 	// submitMu serializes nonce allocation-to-send across Submit calls, and
 	// nextNonce tracks the nonce past the manager's own broadcasts:
 	// PendingNonceAt alone lags behind a broadcast the pool has not yet
@@ -158,6 +164,9 @@ func (m *TxManager) send(ctx context.Context, id string, p *pendingTx, head uint
 // Tick drives every pending intent: reap mined ones, fee-bump stale ones,
 // and alarm when a deadline closes in.
 func (m *TxManager) Tick(ctx context.Context, head uint64) {
+	m.tickMu.Lock()
+	defer m.tickMu.Unlock()
+
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.pending))
 	for id := range m.pending {

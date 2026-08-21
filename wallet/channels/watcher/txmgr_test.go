@@ -207,6 +207,43 @@ func TestTxManagerDistinctNoncesOnLaggingBackend(t *testing.T) {
 	}
 }
 
+// TestTxManagerConcurrentTicks: in tower mode the node's watch loop and the
+// tower's tick loop drive the SAME shared per-chain manager from two
+// goroutines, so Tick must be safe against itself: the bump path mutates
+// per-intent state (gasPrice, bumps, txHashes) that a concurrent Tick reads.
+// Run under -race.
+func TestTxManagerConcurrentTicks(t *testing.T) {
+	e := setupSim(t)
+	dropping := &droppingBackend{TxBackend: e.backend, dropFirst: 1000} // never mines
+	mgr := NewTxManager(dropping, e.bobPriv, big.NewInt(1337))
+
+	contract, err := registry.NewChannelRegistry(e.regAddr, dropping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := uint64(10)
+	err = mgr.Submit(context.Background(), "deposit:test", head, 0,
+		func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			auth.Value = lax(1)
+			return contract.Deposit(auth, big.NewInt(1))
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for g := 0; g < 2; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 30; i++ {
+				mgr.Tick(context.Background(), head+uint64(2*i))
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // TestTxManagerDeadlineAlarm: an unmined intent alarms as its deadline
 // approaches.
 func TestTxManagerDeadlineAlarm(t *testing.T) {
