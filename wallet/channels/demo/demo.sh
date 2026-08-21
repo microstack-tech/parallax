@@ -18,10 +18,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 DEMO="${DEMO_DIR:-$(mktemp -d /tmp/plx-channel-demo.XXXXXX)}"
-# Two relays by default: some public relays (relay.damus.io notably)
+# Several relays by default: some public relays (relay.damus.io notably)
 # rate-limit writes from fresh, unknown keys, which is exactly what this
 # demo generates — a single relay makes the whole run hinge on that policy.
-RELAYS="${RELAYS:-wss://nos.lol wss://relay.primal.net}"
+# One accepting relay per leg is enough for the run to succeed.
+RELAYS="${RELAYS:-wss://nos.lol wss://relay.primal.net wss://offchain.pub wss://nostr.mom}"
 BIN="$DEMO/bin"
 LOG="$DEMO/log"
 mkdir -p "$BIN" "$LOG" "$DEMO/alice" "$DEMO/bob"
