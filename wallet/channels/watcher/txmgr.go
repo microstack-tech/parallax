@@ -35,8 +35,8 @@ type pendingTx struct {
 	build       func(*bind.TransactOpts) (*types.Transaction, error)
 	nonce       uint64
 	gasPrice    *big.Int
-	txHash      util.Hash
-	submittedAt uint64 // head at last (re)submission
+	txHashes    []util.Hash // every attempt, oldest first: ANY of them mining resolves the intent
+	submittedAt uint64      // head at last (re)submission
 	bumps       int
 	deadline    uint64 // 0 = none; alarm fires as head approaches it
 }
@@ -150,7 +150,7 @@ func (m *TxManager) send(ctx context.Context, id string, p *pendingTx, head uint
 	if err != nil {
 		return fmt.Errorf("tx %s: %w", id, err)
 	}
-	p.txHash = tx.Hash()
+	p.txHashes = append(p.txHashes, tx.Hash())
 	p.submittedAt = head
 	return nil
 }
@@ -173,17 +173,27 @@ func (m *TxManager) Tick(ctx context.Context, head uint64) {
 			continue
 		}
 
-		if receipt, err := m.backend.TransactionReceipt(ctx, p.txHash); err == nil && receipt != nil {
-			if receipt.Status != types.ReceiptStatusSuccessful {
-				m.alarm("transaction %s reverted (tx %s); intent dropped, caller will re-evaluate", id, p.txHash.Hex())
+		// Any attempt mining resolves the intent: after a fee bump, the
+		// replaced original can still be the one that lands, and watching
+		// only the newest hash would leave the intent pending forever.
+		mined := false
+		for _, hash := range p.txHashes {
+			if receipt, err := m.backend.TransactionReceipt(ctx, hash); err == nil && receipt != nil {
+				if receipt.Status != types.ReceiptStatusSuccessful {
+					m.alarm("transaction %s reverted (tx %s); intent dropped, caller will re-evaluate", id, hash.Hex())
+				}
+				m.Done(id)
+				mined = true
+				break
 			}
-			m.Done(id)
+		}
+		if mined {
 			continue
 		}
 
 		if p.deadline > 0 && head+alarmBlocksBeforeDeadline > p.deadline {
 			m.alarm("transaction %s still unmined with %d blocks to deadline (tx %s, %d bumps)",
-				id, int64(p.deadline)-int64(head), p.txHash.Hex(), p.bumps)
+				id, int64(p.deadline)-int64(head), p.txHashes[len(p.txHashes)-1].Hex(), p.bumps)
 		}
 
 		if head >= p.submittedAt+bumpAfterBlocks && p.bumps < maxBumps {

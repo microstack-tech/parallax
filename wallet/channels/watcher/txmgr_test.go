@@ -99,6 +99,59 @@ func TestTxManagerFeeBumpsUntilMined(t *testing.T) {
 	}
 }
 
+// dropAfterFirstBackend lets the first SendTransaction through and swallows
+// the rest: the original broadcast survives while every fee-bump replacement
+// is lost.
+type dropAfterFirstBackend struct {
+	TxBackend
+	mu   sync.Mutex
+	sent int
+}
+
+func (d *dropAfterFirstBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.sent++
+	if d.sent > 1 {
+		return nil // accepted but never propagates
+	}
+	return d.TxBackend.SendTransaction(ctx, tx)
+}
+
+// TestTxManagerReapsEarlierAttempt: when an earlier attempt mines instead of
+// the latest fee-bumped replacement, the intent must still be reaped — only
+// checking the newest hash leaves it pending forever, resubmitting into
+// "nonce too low" every tick.
+func TestTxManagerReapsEarlierAttempt(t *testing.T) {
+	e := setupSim(t)
+	dropping := &dropAfterFirstBackend{TxBackend: e.backend}
+	mgr := NewTxManager(dropping, e.bobPriv, big.NewInt(1337))
+
+	contract, err := registry.NewChannelRegistry(e.regAddr, dropping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := uint64(10)
+	err = mgr.Submit(context.Background(), "deposit:test", head, 0,
+		func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			auth.Value = lax(1)
+			return contract.Deposit(auth, big.NewInt(1))
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A bump replaces the hash the manager watches, but the replacement is
+	// lost and the ORIGINAL transaction mines.
+	mgr.Tick(context.Background(), head+bumpAfterBlocks)
+	e.backend.Commit()
+
+	mgr.Tick(context.Background(), head+bumpAfterBlocks+1)
+	if mgr.Pending("deposit:test") {
+		t.Fatal("intent still pending after an earlier attempt mined")
+	}
+}
+
 // laggingNonceBackend serves PendingNonceAt from a stale snapshot,
 // simulating a node whose pending pool has not yet registered the
 // previous broadcast (or a second manager on the same key).
