@@ -75,8 +75,16 @@ func New(cfg Config, store *proofstore.Store, backend watcher.TxBackend, txmgr *
 		contract: contract,
 		txmgr:    txmgr,
 	}
-	if t.txmgr.Alarm == nil {
-		t.txmgr.Alarm = func(format string, args ...any) { t.alarm(format, args...) }
+	// On a shared manager the node's watcher has already claimed Alarm for
+	// the wallet log; chain onto it rather than skipping — a tower challenge
+	// stalling near its deadline is the one loss-capable alert the tower
+	// exists to raise, and it must reach the operator-facing stream.
+	prev := t.txmgr.Alarm
+	t.txmgr.Alarm = func(format string, args ...any) {
+		if prev != nil {
+			prev(format, args...)
+		}
+		t.alarm(format, args...)
 	}
 	return t, nil
 }

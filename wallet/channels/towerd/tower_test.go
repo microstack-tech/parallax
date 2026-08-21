@@ -374,6 +374,45 @@ func TestTickRescansFailedReactRange(t *testing.T) {
 	}
 }
 
+// TestTowerAlarmReceivesSharedManagerAlerts: in tower mode the tower shares
+// the channel node's per-chain manager, whose Alarm the node's watcher has
+// already claimed. The tower's operator-facing alarm stream (TOWER ALARM on
+// stderr) must still receive manager alerts — a tower challenge stalling
+// unmined near its deadline is the one loss-capable alert the tower exists
+// to raise.
+func TestTowerAlarmReceivesSharedManagerAlerts(t *testing.T) {
+	towerPriv, _ := crypto.GenerateKey()
+	backend := backends.NewSimulatedBackend(validation.GenesisAlloc{}, 30_000_000)
+	defer backend.Close()
+	regAddr := util.HexToAddress("0x00000000000000000000000000000000000021ff")
+
+	store, err := proofstore.Open(filepath.Join(t.TempDir(), "tower.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Production order (channeld.New): the watcher wires itself to the
+	// shared manager first, then the tower daemon attaches.
+	mgr := watcher.NewTxManager(backend, towerPriv, big.NewInt(1337))
+	w, err := watcher.New(watcher.Config{ChainID: "1337", Registry: regAddr}, store, backend, mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w
+	tower, err := towerd.New(towerd.Config{ChainID: "1337", Registry: regAddr}, store, backend, mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	tower.Alarm = func(format string, args ...any) { got = append(got, format) }
+
+	mgr.Alarm("transaction %s still unmined with %d blocks to deadline", "towerchallenge:x", 3)
+	if len(got) == 0 {
+		t.Fatal("manager alarm never reached the tower's alarm stream")
+	}
+}
+
 // TestTowerRejectsBadDelegations covers the intake gate.
 func TestTowerRejectsBadDelegations(t *testing.T) {
 	alicePriv, _ := crypto.GenerateKey()
