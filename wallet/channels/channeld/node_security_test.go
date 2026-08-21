@@ -301,6 +301,55 @@ func TestTowerReceiptSettlesLowerSeqs(t *testing.T) {
 	}
 }
 
+// TestTowerReceiptWithoutRegistryFailsClosedAcrossRegistries: a receipt that
+// omits the registry qualifier (older towers) matches on the bare channel id
+// alone, but the bare id is not unique across coexisting registries — the
+// receipt must not settle a delegation for a channel the tower never
+// acknowledged, silently cancelling its loss protection. A qualified receipt
+// settles exactly its registry's copy.
+func TestTowerReceiptWithoutRegistryFailsClosedAcrossRegistries(t *testing.T) {
+	tower1 := strings.Repeat("01", 32)
+	h := newHub()
+	alice := newTestNodeWith(t, h, func(cfg *Config) {
+		cfg.Channels.Towers.Npubs = []string{tower1}
+	})
+	bob := newTestNode(t, h, nil)
+	linkChannel(t, alice, bob)
+	addDecoyChannel(t, alice) // same bare id as e2eKey on a coexisting registry
+
+	alice.delegate(dualSignedFake(1))
+	decoySt := dualSignedFake(1)
+	decoySt.Key = decoyKey
+	alice.delegate(decoySt)
+	if n, _ := alice.Store.OutboundLen(); n != 2 {
+		t.Fatalf("delegations queued: %d", n)
+	}
+
+	// An unqualified receipt cannot say which registry's channel 1 it
+	// acknowledges: neither delegation may be settled.
+	receipt := protocol.TowerReceiptMsg{V: 1, ChannelID: "1", Seq: "1", OK: true}
+	if err := alice.handleRumor(context.Background(), encodeRumor(t, protocol.KindTowerReceipt, receipt), tower1); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := alice.Store.OutboundLen(); n != 2 {
+		t.Fatalf("registry-less receipt settled delegations across coexisting registries: %d left", n)
+	}
+
+	// The qualified form settles only its registry's copy.
+	receipt.Registry = strings.ToLower(e2eKey.Registry.Hex())
+	receipt.ChainID = e2eKey.ChainID
+	if err := alice.handleRumor(context.Background(), encodeRumor(t, protocol.KindTowerReceipt, receipt), tower1); err != nil {
+		t.Fatal(err)
+	}
+	items, err := alice.Store.OutboundAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !strings.Contains(items[0].DedupeKey, decoyKey.Registry.Hex()) {
+		t.Fatalf("qualified receipt did not settle exactly its registry's delegation: %+v", items)
+	}
+}
+
 // TestWatchersShareTxManagerPerChain: everything submitting with the node's
 // key on one chain must share a single transaction manager, or nonce
 // allocations race and one transaction silently replaces another.

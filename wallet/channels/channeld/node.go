@@ -474,23 +474,46 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err != nil {
 			return err
 		}
+		// Candidates: this tower, this bare id, plus whatever qualifiers the
+		// receipt carries (older towers omit Registry/ChainID). If the
+		// remainder still spans more than one registry deployment, the bare
+		// id cannot say which channel the tower acknowledged — and its
+		// kept-seq is meaningless across registries — so settling would
+		// silently cancel loss protection. Fail closed: the queue keeps
+		// retransmitting, and a current tower answers qualified.
+		type delegation struct {
+			item proofstore.OutboundItem
+			seq  uint64
+		}
+		var cands []delegation
+		deployments := make(map[string]bool)
 		for _, item := range items {
 			if item.Kind != protocol.KindTowerDelegation || item.ToNpub != sender {
 				continue
 			}
 			key, itemSeq, ok := channelKeyFromDedupe(item.DedupeKey)
-			if !ok || key.ChannelID != id || itemSeq > seq {
+			if !ok || key.ChannelID != id {
 				continue
 			}
-			// Receipts carrying the registry qualify the bare id across
-			// coexisting registries; older towers omit it.
 			if msg.Registry != "" && !strings.EqualFold(msg.Registry, key.Registry.Hex()) {
 				continue
 			}
 			if msg.ChainID != "" && msg.ChainID != key.ChainID {
 				continue
 			}
-			if err := n.Store.RemoveOutbound(item.ID); err != nil {
+			deployments[key.ChainID+":"+strings.ToLower(key.Registry.Hex())] = true
+			cands = append(cands, delegation{item, itemSeq})
+		}
+		if len(deployments) > 1 {
+			n.log.Warn("ignoring tower receipt: bare channel id is ambiguous across coexisting registries",
+				"tower", sender, "channel", msg.ChannelID)
+			return nil
+		}
+		for _, c := range cands {
+			if c.seq > seq {
+				continue
+			}
+			if err := n.Store.RemoveOutbound(c.item.ID); err != nil {
 				n.log.Error("outbound cleanup", "err", err)
 			}
 		}
