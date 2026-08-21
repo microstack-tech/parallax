@@ -329,6 +329,15 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
+		// Countersigning freezes us until the proposal's expiry, and only a
+		// head view can judge the expiry and freeze-horizon checks. An online
+		// node whose RPC is failing must defer, not process with nowBlock 0 —
+		// that would skip both checks and hand an authenticated peer a
+		// permanent-freeze grenade. The peer retransmits until a delivery
+		// finds a healthy RPC; genuinely offline nodes take the QR path.
+		if n.backend != nil && nowBlock == 0 {
+			return fmt.Errorf("head unavailable; deferring coop-close proposal for channel %s", msg.ChannelID)
+		}
 		res, ready, err := n.Engine.HandleCoopCloseProposal(msg, sender, nowBlock)
 		if err != nil {
 			return err
@@ -369,6 +378,12 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		var msg protocol.WithdrawProposalMsg
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
+		}
+		// Same head requirement as coop-close proposals: the expiry check is
+		// meaningless at nowBlock 0, and a far-future pending withdraw blocks
+		// re-proposals until it expires.
+		if n.backend != nil && nowBlock == 0 {
+			return fmt.Errorf("head unavailable; deferring withdraw proposal for channel %s", msg.ChannelID)
 		}
 		res, ready, err := n.Engine.HandleWithdrawProposal(msg, sender, nowBlock)
 		if err != nil {

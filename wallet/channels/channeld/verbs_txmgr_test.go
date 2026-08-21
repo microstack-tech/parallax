@@ -116,10 +116,16 @@ func TestVerbsShareManagerNonceAllocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Mine in the background so the verb's WaitMined returns.
+	// Mine in the background so the verb's WaitMined returns. The committer
+	// must be fully stopped before the deferred backend.Close runs.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	committerDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-committerDone
+	}()
 	go func() {
+		defer close(committerDone)
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
 		for {
