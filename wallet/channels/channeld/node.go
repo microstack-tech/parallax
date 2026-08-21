@@ -150,7 +150,7 @@ func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
 		n.log.Warn("outbound gave up", "kind", item.Kind, "dedupe", item.DedupeKey)
 		if item.Kind == protocol.KindProposal {
 			// Give-up on a proposal leaves the channel poisoned (Part 3 §5).
-			if key, ok := channelKeyFromDedupe(item.DedupeKey); ok {
+			if key, _, ok := channelKeyFromDedupe(item.DedupeKey); ok {
 				if err := n.Engine.MarkPoisoned(key); err != nil {
 					n.log.Error("mark poisoned", "err", err)
 				}
@@ -263,34 +263,44 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		key, ok := n.channelByID(msg.ChannelID)
-		if !ok {
+		keys := n.channelsForPeer(msg.ChannelID, sender)
+		if len(keys) == 0 {
 			return fmt.Errorf("ack for unknown channel %s", msg.ChannelID)
 		}
-		complete, err := n.Engine.HandleAck(key, msg)
-		if err != nil {
-			return err
+		var lastErr error
+		for _, key := range keys {
+			complete, err := n.Engine.HandleAck(key, msg)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			n.settleOutbound(protocol.KindProposal, key, complete.Seq)
+			n.afterCompletion(ctx, complete)
+			return nil
 		}
-		n.settleOutbound(protocol.KindProposal, key, complete.Seq)
-		n.afterCompletion(ctx, complete)
-		return nil
+		return lastErr
 
 	case protocol.KindNack:
 		var msg protocol.NackMsg
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		key, ok := n.channelByID(msg.ChannelID)
-		if !ok {
-			return nil
+		// NACKs carry no verifiable state, so the sender scoping above is the
+		// whole authorization: only the counterparty of a matching channel may
+		// poison it. HandleNack itself no-ops unless the seq matches an
+		// outstanding self-signed entry, selecting among candidates.
+		for _, key := range n.channelsForPeer(msg.ChannelID, sender) {
+			poisoned, err := n.Engine.HandleNack(key, msg)
+			if poisoned {
+				exposure, _ := n.Engine.PoisonedExposure(key)
+				n.log.Warn("channel poisoned by NACK", "channel", key.String(),
+					"reason", msg.Reason, "exposureWei", exposure)
+			}
+			if err != nil {
+				return err
+			}
 		}
-		poisoned, err := n.Engine.HandleNack(key, msg)
-		if poisoned {
-			exposure, _ := n.Engine.PoisonedExposure(key)
-			n.log.Warn("channel poisoned by NACK", "channel", key.String(),
-				"reason", msg.Reason, "exposureWei", exposure)
-		}
-		return err
+		return nil
 
 	case protocol.KindCoopCloseProposal:
 		var msg protocol.CoopCloseProposalMsg
@@ -313,17 +323,18 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		key, ok := n.channelByID(msg.ChannelID)
-		if !ok {
+		var lastErr error
+		for _, key := range n.channelsForPeer(msg.ChannelID, sender) {
+			ready, err := n.Engine.HandleCoopCloseAck(key, msg)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			n.settleOutbound(protocol.KindCoopCloseProposal, key, 0)
+			n.submitCoopClose(ctx, ready)
 			return nil
 		}
-		ready, err := n.Engine.HandleCoopCloseAck(key, msg)
-		if err != nil {
-			return err
-		}
-		n.settleOutbound(protocol.KindCoopCloseProposal, key, 0)
-		n.submitCoopClose(ctx, ready)
-		return nil
+		return lastErr
 
 	case protocol.KindInvoice:
 		var msg protocol.InvoiceMsg
@@ -352,23 +363,24 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		key, ok := n.channelByID(msg.ChannelID)
-		if !ok {
+		var lastErr error
+		for _, key := range n.channelsForPeer(msg.ChannelID, sender) {
+			ready, err := n.Engine.HandleWithdrawAck(key, msg)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			n.settleOutbound(protocol.KindWithdrawProposal, key, 0)
+			if n.backend != nil {
+				if err := n.SubmitWithdraw(ctx, ready); err != nil {
+					// Not loss-capable: retry on the next ack retransmission or
+					// re-propose after expiry.
+					n.log.Error("withdraw submission", "err", err)
+				}
+			}
 			return nil
 		}
-		ready, err := n.Engine.HandleWithdrawAck(key, msg)
-		if err != nil {
-			return err
-		}
-		n.settleOutbound(protocol.KindWithdrawProposal, key, 0)
-		if n.backend != nil {
-			if err := n.SubmitWithdraw(ctx, ready); err != nil {
-				// Not loss-capable: retry on the next ack retransmission or
-				// re-propose after expiry.
-				n.log.Error("withdraw submission", "err", err)
-			}
-		}
-		return nil
+		return lastErr
 
 	case protocol.KindTowerDelegation:
 		if n.DelegationHandler == nil {
@@ -385,25 +397,49 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		return n.sendDirect(ctx, sender, protocol.KindTowerReceipt, receipt, msg.ChannelID)
 
 	case protocol.KindTowerReceipt:
+		// Queued delegations are the loss protection for offline periods, so
+		// only the towers this node delegates to may settle them.
+		if !n.isConfiguredTower(sender) {
+			return nil
+		}
 		var msg protocol.TowerReceiptMsg
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
-		}
-		key, ok := n.channelByID(msg.ChannelID)
-		if !ok {
-			return nil
 		}
 		seq, err := strconv.ParseUint(msg.Seq, 10, 64)
 		if err != nil {
 			return nil
 		}
-		// Receipts for seq >= our delegation settle its retransmission.
-		for s := seq; ; s-- {
-			if removed, _ := n.Store.RemoveOutboundByDedupe(watcher.DedupeKeyFor(protocol.KindTowerDelegation, key, s)); removed == 0 && s != seq {
-				break
+		id, err := strconv.ParseUint(msg.ChannelID, 10, 64)
+		if err != nil {
+			return nil
+		}
+		// A receipt acknowledges the tower holds state at msg.Seq (its kept
+		// max), so it settles every queued delegation at or below that seq —
+		// for the acknowledging tower only: the other configured towers still
+		// need their deliveries.
+		items, err := n.Store.OutboundAll()
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if item.Kind != protocol.KindTowerDelegation || item.ToNpub != sender {
+				continue
 			}
-			if s == 0 {
-				break
+			key, itemSeq, ok := channelKeyFromDedupe(item.DedupeKey)
+			if !ok || key.ChannelID != id || itemSeq > seq {
+				continue
+			}
+			// Receipts carrying the registry qualify the bare id across
+			// coexisting registries; older towers omit it.
+			if msg.Registry != "" && !strings.EqualFold(msg.Registry, key.Registry.Hex()) {
+				continue
+			}
+			if msg.ChainID != "" && msg.ChainID != key.ChainID {
+				continue
+			}
+			if err := n.Store.RemoveOutbound(item.ID); err != nil {
+				n.log.Error("outbound cleanup", "err", err)
 			}
 		}
 		return nil
@@ -552,23 +588,40 @@ func (n *Node) submitCoopClose(ctx context.Context, ready *protocol.CoopCloseRea
 	}
 }
 
-// channelByID resolves a bare wire channel id against the store. Ambiguity
-// across registries is impossible for ids the store knows (composite keys).
-func (n *Node) channelByID(channelID string) (proofstore.ChannelKey, bool) {
+// channelsForPeer resolves a bare wire channel id against the store, scoped
+// to the authenticated sender. A bare id is NOT globally unique — coexisting
+// registries each number channels from 1 — so resolution must never pick the
+// first store entry; scoping to the sender both disambiguates and doubles as
+// the counterparty check for ack/nack kinds that carry no signed state.
+// Handlers try every candidate: the per-message verification (state hash,
+// journal seq) selects the one the message belongs to.
+func (n *Node) channelsForPeer(channelID, sender string) []proofstore.ChannelKey {
 	id, err := strconv.ParseUint(channelID, 10, 64)
 	if err != nil {
-		return proofstore.ChannelKey{}, false
+		return nil
 	}
 	metas, err := n.Store.ListChannels()
 	if err != nil {
-		return proofstore.ChannelKey{}, false
+		return nil
 	}
+	var keys []proofstore.ChannelKey
 	for _, meta := range metas {
-		if meta.Key.ChannelID == id {
-			return meta.Key, true
+		if meta.Key.ChannelID == id && meta.PeerNpub == sender {
+			keys = append(keys, meta.Key)
 		}
 	}
-	return proofstore.ChannelKey{}, false
+	return keys
+}
+
+// isConfiguredTower reports whether sender is one of the towers this node
+// delegates to.
+func (n *Node) isConfiguredTower(sender string) bool {
+	for _, npub := range n.Cfg.Channels.Towers.Npubs {
+		if npub == sender {
+			return true
+		}
+	}
+	return false
 }
 
 func (n *Node) headBlock(ctx context.Context) uint64 {
@@ -584,18 +637,22 @@ func (n *Node) headBlock(ctx context.Context) uint64 {
 
 // channelKeyFromDedupe parses watcher.DedupeKeyFor's
 // "<kind>:<chainId>:<registry>:<channelId>:<seq>" format.
-func channelKeyFromDedupe(dedupe string) (proofstore.ChannelKey, bool) {
+func channelKeyFromDedupe(dedupe string) (proofstore.ChannelKey, uint64, bool) {
 	parts := strings.Split(dedupe, ":")
 	if len(parts) != 5 || !util.IsHexAddress(parts[2]) {
-		return proofstore.ChannelKey{}, false
+		return proofstore.ChannelKey{}, 0, false
 	}
 	channelID, err := strconv.ParseUint(parts[3], 10, 64)
 	if err != nil {
-		return proofstore.ChannelKey{}, false
+		return proofstore.ChannelKey{}, 0, false
+	}
+	seq, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		return proofstore.ChannelKey{}, 0, false
 	}
 	return proofstore.ChannelKey{
 		ChainID:   parts[1],
 		Registry:  util.HexToAddress(parts[2]),
 		ChannelID: channelID,
-	}, true
+	}, seq, true
 }

@@ -216,9 +216,25 @@ func (n *Node) PayInvoice(ctx context.Context, invoiceID string) error {
 	if time.Now().Unix() > inv.ExpiresAt {
 		return fmt.Errorf("channeld: invoice expired")
 	}
-	key, ok := n.channelByID(strconv.FormatUint(inv.ChannelID, 10))
+	key, ok := n.channelWithMerchant(inv.ChannelID, inv.Merchant)
 	if !ok {
 		return fmt.Errorf("channeld: no channel with the invoice's merchant")
 	}
 	return n.Pay(ctx, key, inv.AmountWei.BigInt(), inv.ID)
+}
+
+// channelWithMerchant resolves a channel id against the store, requiring the
+// counterparty to be the given merchant (a bare id alone is ambiguous across
+// coexisting registries).
+func (n *Node) channelWithMerchant(id uint64, merchant util.Address) (proofstore.ChannelKey, bool) {
+	metas, err := n.Store.ListChannels()
+	if err != nil {
+		return proofstore.ChannelKey{}, false
+	}
+	for _, meta := range metas {
+		if meta.Key.ChannelID == id && meta.PeerAddress == merchant && meta.Status == proofstore.StatusOpen {
+			return meta.Key, true
+		}
+	}
+	return proofstore.ChannelKey{}, false
 }

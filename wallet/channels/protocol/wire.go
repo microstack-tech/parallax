@@ -142,10 +142,13 @@ type TowerDelegationMsg struct {
 	Note      string    `json:"note,omitempty"`
 }
 
-// TowerReceiptMsg is kind 21907.
+// TowerReceiptMsg is kind 21907. Registry and ChainID qualify the bare
+// channel id across coexisting registries; older towers omit them.
 type TowerReceiptMsg struct {
 	V         int    `json:"v"`
 	ChannelID string `json:"channelId"`
+	Registry  string `json:"registry,omitempty"`
+	ChainID   string `json:"chainId,omitempty"`
 	Seq       string `json:"seq"`
 	OK        bool   `json:"ok"`
 }

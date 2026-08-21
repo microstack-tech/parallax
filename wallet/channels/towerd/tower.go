@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
@@ -135,6 +136,8 @@ func (t *Tower) HandleDelegation(ctx context.Context, msg protocol.TowerDelegati
 	return &protocol.TowerReceiptMsg{
 		V:         1,
 		ChannelID: strconv.FormatUint(st.Key.ChannelID, 10),
+		Registry:  strings.ToLower(st.Key.Registry.Hex()),
+		ChainID:   st.Key.ChainID,
 		Seq:       strconv.FormatUint(kept, 10),
 		OK:        true,
 	}, nil

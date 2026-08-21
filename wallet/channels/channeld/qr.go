@@ -248,7 +248,10 @@ func (n *Node) qrCloseCountersign(env qrenc.Envelope) (QRResult, error) {
 		ExpiryBlock: strconv.FormatUint(env.Expiry, 10),
 		Sig:         "0x" + util.Bytes2Hex(env.Sig1),
 	}
-	res, ready, err := n.Engine.HandleCoopCloseProposal(msg, meta.PeerNpub, n.bestKnownBlock(key))
+	// nowBlock 0: an offline scanner has no live head — the stale watermark
+	// must not feed the expiry checks (a lagging view would falsely trip the
+	// close horizon), and 0 keeps every conservative check conservative.
+	res, ready, err := n.Engine.HandleCoopCloseProposal(msg, meta.PeerNpub, 0)
 	if err != nil {
 		return QRResult{}, err
 	}
