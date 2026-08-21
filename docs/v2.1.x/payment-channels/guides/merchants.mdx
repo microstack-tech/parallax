@@ -50,13 +50,13 @@ curl -s -X POST http://127.0.0.1:9735/v1/invoices \
   "expiresAt": 1787209658,
   "channelId": 1,
   "status": "pending",
-  "uri": "parallax:0x6556…ff7?amount=500000000000000000&inv=a3f23d63…&npub=23cc4a…&relays=wss%3A%2F%2Frelay.damus.io&reg=0x1653…"
+  "uri": "parallax:0x6556…ff7?amount=500000000000000000&ch=1&inv=a3f23d63…&npub=23cc4a…&relays=wss%3A%2F%2Frelay.damus.io&reg=0x1653…"
 }
 ```
 
 Two delivery paths, use either or both:
 
-- **`uri`** — render it as a QR code or payment link. It carries everything a customer's wallet needs, including how to reach you, even if they've never messaged you before.
+- **`uri`** — render it as a QR code or payment link. It carries everything a customer's wallet needs, including how to reach you, even if they've never messaged you before. When the invoice is pinned, the URI carries the pin (`ch=1` above), so a customer with several channels to you pays on the right one.
 - **Relay push** — when `channelId` pins the invoice to an existing channel, the daemon also sends it straight to that customer's wallet over the relays; their wallet can then pay it by id alone.
 
 Invoices are single-use and expire after `ttlSeconds` (default 15 minutes). The daemon countersigns a payment **only if** it exactly matches an open, unexpired invoice — amount to the wei — and the payer's channel balance covers it against confirmed on-chain funding. Everything else is rejected automatically. (Set `push_payments = true` only if you want to accept unsolicited transfers without invoices, e.g. for donations.)

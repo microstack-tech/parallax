@@ -8,11 +8,17 @@ previously offered by `parallaxd account …` and the single-keyfile tool
 previously shipped as `parallaxkey` into a single binary, modeled after
 Bitcoin Core's `bitcoin-wallet`.
 
-`parallax-wallet` **never talks to a running node**. Every command
-operates directly on files on disk, which makes it safe to run on
-air-gapped machines for cold-signing workflows. For commands that
-require a running daemon (`newaccount`, `unlock`, `sign`, `sendtx`
-against a live IPC socket), use `parallax-cli` instead.
+The key-management commands documented on this page **never talk to a
+running node**. They operate directly on files on disk, which makes
+them safe to run on air-gapped machines for cold-signing workflows.
+For commands that require a running daemon (`newaccount`, `unlock`,
+`sign`, `sendtx` against a live IPC socket), use `parallax-cli`
+instead.
+
+The payment-channel and messaging subcommands (`channel`, `nostr`,
+`merchant`, `tower`) are the exception: they dial the configured node
+RPC and Nostr relays as needed. They are documented in the
+payment-channels section of these docs.
 
 ## Installation
 

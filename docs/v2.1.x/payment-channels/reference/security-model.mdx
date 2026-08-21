@@ -40,6 +40,16 @@ Repeatedly force-closing at the true state to lock the counterparty's capital fo
 **Defense:** the closer pays the gas; capital lock ≤ the challenge window is a priced-in property of channels. Wallet policy can refuse reopening with serial offenders.
 **Residual:** ~a day of capital lock per incident at default settings. Accepted.
 
+### Freeze grief via far-future cooperative close
+A signed cooperative close freezes the channel until it settles or expires; a peer proposing the exact current balances with an enormous expiry would get auto-countersigned into a near-permanent freeze at zero cost.
+**Defense:** both sides refuse closes expiring beyond `coop_close_horizon_blocks` (default 1008 blocks ≈ one week) past the chain head.
+**Residual:** up to one horizon of freeze from a peer who proposes and never settles, cleared automatically at expiry. Offline QR scanners have no live head to check the horizon against and rely on the in-person nature of that flow.
+
+### Spoofed advisory messages
+NACKs and watchtower receipts carry no signed channel state, so a forger who knows a public channel id could try to flag channels as held up or cancel queued watchtower deliveries.
+**Defense:** the sealed envelope authenticates every sender; the wallet acts on acks and NACKs only from the channel's counterparty and on delegation receipts only from its configured towers. Bare channel ids are additionally resolved per-counterparty, since coexisting registry deployments may reuse them.
+**Residual:** the authenticated counterparty can always NACK its own channel — which is the advisory's purpose, and bounded by the countersignature-withholding analysis above.
+
 ### Forgery, malleability, replay
 **Defense:** EIP-712 domain binds chain + registry; three distinct type hashes prevent cross-type replay; channel ids are never reused; sequence numbers and withdrawal totals are strictly monotone; low-`s` and fixed signer order leave one valid byte-encoding per signer; dual signatures mean no unilateral state can exist. The Go and Solidity digest implementations are differentially tested byte-for-byte.
 **Residual:** none identified beyond the cryptographic assumptions.

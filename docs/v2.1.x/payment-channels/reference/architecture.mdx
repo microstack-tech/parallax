@@ -88,7 +88,7 @@ Channel messages are NIP-17-style gift-wrapped rumors: an unsigned inner event, 
 | 21910 | encrypted self-backup, wrapped to self |
 | 21911 / 21912 | cooperative-withdraw proposal / countersignature |
 
-Payload conventions: JSON content, all integers as decimal strings, addresses 0x-lowercase, one in-flight payment per channel, idempotent retransmission (duplicates re-ACK identically), and cancellation only by *supersession* — a signed proposal is irrevocable, so voiding it means completing a newer no-op state above it, never re-signing the same sequence number differently.
+Payload conventions: JSON content, all integers as decimal strings, addresses 0x-lowercase, one in-flight payment per channel, idempotent retransmission (duplicates re-ACK identically), and cancellation only by *supersession* — a signed proposal is irrevocable, so voiding it means completing a newer no-op state above it, never re-signing the same sequence number differently. Bare channel ids in acks, NACKs, and receipts are interpreted relative to the authenticated sender (coexisting registry deployments may reuse ids); tower receipts additionally carry the registry and chain id to qualify theirs.
 
 The messaging identity is derived from the wallet key via HKDF (`info = "parallax/nostr/v1"`), so seed recovery restores it, third parties cannot link it to the address, and no key is ever used under both ECDSA and Schnorr.
 

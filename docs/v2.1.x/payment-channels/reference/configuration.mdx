@@ -28,6 +28,7 @@ default_challenge_period = 144   # blocks; used by `channel open` when --period 
 accept_challenge_period_min = 36 # inbound channels outside [min,max] are refused
 accept_challenge_period_max = 1008
 coop_close_validity_blocks = 18  # lifetime of a signed cooperative close
+coop_close_horizon_blocks = 1008 # refuse closes expiring further ahead than this (freeze bound)
 withdraw_validity_blocks = 18    # lifetime of a signed withdrawal authorization
 max_inflight_payment_wei = "0"   # cap per outgoing payment; "0" = unlimited
 
@@ -57,9 +58,13 @@ max_delegations_per_npub = 1000
 `coop_close_validity_blocks` and `withdraw_validity_blocks` are **block-denominated**. The defaults assume the ~10-minute mainnet block time (18 blocks ≈ 3 hours). On a fast development chain, scale them up or signed messages will expire before they can be delivered.
 </Note>
 
+`coop_close_horizon_blocks` bounds how long a signed cooperative close can freeze the channel: a close proposal freezes both sides until it settles or expires, so proposals expiring more than the horizon past the current head are refused on both the proposing and the countersigning side (default 1008 blocks ≈ one week). Offline QR scanners, which have no live chain view, skip the horizon check.
+
 ## CLI reference
 
 All commands share `--config`, `--channeldata <dir>` (location of the channel database), and `--passwordfile`; the keyfile is always the first positional argument, and **flags must precede positional arguments**. Amounts are wei.
+
+A channel argument (`<id>` below) is a bare decimal id, or the qualified form `<chainId>:<registry>:<id>` when coexisting registries both use the id — bare ids that match channels on more than one registry are refused rather than resolved to an arbitrary one (`channel list` prints each channel's registry).
 
 ### `channel` commands
 
@@ -106,15 +111,19 @@ Base URL from `[merchant].listen`. Every endpoint except `/v1/healthz` requires 
 | `GET /v1/healthz` | Unauthenticated liveness + connected relay count. |
 | `GET /v1/metrics` | Prometheus text format: channel counts, held-up channels, relay health, outbound queue depth. |
 
+`{id}` in the channel endpoints is a bare channel id or the qualified `<chainId>:<registry>:<id>` form. When coexisting registries both use a bare id, the request is refused with `409` — retry with the qualified form (`GET /v1/channels` shows each channel's registry).
+
 **Webhook contract:** on each paid invoice, one `POST` to `webhook_url` with body `{"invoiceId":"…","channelId":1,"seq":7,"amountWei":"…"}` and header `X-Parallax-Signature: <hex HMAC-SHA256 of the body, keyed with the bearer token>`. Delivery is at-least-once with persistent retries over 24 hours — deduplicate on `invoiceId`.
 
 ## Payment URI
 
 ```
-parallax:<merchant-address>?amount=<wei>&inv=<invoice-id>&npub=<merchant-npub-hex>&relays=<r1|r2>&reg=<registry-address>
+parallax:<merchant-address>?amount=<wei>&inv=<invoice-id>&npub=<merchant-npub-hex>&relays=<r1|r2>&reg=<registry-address>[&ch=<channel-id>]
 ```
 
 Carries everything a wallet needs to pay a specific invoice, including how to reach the merchant over the relays — usable as a QR code or a clickable link, with no prior contact between the parties.
+
+`ch` is present when the invoice is pinned to a channel: a pinned invoice is only payable on that channel, and the paying wallet selects it (for pinned invoices `reg` names the pinned channel's registry). Without `ch`, the wallet pays over any open channel with the merchant.
 
 ## Registry contract constants
 

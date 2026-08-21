@@ -15,7 +15,7 @@ Add the tower's npub to your channel config:
 npubs = ["8f3a…tower-npub…c2d1"]
 ```
 
-That's all. From then on your wallet automatically sends every newly countersigned state to each listed tower over the relays (encrypted end-to-end — relays never see the contents), retransmitting until the tower acknowledges receipt. On startup it also brings towers up to date on every open channel.
+That's all. From then on your wallet automatically sends every newly countersigned state to each listed tower over the relays (encrypted end-to-end — relays never see the contents), retransmitting until that tower acknowledges receipt — each tower's delivery is tracked separately, and acknowledgements are only accepted from the towers you configured. On startup it also brings towers up to date on every open channel, including states completed offline over QR; this catch-up runs whether or not relay self-backup is enabled.
 
 When do you want one?
 
