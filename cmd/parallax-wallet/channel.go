@@ -433,19 +433,8 @@ func channelPay(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		metas, err := node.Store.ListChannels()
-		if err != nil {
+		if key, err = node.ChannelForRequest(req); err != nil {
 			return err
-		}
-		found := false
-		for _, meta := range metas {
-			if meta.PeerAddress == req.Merchant && meta.Status == proofstore.StatusOpen {
-				key, found = meta.Key, true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("no open channel with merchant %s — open one first", req.Merchant.Hex())
 		}
 		amount, invoiceID = req.AmountWei, req.InvoiceID
 	} else {

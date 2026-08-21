@@ -109,6 +109,22 @@ func ParsePaymentURI(uri string) (PaymentRequest, error) {
 	return req, nil
 }
 
+// ChannelForRequest picks the channel to pay a parsed payment URI on: the
+// first open channel with the URI's merchant.
+func (n *Node) ChannelForRequest(req PaymentRequest) (proofstore.ChannelKey, error) {
+	metas, err := n.Store.ListChannels()
+	if err != nil {
+		return proofstore.ChannelKey{}, err
+	}
+	for _, meta := range metas {
+		if meta.PeerAddress != req.Merchant || meta.Status != proofstore.StatusOpen {
+			continue
+		}
+		return meta.Key, nil
+	}
+	return proofstore.ChannelKey{}, fmt.Errorf("channeld: no open channel with merchant %s — open one first", req.Merchant.Hex())
+}
+
 // SendInvoice queues a 21901 to a channel counterparty (for payers already
 // reachable over the relay; the URI covers cold bootstrap).
 func (n *Node) SendInvoice(key proofstore.ChannelKey, inv proofstore.Invoice) error {
