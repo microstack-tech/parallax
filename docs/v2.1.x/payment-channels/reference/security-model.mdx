@@ -42,8 +42,8 @@ Repeatedly force-closing at the true state to lock the counterparty's capital fo
 
 ### Freeze grief via far-future cooperative close
 A signed cooperative close freezes the channel until it settles or expires; a peer proposing the exact current balances with an enormous expiry would get auto-countersigned into a near-permanent freeze at zero cost.
-**Defense:** both sides refuse closes expiring beyond `coop_close_horizon_blocks` (default 1008 blocks ≈ one week) past the chain head.
-**Residual:** up to one horizon of freeze from a peer who proposes and never settles, cleared automatically at expiry. Offline QR scanners have no live head to check the horizon against and rely on the in-person nature of that flow.
+**Defense:** both sides refuse closes expiring beyond `coop_close_horizon_blocks` (default 1008 blocks ≈ one week) past the chain head. An online node whose RPC cannot serve a head defers the proposal instead of judging it headless; the peer's retransmission retries it against a healthy view.
+**Residual:** up to one horizon of freeze from a peer who proposes and never settles, cleared automatically at expiry. Offline QR scanners have no live head to check the horizon against and rely on the in-person nature of that flow; they do reject closes already expired against their confirmed-scan watermark.
 
 ### Spoofed advisory messages
 NACKs and watchtower receipts carry no signed channel state, so a forger who knows a public channel id could try to flag channels as held up or cancel queued watchtower deliveries.
