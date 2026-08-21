@@ -160,9 +160,11 @@ func (n *Node) Run(ctx context.Context, watcherInterval time.Duration) {
 	if len(n.Watchers) > 0 {
 		go n.watchLoop(ctx, watcherInterval)
 	}
-	if n.Cfg.Backup.Enabled {
+	if n.Cfg.Backup.Enabled || len(n.Cfg.Channels.Towers.Npubs) > 0 {
 		// Reconnect catch-up (Part 2 §11.2): state that completed offline
-		// (QR) gets parked on the relays as soon as we are back.
+		// (QR) gets parked on the relays and delegated to the towers as soon
+		// as we are back. Delegation runs regardless of the backup switch —
+		// it is loss protection, not backup.
 		go func() {
 			for i := 0; i < 30; i++ {
 				if n.Pool.Healthy() > 0 {
