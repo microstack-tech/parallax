@@ -62,14 +62,13 @@ type TxManager struct {
 	// (gasPrice, bumps, txHashes) that only this lock guards.
 	tickMu sync.Mutex
 
-	// submitMu serializes nonce allocation-to-send across Submit calls, and
-	// nextNonce tracks the nonce past the manager's own broadcasts:
+	// submitMu serializes nonce allocation-to-send across Submit calls:
 	// PendingNonceAt alone lags behind a broadcast the pool has not yet
 	// registered, and two intents allocated against that stale view would
-	// pick the same nonce — one silently replacing the other.
-	submitMu   sync.Mutex
-	nextNonce  uint64
-	nonceKnown bool
+	// pick the same nonce — one silently replacing the other. The live
+	// pending intents are the reservation set, so an abandoned intent's
+	// nonce is released rather than left as a permanent gap.
+	submitMu sync.Mutex
 }
 
 func NewTxManager(backend TxBackend, key *ecdsa.PrivateKey, chainID *big.Int) *TxManager {
@@ -119,15 +118,9 @@ func (m *TxManager) Submit(ctx context.Context, id string, head, deadline uint64
 	m.submitMu.Lock()
 	defer m.submitMu.Unlock()
 
-	nonce, err := m.backend.PendingNonceAt(ctx, m.from)
+	nonce, err := m.allocateNonce(ctx)
 	if err != nil {
 		return err
-	}
-	// The higher of the chain's pending view and our own allocation counter:
-	// the chain view wins after external transactions or mined history, the
-	// counter wins while our last broadcast is still propagating.
-	if m.nonceKnown && m.nextNonce > nonce {
-		nonce = m.nextNonce
 	}
 	gasPrice, err := m.backend.SuggestGasPrice(ctx)
 	if err != nil {
@@ -137,11 +130,31 @@ func (m *TxManager) Submit(ctx context.Context, id string, head, deadline uint64
 	if err := m.send(ctx, id, p, head); err != nil {
 		return err
 	}
-	m.nextNonce, m.nonceKnown = nonce+1, true
 	m.mu.Lock()
 	m.pending[id] = p
 	m.mu.Unlock()
 	return nil
+}
+
+// allocateNonce picks the next free nonce: the higher of the chain's pending
+// view and the nonces reserved by live pending intents. The chain view wins
+// after external transactions or mined history; the reservations win while a
+// broadcast is still propagating. An intent dropped via Done releases its
+// reservation, so a permanently lost broadcast never wedges later
+// submissions behind an unfillable gap. Caller holds submitMu.
+func (m *TxManager) allocateNonce(ctx context.Context) (uint64, error) {
+	nonce, err := m.backend.PendingNonceAt(ctx, m.from)
+	if err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	for _, p := range m.pending {
+		if p.nonce >= nonce {
+			nonce = p.nonce + 1
+		}
+	}
+	m.mu.Unlock()
+	return nonce, nil
 }
 
 func (m *TxManager) send(ctx context.Context, id string, p *pendingTx, head uint64) error {

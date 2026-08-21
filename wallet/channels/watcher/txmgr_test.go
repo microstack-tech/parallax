@@ -207,6 +207,54 @@ func TestTxManagerDistinctNoncesOnLaggingBackend(t *testing.T) {
 	}
 }
 
+// TestTxManagerReleasesAbandonedNonce: an intent abandoned via Done whose
+// transaction never mined (mempool eviction, bump cap reached) must release
+// its nonce. A counter that only ratchets upward would leave a permanent gap
+// at the lost nonce, wedging every later submission — including loss-capable
+// challenges — behind a transaction that can never mine.
+func TestTxManagerReleasesAbandonedNonce(t *testing.T) {
+	e := setupSim(t)
+	base, err := e.backend.PendingNonceAt(context.Background(), e.bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pool never registers anything (broadcasts are lost), so the chain's
+	// pending view stays at base throughout.
+	lagging := &laggingNonceBackend{TxBackend: e.backend, nonce: base}
+	dropping := &droppingBackend{TxBackend: lagging, dropFirst: 1000}
+	mgr := NewTxManager(dropping, e.bobPriv, big.NewInt(1337))
+
+	contract, err := registry.NewChannelRegistry(e.regAddr, dropping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nonces []uint64
+	submit := func(id string) {
+		err := mgr.Submit(context.Background(), id, 10, 0,
+			func(auth *bind.TransactOpts) (*types.Transaction, error) {
+				nonces = append(nonces, auth.Nonce.Uint64())
+				auth.Value = lax(1)
+				return contract.Deposit(auth, big.NewInt(1))
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	submit("challenge:a")
+	// The channel leaves Closing by other means; the caller abandons the
+	// intent while its broadcast is lost forever.
+	mgr.Done("challenge:a")
+	submit("challenge:b")
+
+	if len(nonces) != 2 {
+		t.Fatalf("expected two builds, got %d", len(nonces))
+	}
+	if nonces[1] != nonces[0] {
+		t.Fatalf("abandoned nonce %d not released: next intent allocated %d, which can never mine while %d is unfilled",
+			nonces[0], nonces[1], nonces[0])
+	}
+}
+
 // TestTxManagerConcurrentTicks: in tower mode the node's watch loop and the
 // tower's tick loop drive the SAME shared per-chain manager from two
 // goroutines, so Tick must be safe against itself: the bump path mutates
