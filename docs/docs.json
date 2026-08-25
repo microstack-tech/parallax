@@ -26,8 +26,8 @@
     "versions": [
       {
         "version": "v2.1.x",
-        "tag": "dev",
-        "hidden": true,
+        "tag": "latest",
+        "default": true,
         "tabs": [
           {
             "tab": "The Parallax Protocol",
@@ -299,8 +299,6 @@
       },
       {
         "version": "v2.0.x",
-        "tag": "latest",
-        "default": true,
         "tabs": [
           {
             "tab": "The Parallax Protocol",
@@ -1158,17 +1156,17 @@
     },
     {
       "source": "/guides/:slug*",
-      "destination": "/v2.0.x/guides/:slug*",
+      "destination": "/v2.1.x/guides/:slug*",
       "permanent": false
     },
     {
       "source": "/parallax-client/:slug*",
-      "destination": "/v2.0.x/parallax-client/:slug*",
+      "destination": "/v2.1.x/parallax-client/:slug*",
       "permanent": false
     },
     {
       "source": "/parallax-protocol/:slug*",
-      "destination": "/v2.0.x/parallax-protocol/:slug*",
+      "destination": "/v2.1.x/parallax-protocol/:slug*",
       "permanent": false
     }
   ]
