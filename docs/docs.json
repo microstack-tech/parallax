@@ -237,6 +237,7 @@
                   {
                     "group": "Tools",
                     "pages": [
+                      "v2.1.x/parallax-client/tools/parallax-wallet",
                       {
                         "group": "Clef",
                         "pages": [
@@ -505,6 +506,7 @@
                   {
                     "group": "Tools",
                     "pages": [
+                      "v2.0.x/parallax-client/tools/parallax-wallet",
                       {
                         "group": "Clef",
                         "pages": [
