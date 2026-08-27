@@ -31,9 +31,11 @@ func newChainNode(t *testing.T, h *hub, key *ecdsa.PrivateKey, backend Backend, 
 	cfg.Merchant.PushPayments = true
 	cfg.Backup.Enabled = false // keep the hub log readable
 	// The auto-miner commits every 20ms (~50 blocks/s): block-denominated
-	// validity windows must scale with block time (Part 3 §11 note).
+	// validity windows must scale with block time (Part 3 §11 note), and so
+	// must the horizon that bounds them.
 	cfg.Channels.CoopCloseValidityBlocks = 10_000
 	cfg.Channels.WithdrawValidityBlocks = 10_000
+	cfg.Channels.CoopCloseHorizonBlocks = 20_000
 
 	n, err := New(cfg, t.TempDir(), key, backend, nil)
 	if err != nil {

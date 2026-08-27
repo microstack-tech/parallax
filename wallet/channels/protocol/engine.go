@@ -199,6 +199,9 @@ func (e *Engine) ProposePayment(key proofstore.ChannelKey, amountWei *big.Int, i
 	if err != nil {
 		return nil, err
 	}
+	// Outstanding withdraw vouchers spend entitlement before the chain
+	// confirms them (Part 2 §6.10).
+	dep = withdrawAdjusted(meta, dep, nowBlock)
 	myBal := balanceOf(meta.Role, &latest, dep)
 	if myBal.Cmp(amountWei) < 0 {
 		return nil, ErrInsufficient
@@ -543,11 +546,15 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 
 	// Check 6: proposer's post-state balance against confirmed deposits
 	// only — the contract clamps at settle, so accepting a state funded by
-	// a reorged deposit shifts the loss to us (Part 3 §8).
+	// a reorged deposit shifts the loss to us (Part 3 §8). Withdraw
+	// vouchers still submittable count as withdrawn already: a payment
+	// funded by entitlement the proposer holds a countersigned withdraw
+	// for would double-spend it (Part 2 §6.10).
 	dep, err := e.store.Deposits(key)
 	if err != nil {
 		return Result{}, err
 	}
+	dep = withdrawAdjusted(meta, dep, nowBlock)
 	if balanceOf(prole, &st, dep).Sign() < 0 {
 		return Result{Nack: nack(key, KindProposal, st.Seq, NackInsufficientBalance, "")}, nil
 	}

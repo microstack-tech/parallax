@@ -98,6 +98,13 @@ func (e *Engine) ProposeWithdraw(key proofstore.ChannelKey, amountWei *big.Int, 
 	if expiryBlock <= nowBlock {
 		return nil, fmt.Errorf("protocol: expiry block %d not in the future", expiryBlock)
 	}
+	// A signed voucher earmarks entitlement until it expires (and blocks
+	// re-proposals meanwhile), so the expiry is bounded by the same horizon
+	// as a coop-close freeze. nowBlock 0 (offline) cannot judge it.
+	if nowBlock > 0 && expiryBlock > nowBlock+e.cfg.coopCloseHorizon() {
+		return nil, fmt.Errorf("protocol: expiry block %d beyond the withdraw horizon (max %d ahead)",
+			expiryBlock, e.cfg.coopCloseHorizon())
+	}
 	if empty, err := e.journalEmpty(key); err != nil {
 		return nil, err
 	} else if !empty {
@@ -187,6 +194,13 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 	if err != nil || expiry <= nowBlock {
 		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "expiry not in the future")}, nil, nil
 	}
+	// Countersigning earmarks the peer's entitlement until the voucher
+	// expires, so the expiry must be bounded like a coop-close freeze — an
+	// effectively-infinite one makes the earmark permanent. nowBlock 0
+	// (offline node) cannot judge the horizon and skips it.
+	if nowBlock > 0 && expiry > nowBlock+e.cfg.coopCloseHorizon() {
+		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "expiry beyond the withdraw horizon")}, nil, nil
+	}
 	if !util.IsHexAddress(msg.Participant) {
 		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "bad participant")}, nil, nil
 	}
@@ -211,6 +225,16 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 	if prole == proofstore.RoleB {
 		withdrawn = dep.WithdrawnB.BigInt()
 	}
+	// The increase is measured against the outstanding countersigned voucher
+	// too, not just confirmed figures: totals are cumulative on-chain, so a
+	// lower re-proposal is useless to the peer, and refusing it keeps the
+	// single voucher record below monotone. A retransmission of the voucher
+	// itself is exempt — it re-validates and re-ACKs idempotently.
+	if pw := meta.PeerPendingWithdraw; pw != nil && nowBlock <= pw.ExpiryBlock &&
+		!(pw.Participant == participant && pw.ExpiryBlock == expiry && pw.TotalWithdrawn.BigInt().Cmp(total) == 0) &&
+		pw.TotalWithdrawn.BigInt().Cmp(withdrawn) > 0 {
+		withdrawn = pw.TotalWithdrawn.BigInt()
+	}
 	if total.Cmp(withdrawn) <= 0 {
 		return Result{Nack: nack(key, KindWithdrawProposal, 0, NackPolicy, "totalWithdrawn does not increase")}, nil, nil
 	}
@@ -232,6 +256,21 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 	}
 
 	mySig, err := e.signer.SignDigest(digest)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	// W2-class barrier: record the voucher before the countersignature can
+	// leave. Without it the peer holds a submittable withdraw this side does
+	// not account for, and pay-then-withdraw double-spends the entitlement.
+	err = e.store.UpdateMeta(key, func(m *proofstore.ChannelMeta) {
+		m.PeerPendingWithdraw = &proofstore.PendingWithdraw{
+			Participant:    participant,
+			TotalWithdrawn: proofstore.NewU256(total),
+			ExpiryBlock:    expiry,
+			MySig:          mySig,
+			PeerSig:        peerSig,
+		}
+	})
 	if err != nil {
 		return Result{}, nil, err
 	}
@@ -289,30 +328,66 @@ func (e *Engine) HandleWithdrawAck(key proofstore.ChannelKey, msg AckMsg) (*With
 	return ready, nil
 }
 
-// SweepWithdraw clears a pending withdraw once it expired or once the
-// confirmed on-chain cumulative caught up (submission landed). Watcher-driven
-// alongside Unfreeze.
+// SweepWithdraw clears pending withdraws — own proposal and countersigned
+// peer voucher alike — once they expired or once the confirmed on-chain
+// cumulative caught up (submission landed). Watcher-driven alongside
+// Unfreeze.
 func (e *Engine) SweepWithdraw(key proofstore.ChannelKey, nowBlock uint64) error {
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return ErrUnknownChannel
 	}
-	pw := meta.PendingWithdraw
-	if pw == nil {
+	if meta.PendingWithdraw == nil && meta.PeerPendingWithdraw == nil {
 		return nil
 	}
 	dep, err := e.store.Deposits(key)
 	if err != nil {
 		return err
 	}
-	withdrawn := dep.WithdrawnA.BigInt()
-	if meta.Role == proofstore.RoleB {
-		withdrawn = dep.WithdrawnB.BigInt()
+	done := func(r proofstore.Role, pw *proofstore.PendingWithdraw) bool {
+		if pw == nil {
+			return false
+		}
+		withdrawn := dep.WithdrawnA.BigInt()
+		if r == proofstore.RoleB {
+			withdrawn = dep.WithdrawnB.BigInt()
+		}
+		return nowBlock > pw.ExpiryBlock || withdrawn.Cmp(pw.TotalWithdrawn.BigInt()) >= 0
 	}
-	if nowBlock > pw.ExpiryBlock || withdrawn.Cmp(pw.TotalWithdrawn.BigInt()) >= 0 {
-		return e.store.UpdateMeta(key, func(m *proofstore.ChannelMeta) {
+	own := done(meta.Role, meta.PendingWithdraw)
+	peer := done(peerRole(meta.Role), meta.PeerPendingWithdraw)
+	if !own && !peer {
+		return nil
+	}
+	return e.store.UpdateMeta(key, func(m *proofstore.ChannelMeta) {
+		if own {
 			m.PendingWithdraw = nil
-		})
+		}
+		if peer {
+			m.PeerPendingWithdraw = nil
+		}
+	})
+}
+
+// withdrawAdjusted returns the confirmed funding view with each side's
+// withdrawn column raised to its outstanding withdraw voucher (own pending
+// proposal, or the peer's that this wallet countersigned): a signed voucher
+// is submittable until its expiry, so the entitlement it spends is gone for
+// balance purposes even before the chain confirms it.
+func withdrawAdjusted(meta proofstore.ChannelMeta, dep proofstore.Deposits, nowBlock uint64) proofstore.Deposits {
+	raise := func(r proofstore.Role, pw *proofstore.PendingWithdraw) {
+		if pw == nil || nowBlock > pw.ExpiryBlock {
+			return
+		}
+		col := &dep.WithdrawnA
+		if r == proofstore.RoleB {
+			col = &dep.WithdrawnB
+		}
+		if pw.TotalWithdrawn.BigInt().Cmp(col.BigInt()) > 0 {
+			*col = proofstore.NewU256(pw.TotalWithdrawn.BigInt())
+		}
 	}
-	return nil
+	raise(meta.Role, meta.PendingWithdraw)
+	raise(peerRole(meta.Role), meta.PeerPendingWithdraw)
+	return dep
 }

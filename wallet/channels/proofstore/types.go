@@ -123,6 +123,13 @@ type ChannelMeta struct {
 	// proposed (Part 2 §6.10); needed to verify the countersign and to
 	// assemble the on-chain submission after a restart.
 	PendingWithdraw *PendingWithdraw `json:"pendingWithdraw,omitempty"`
+
+	// PeerPendingWithdraw is the peer-proposed withdraw this wallet
+	// countersigned (Part 2 §6.10, responder side). Until it expires or the
+	// confirmed on-chain figures catch up, the peer holds a submittable
+	// dual-signed voucher, so the entitlement it spends must be accounted
+	// as already withdrawn — otherwise pay-then-withdraw double-spends it.
+	PeerPendingWithdraw *PendingWithdraw `json:"peerPendingWithdraw,omitempty"`
 }
 
 // PendingWithdraw records a proposed cooperative withdraw until submission

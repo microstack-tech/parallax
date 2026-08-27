@@ -237,7 +237,7 @@ func (n *Node) unfreezeExpired(head uint64) {
 				n.log.Error("unfreeze", "channel", meta.Key.String(), "err", err)
 			}
 		}
-		if meta.PendingWithdraw != nil {
+		if meta.PendingWithdraw != nil || meta.PeerPendingWithdraw != nil {
 			if err := n.Engine.SweepWithdraw(meta.Key, head); err != nil {
 				n.log.Error("withdraw sweep", "channel", meta.Key.String(), "err", err)
 			}
