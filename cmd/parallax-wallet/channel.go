@@ -58,7 +58,7 @@ var (
 	}
 	channelInvoiceFlag = cli.StringFlag{
 		Name:  "invoice",
-		Usage: "invoice id being paid",
+		Usage: "pay a stored invoice by id (channel and amount come from it)",
 	}
 	channelUnilateralFlag = cli.BoolFlag{
 		Name:  "unilateral",
@@ -123,7 +123,7 @@ var commandChannel = cli.Command{
 		{
 			Name:      "pay",
 			Usage:     "pay over a channel and wait for the countersignature",
-			ArgsUsage: "<keyfile> [<channel-id> <amount-wei>]",
+			ArgsUsage: "<keyfile> [<channel-id> <amount-wei>] (omitted with --invoice/--uri)",
 			Flags: []cli.Flag{
 				passphraseFlag, channelConfigFlag, channelDataDirFlag,
 				channelInvoiceFlag, channelURIFlag, channelWaitFlag,
@@ -420,8 +420,9 @@ func channelPay(ctx *cli.Context) error {
 	var key proofstore.ChannelKey
 	var amount *big.Int
 	invoiceID := ctx.String(channelInvoiceFlag.Name)
-	if uri := ctx.String(channelURIFlag.Name); uri != "" {
-		req, err := channeld.ParsePaymentURI(uri)
+	switch {
+	case ctx.String(channelURIFlag.Name) != "":
+		req, err := channeld.ParsePaymentURI(ctx.String(channelURIFlag.Name))
 		if err != nil {
 			return err
 		}
@@ -429,7 +430,14 @@ func channelPay(ctx *cli.Context) error {
 			return err
 		}
 		amount, invoiceID = req.AmountWei, req.InvoiceID
-	} else {
+	case invoiceID != "":
+		// The stored invoice names the channel and the exact amount;
+		// retyping either risks a NACK after the irrevocable journal write.
+		var err error
+		if key, amount, err = node.ResolveInvoice(invoiceID); err != nil {
+			return err
+		}
+	default:
 		key = argChannel(node, ctx, 1)
 		amount = argWei(ctx, 2)
 	}
@@ -439,17 +447,12 @@ func channelPay(ctx *cli.Context) error {
 		if err := node.Pay(runCtx, key, amount, invoiceID); err != nil {
 			return err
 		}
-		deadline := time.Now().Add(ctx.Duration(channelWaitFlag.Name))
-		for time.Now().Before(deadline) {
-			latest, err := node.Store.LatestState(key)
-			if err == nil && latest.Seq > before.Seq {
-				fmt.Printf("payment complete at seq %d\n", latest.Seq)
-				return nil
-			}
-			time.Sleep(200 * time.Millisecond)
+		seq, err := node.AwaitPayment(runCtx, key, before, amount, ctx.Duration(channelWaitFlag.Name))
+		if err != nil {
+			return err
 		}
-		exposure, _ := node.Engine.PoisonedExposure(key)
-		return fmt.Errorf("no countersignature yet; the proposal keeps retransmitting from the persistent queue. Channel exposure if closed now: %s wei", exposure)
+		fmt.Printf("payment complete at seq %d\n", seq)
+		return nil
 	})
 }
 

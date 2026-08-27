@@ -29,6 +29,71 @@ func (n *Node) Pay(ctx context.Context, key proofstore.ChannelKey, amountWei *bi
 	return n.enqueueProposal(key, prop)
 }
 
+// AwaitPayment blocks until the payment proposed after `before` completes,
+// the wait expires, or ctx is done. It returns the completed seq.
+//
+// A bare seq advance is NOT completion: in the A-wins tiebreak the seq is
+// occupied by the counterparty's payment and our intent is discarded, and a
+// NACK leaves the seq advancing later for unrelated reasons. Completion
+// means OUR cumulative outbound moved by exactly the paid amount with
+// nothing of ours left journaled.
+func (n *Node) AwaitPayment(ctx context.Context, key proofstore.ChannelKey, before proofstore.SignedState, amountWei *big.Int, wait time.Duration) (uint64, error) {
+	meta, err := n.Store.Meta(key)
+	if err != nil {
+		return 0, err
+	}
+	myOutbound := func(st proofstore.SignedState) *big.Int {
+		if meta.Role == proofstore.RoleA {
+			return st.TransferredAtoB.BigInt()
+		}
+		return st.TransferredBtoA.BigInt()
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		if m, merr := n.Store.Meta(key); merr == nil && m.Poisoned {
+			exposure, _ := n.Engine.PoisonedExposure(key)
+			return 0, fmt.Errorf("channeld: payment refused (channel poisoned by a NACK); exposure if closed now: %s wei", exposure)
+		}
+		latest, lerr := n.Store.LatestState(key)
+		if lerr == nil && latest.Seq > before.Seq {
+			if journal, jerr := n.Store.SelfSigned(key); jerr == nil && len(journal) == 0 {
+				delta := new(big.Int).Sub(myOutbound(latest), myOutbound(before))
+				if delta.Cmp(amountWei) == 0 {
+					return latest.Seq, nil
+				}
+				return 0, fmt.Errorf("channeld: payment intent discarded at seq %d without paying (tiebreak); re-issue the payment", latest.Seq)
+			}
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+	exposure, _ := n.Engine.PoisonedExposure(key)
+	return 0, fmt.Errorf("channeld: no countersignature yet; the proposal keeps retransmitting from the persistent queue. Channel exposure if closed now: %s wei", exposure)
+}
+
+// ResolveInvoice resolves a locally stored invoice (received via 21901) to
+// the channel and amount that pay it.
+func (n *Node) ResolveInvoice(invoiceID string) (proofstore.ChannelKey, *big.Int, error) {
+	inv, err := n.Store.Invoice(invoiceID)
+	if err != nil {
+		return proofstore.ChannelKey{}, nil, fmt.Errorf("channeld: unknown invoice %s (was it received over the relay?)", invoiceID)
+	}
+	if time.Now().Unix() > inv.ExpiresAt {
+		return proofstore.ChannelKey{}, nil, fmt.Errorf("channeld: invoice expired")
+	}
+	key, ok := n.channelWithMerchant(inv)
+	if !ok {
+		return proofstore.ChannelKey{}, nil, fmt.Errorf("channeld: no open channel with the invoice's merchant")
+	}
+	return key, inv.AmountWei.BigInt(), nil
+}
+
 // CureBySupersession queues the no-op supersession that voids outstanding
 // proposals on a poisoned channel (Part 2 §7.4 exit b).
 func (n *Node) CureBySupersession(ctx context.Context, key proofstore.ChannelKey) error {

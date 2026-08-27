@@ -333,18 +333,11 @@ func (n *Node) handleInvoice(msg protocol.InvoiceMsg, sender string) error {
 // PayInvoice resolves a locally stored invoice (received via 21901) and pays
 // it on its channel.
 func (n *Node) PayInvoice(ctx context.Context, invoiceID string) error {
-	inv, err := n.Store.Invoice(invoiceID)
+	key, amount, err := n.ResolveInvoice(invoiceID)
 	if err != nil {
-		return fmt.Errorf("channeld: unknown invoice %s (was it received over the relay?)", invoiceID)
+		return err
 	}
-	if time.Now().Unix() > inv.ExpiresAt {
-		return fmt.Errorf("channeld: invoice expired")
-	}
-	key, ok := n.channelWithMerchant(inv)
-	if !ok {
-		return fmt.Errorf("channeld: no open channel with the invoice's merchant")
-	}
-	return n.Pay(ctx, key, inv.AmountWei.BigInt(), inv.ID)
+	return n.Pay(ctx, key, amount, invoiceID)
 }
 
 // channelWithMerchant resolves the invoice's pin — or, unpinned, any open
