@@ -147,12 +147,20 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 	opts := &bind.FilterOpts{Context: ctx, Start: from, End: &cutoff}
 	id := []*big.Int{new(big.Int).SetUint64(meta.Key.ChannelID)}
 
+	// Every filter loop below must be followed by an Error() check: the
+	// generated iterators end silently on a mid-iteration failure (a log
+	// that fails to decode parks the error and Next() just returns false),
+	// and advancing the watermark past an unread log would skip it forever —
+	// for CloseStarted, that is a never-challenged stale close.
 	opened, err := w.contract.FilterChannelOpened(opts, id, nil, nil)
 	if err != nil {
 		return err
 	}
 	for opened.Next() {
 		dep.DepositA = proofstore.NewU256(opened.Event.Deposit)
+	}
+	if err := opened.Error(); err != nil {
+		return err
 	}
 
 	// participantIsA resolves an event participant to a column: the only
@@ -176,6 +184,9 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 			dep.DepositB = proofstore.NewU256(ev.NewTotal)
 		}
 	}
+	if err := deposits.Error(); err != nil {
+		return err
+	}
 
 	withdraws, err := w.contract.FilterChannelWithdraw(opts, id, nil)
 	if err != nil {
@@ -188,6 +199,9 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 		} else {
 			dep.WithdrawnB = proofstore.NewU256(ev.TotalWithdrawn)
 		}
+	}
+	if err := withdraws.Error(); err != nil {
+		return err
 	}
 
 	closes, err := w.contract.FilterCloseStarted(opts, id, nil)
@@ -208,6 +222,9 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 				meta.Key, ev.Seq, latest.Seq, ev.Closer.Hex())
 		}
 	}
+	if err := closes.Error(); err != nil {
+		return err
+	}
 
 	settled, err := w.contract.FilterSettled(opts, id)
 	if err != nil {
@@ -217,7 +234,17 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 	if err != nil {
 		return err
 	}
-	if settled.Next() || coop.Next() {
+	sawEnd := settled.Next()
+	if err := settled.Error(); err != nil {
+		return err
+	}
+	if !sawEnd {
+		sawEnd = coop.Next()
+		if err := coop.Error(); err != nil {
+			return err
+		}
+	}
+	if sawEnd {
 		if err := w.store.UpdateMeta(meta.Key, func(m *proofstore.ChannelMeta) {
 			m.Status = proofstore.StatusSettled
 			m.FrozenUntilBlock = 0
