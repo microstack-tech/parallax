@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ParallaxProtocol/parallax/v2/util"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
@@ -42,10 +43,13 @@ func (c Config) coopCloseHorizon() uint64 {
 	return c.CoopCloseHorizonBlocks
 }
 
-// Engine drives one wallet's side of the channel protocol. All methods for a
-// given channel MUST be called from that channel's actor goroutine
-// (Part 3 §2); the engine itself holds no locks.
+// Engine drives one wallet's side of the channel protocol. Methods
+// serialize on an internal lock (Part 3 §2's actor discipline, enforced
+// here): callers span the dispatcher, the watcher loop, the transmitter
+// give-up callback, merchant HTTP handlers, and CLI verbs, and every method
+// is a read-check-sign-write sequence whose checks must not interleave.
 type Engine struct {
+	mu     sync.Mutex
 	store  *proofstore.Store
 	signer Signer
 	cfg    Config
@@ -166,6 +170,8 @@ func nack(key proofstore.ChannelKey, re int, seq uint64, reason, detail string) 
 // message MUST NOT be transmitted before this returns (the store commit is
 // the W1 barrier).
 func (e *Engine) ProposePayment(key proofstore.ChannelKey, amountWei *big.Int, invoiceID string, nowBlock uint64) (*ProposalMsg, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -240,6 +246,8 @@ func (e *Engine) ProposePayment(key proofstore.ChannelKey, amountWei *big.Int, i
 // amounts equal the latest complete state (Part 2 §7.4 cancel-by-
 // supersession). Requires an outstanding self-signed state to supersede.
 func (e *Engine) ProposeNoOpSupersession(key proofstore.ChannelKey) (*ProposalMsg, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -281,6 +289,8 @@ func (e *Engine) ProposeNoOpSupersession(key proofstore.ChannelKey) (*ProposalMs
 // HandleAck completes an outstanding proposal from a verified 21903. The
 // completed state is returned for tower delegation and self-backup.
 func (e *Engine) HandleAck(key proofstore.ChannelKey, msg AckMsg) (*proofstore.SignedState, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -341,6 +351,8 @@ func (e *Engine) HandleAck(key proofstore.ChannelKey, msg AckMsg) (*proofstore.S
 // HandleNack records the poisoned condition for an outstanding proposal
 // (Part 2 §7.4). Advisory: the proposal remains journaled and irrevocable.
 func (e *Engine) HandleNack(key proofstore.ChannelKey, msg NackMsg) (poisoned bool, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	seq, err := strconv.ParseUint(msg.Seq, 10, 64)
 	if err != nil {
 		return false, fmt.Errorf("protocol: bad nack seq %q", msg.Seq)
@@ -363,6 +375,8 @@ func (e *Engine) HandleNack(key proofstore.ChannelKey, msg NackMsg) (poisoned bo
 // MarkPoisoned is the retransmission layer's signal that backoff for an
 // outstanding proposal is exhausted (Part 3 §5).
 func (e *Engine) MarkPoisoned(key proofstore.ChannelKey) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	journal, err := e.store.SelfSigned(key)
 	if err != nil {
 		return err
@@ -378,6 +392,8 @@ func (e *Engine) MarkPoisoned(key proofstore.ChannelKey) error {
 // 20% of the largest un-countersigned outbound delta (Part 1 §9.2), which
 // clients MUST surface rather than a vague warning (Part 3 §5).
 func (e *Engine) PoisonedExposure(key proofstore.ChannelKey) (*big.Int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -412,6 +428,8 @@ func (e *Engine) PoisonedExposure(key proofstore.ChannelKey) (*big.Int, error) {
 // nowBlock is the confirmed chain head; nowUnix the wall clock for invoice
 // expiry.
 func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uint64, nowUnix int64) (Result, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	st, err := FromWire(msg.State)
 	if err != nil {
 		return Result{Dropped: true}, err

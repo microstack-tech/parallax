@@ -43,6 +43,12 @@ func domainOf(key proofstore.ChannelKey) (registry.Domain, error) {
 // complete state and the confirmed funding view, using the same clamped
 // settlement math the contract applies (Part 2 §8).
 func (e *Engine) CloseBalances(key proofstore.ChannelKey) (balA, balB *big.Int, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.closeBalances(key)
+}
+
+func (e *Engine) closeBalances(key proofstore.ChannelKey) (balA, balB *big.Int, err error) {
 	latest, err := e.latestOrZero(key)
 	if err != nil {
 		return nil, nil, err
@@ -72,6 +78,8 @@ func coopCloseDigest(key proofstore.ChannelKey, balA, balB *big.Int, expiry uint
 // settles or expires (Part 1 §7.4), so nothing new is signed from here on.
 // Allowed while Closing too — mutual agreement short-circuits the dispute.
 func (e *Engine) ProposeCoopClose(key proofstore.ChannelKey, expiryBlock, nowBlock uint64) (*CoopCloseProposalMsg, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -92,7 +100,7 @@ func (e *Engine) ProposeCoopClose(key proofstore.ChannelKey, expiryBlock, nowBlo
 			expiryBlock, e.cfg.coopCloseHorizon())
 	}
 
-	balA, balB, err := e.CloseBalances(key)
+	balA, balB, err := e.closeBalances(key)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +146,8 @@ func (e *Engine) ProposeCoopClose(key proofstore.ChannelKey, expiryBlock, nowBlo
 // frozen, the 21905 countersign is returned for transmission, and the
 // dual-signed pair is returned for on-chain submission by this side.
 func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub string, nowBlock uint64) (Result, *CoopCloseReady, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	channelID, err := strconv.ParseUint(msg.ChannelID, 10, 64)
 	if err != nil {
 		return Result{Dropped: true}, nil, fmt.Errorf("protocol: bad channelId %q", msg.ChannelID)
@@ -197,7 +207,7 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 		return Result{Nack: nack(key, KindCoopCloseProposal, 0, NackFrozen, "close already pending")}, nil, nil
 	}
 
-	balA, balB, err := e.CloseBalances(key)
+	balA, balB, err := e.closeBalances(key)
 	if err != nil {
 		return Result{}, nil, err
 	}
@@ -246,6 +256,8 @@ func (e *Engine) HandleCoopCloseProposal(msg CoopCloseProposalMsg, senderNpub st
 // HandleCoopCloseAck completes the proposer side from a verified 21905,
 // returning the dual-signed pair for on-chain submission.
 func (e *Engine) HandleCoopCloseAck(key proofstore.ChannelKey, msg AckMsg) (*CoopCloseReady, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -281,6 +293,8 @@ func (e *Engine) HandleCoopCloseAck(key proofstore.ChannelKey, msg AckMsg) (*Coo
 // Unfreeze clears an expired, unsettled cooperative close: expiry without
 // submission means the channel resumes normally (Part 2 §8). Watcher-driven.
 func (e *Engine) Unfreeze(key proofstore.ChannelKey, nowBlock uint64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return ErrUnknownChannel

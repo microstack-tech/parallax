@@ -79,6 +79,8 @@ func (e *Engine) journalEmpty(key proofstore.ChannelKey) (bool, error) {
 // wallet. The pending record persists before the message can leave (same
 // discipline as W1).
 func (e *Engine) ProposeWithdraw(key proofstore.ChannelKey, amountWei *big.Int, expiryBlock, nowBlock uint64) (*WithdrawProposalMsg, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -165,6 +167,8 @@ func (e *Engine) ProposeWithdraw(key proofstore.ChannelKey, amountWei *big.Int, 
 // Retransmissions re-validate and — via deterministic ECDSA — re-ACK with
 // the identical countersignature (Part 2 §6.10).
 func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub string, nowBlock uint64) (Result, *WithdrawReady, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	channelID, err := strconv.ParseUint(msg.ChannelID, 10, 64)
 	if err != nil {
 		return Result{Dropped: true}, nil, fmt.Errorf("protocol: bad channelId %q", msg.ChannelID)
@@ -292,6 +296,8 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 
 // HandleWithdrawAck completes the proposer side from a verified 21912.
 func (e *Engine) HandleWithdrawAck(key proofstore.ChannelKey, msg AckMsg) (*WithdrawReady, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
@@ -333,6 +339,8 @@ func (e *Engine) HandleWithdrawAck(key proofstore.ChannelKey, msg AckMsg) (*With
 // cumulative caught up (submission landed). Watcher-driven alongside
 // Unfreeze.
 func (e *Engine) SweepWithdraw(key proofstore.ChannelKey, nowBlock uint64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return ErrUnknownChannel
