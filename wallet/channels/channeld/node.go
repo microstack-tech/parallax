@@ -313,7 +313,13 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		// same-peer channels sharing the bare id across coexisting
 		// registries — the message's registry qualifier does.
 		candidates := n.channelsForPeer(msg.ChannelID, sender)
-		if msg.Registry != "" && util.IsHexAddress(msg.Registry) {
+		if msg.Registry != "" {
+			// A present qualifier must parse — treating a malformed one as
+			// unqualified would bypass the scoping and poison whichever
+			// same-peer twin holds a journaled state at this seq.
+			if !util.IsHexAddress(msg.Registry) {
+				return fmt.Errorf("nack with malformed registry %q", msg.Registry)
+			}
 			reg := util.HexToAddress(msg.Registry)
 			var scoped []proofstore.ChannelKey
 			for _, key := range candidates {

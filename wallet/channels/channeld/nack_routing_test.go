@@ -67,3 +67,45 @@ func TestNackPoisonsOnlyTheNamedRegistryChannel(t *testing.T) {
 		t.Fatal("NACK against one registry's channel poisoned its same-id twin on the coexisting registry")
 	}
 }
+
+// TestNackWithMalformedRegistryIsRejected: the registry qualifier commit
+// 9e024ce added must fail closed. A NACK carrying a non-hex Registry used to
+// skip the scoping filter entirely and range over every same-peer twin,
+// poisoning whichever one had a journaled state at that seq — a healthy
+// channel flagged for exposure by a malformed (or malicious) qualifier.
+func TestNackWithMalformedRegistryIsRejected(t *testing.T) {
+	h := newHub()
+	alice := newTestNode(t, h, nil)
+	bob := newTestNode(t, h, nil)
+	linkChannel(t, alice, bob)
+	twinKey := proofstore.ChannelKey{
+		ChainID:   e2eKey.ChainID,
+		Registry:  util.HexToAddress("0x0000000000000000000000000000000000001111"),
+		ChannelID: e2eKey.ChannelID,
+	}
+	linkChannelAt(t, alice, bob, twinKey)
+
+	// Outstanding seq-1 proposal on the twin only.
+	if _, err := alice.Engine.ProposePayment(twinKey, big.NewInt(1e9), "", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	junk := protocol.NackMsg{
+		V:         1,
+		ChannelID: "1",
+		Registry:  "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+		Re:        "21902",
+		Seq:       "1",
+		Reason:    protocol.NackPolicy,
+	}
+	rumor := encodeRumor(t, protocol.KindNack, &junk)
+	if err := alice.handleRumor(context.Background(), rumor, bob.SelfPub); err == nil {
+		t.Fatal("malformed registry qualifier accepted")
+	}
+	if meta, _ := alice.Store.Meta(twinKey); meta.Poisoned {
+		t.Fatal("malformed qualifier bypassed the registry filter and poisoned the twin channel")
+	}
+	if meta, _ := alice.Store.Meta(e2eKey); meta.Poisoned {
+		t.Fatal("malformed qualifier poisoned the named channel")
+	}
+}
