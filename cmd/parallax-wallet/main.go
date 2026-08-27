@@ -19,9 +19,9 @@
 // operations) and "parallax account" (keystore-directory operations) into
 // a single binary modeled after Bitcoin Core's bitcoin-wallet. The key and
 // account operations are fully offline; RPC-backed node wallet commands
-// live in parallax-cli. The payment-channel commands ("channel", "nostr")
-// are the exception: per the Parallax Channels spec they talk to a running
-// node over RPC and to Nostr relays.
+// live in parallax-cli. The payment-channel commands ("channel", "nostr",
+// "merchant", "tower") are the exception: per the Parallax Channels spec
+// they talk to a running node over RPC and to Nostr relays.
 package main
 
 import (

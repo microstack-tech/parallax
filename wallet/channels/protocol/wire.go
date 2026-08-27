@@ -1,5 +1,5 @@
 // Package protocol implements the per-channel payment state machines
-// (Part 2 §7–8): proposer and responder flows, the A-wins tiebreak,
+// (Part 2 §7-8): proposer and responder flows, the A-wins tiebreak,
 // poisoned-channel handling, and cooperative-close negotiation with the
 // freeze rule. The engine is transport-agnostic: inputs are decoded messages
 // plus watcher facts, outputs are messages to transmit — the Nostr relay
