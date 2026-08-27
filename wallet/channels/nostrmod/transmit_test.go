@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 
@@ -196,4 +197,88 @@ func TestQueueSurvivesReopen(t *testing.T) {
 	if err != nil || len(due) != 1 || due[0].DedupeKey != "d" {
 		t.Fatalf("queue lost across reopen: %+v %v", due, err)
 	}
+}
+
+// settlingPublisher removes the given outbound item from the store while
+// publishing it — the concurrent-ACK race: the dispatcher settles the queue
+// entry between the transmitter's DueOutbound read and its reschedule, so
+// RescheduleOutbound fails that pass.
+type settlingPublisher struct {
+	store *proofstore.Store
+	id    uint64
+}
+
+func (p *settlingPublisher) Publish(ctx context.Context, ev nostr.Event) int {
+	_ = p.store.RemoveOutbound(p.id)
+	return 1
+}
+
+// TestGiveUpSurvivesTickError: DueOutbound deletes expired items in its own
+// transaction, so they surface exactly once — as Tick's gaveUp list. Run
+// dropped that list whenever the same pass also returned an error, and for
+// a 21902 the give-up is the MANDATORY MarkPoisoned trigger (Part 3 §5): a
+// channel with an outstanding un-ACKed proposal stayed unpoisoned and the
+// user never saw the exposure.
+func TestGiveUpSurvivesTickError(t *testing.T) {
+	store := openTestStore(t)
+	senderPriv, _ := newPair(t)
+	_, recipientPub := newPair(t)
+
+	tx := NewTransmitter(store, nil, senderPriv)
+	now := int64(1_000_000)
+	tx.Now = func() int64 { return now }
+
+	// One expired proposal (the give-up that must reach the callback)...
+	_, err := store.EnqueueOutbound(proofstore.OutboundItem{
+		DedupeKey: "21902:expired:1",
+		ToNpub:    recipientPub,
+		Kind:      21902,
+		Content:   `{"v":1,"seq":"1"}`,
+		RumorTime: now - 100,
+		ExpiresAt: now - 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...and one due item whose reschedule will fail this pass because the
+	// "dispatcher" settles it mid-publish.
+	dueID, err := store.EnqueueOutbound(proofstore.OutboundItem{
+		DedupeKey: "21903:due:1",
+		ToNpub:    recipientPub,
+		Kind:      21903,
+		Content:   `{"v":1,"seq":"1"}`,
+		RumorTime: now,
+		ExpiresAt: now + 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.pool = &settlingPublisher{store: store, id: dueID}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	var gaveUp []proofstore.OutboundItem
+	go tx.Run(ctx, time.Millisecond, func(item proofstore.OutboundItem) {
+		mu.Lock()
+		gaveUp = append(gaveUp, item)
+		mu.Unlock()
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(gaveUp)
+		mu.Unlock()
+		if n > 0 {
+			mu.Lock()
+			defer mu.Unlock()
+			if gaveUp[0].DedupeKey != "21902:expired:1" {
+				t.Fatalf("wrong item gave up: %+v", gaveUp[0])
+			}
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("give-up notification lost: the expired proposal never reached the poisoned-marking callback")
 }

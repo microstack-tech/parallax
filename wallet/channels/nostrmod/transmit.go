@@ -2,6 +2,7 @@ package nostrmod
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -87,8 +88,12 @@ func (t *Transmitter) Tick(ctx context.Context) (published int, gaveUp []proofst
 		}
 		// Reschedule regardless: delivery to a relay is not delivery to the
 		// counterparty; only the dedupe-key removal (ACK arrived) or expiry
-		// ends retransmission.
+		// ends retransmission. An item settled mid-pass (the ACK landed
+		// between the queue read and here) is done, not an error.
 		if rerr := t.store.RescheduleOutbound(item.ID, item.Attempts+1, now+nextBackoff(item.Attempts)); rerr != nil {
+			if errors.Is(rerr, proofstore.ErrNotFound) {
+				continue
+			}
 			return published, expired, rerr
 		}
 	}
@@ -102,10 +107,11 @@ func (t *Transmitter) Run(ctx context.Context, interval time.Duration, onGiveUp 
 	for {
 		select {
 		case <-ticker.C:
-			_, gaveUp, err := t.Tick(ctx)
-			if err != nil {
-				continue
-			}
+			// The give-ups are delivered even when the same pass errored:
+			// DueOutbound already deleted the expired items, so this list is
+			// their only surfacing — and for a 21902 the callback is the
+			// mandatory MarkPoisoned trigger (Part 3 §5).
+			_, gaveUp, _ := t.Tick(ctx)
 			for _, item := range gaveUp {
 				if onGiveUp != nil {
 					onGiveUp(item)
