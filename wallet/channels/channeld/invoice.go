@@ -259,20 +259,54 @@ func (n *Node) handleInvoice(msg protocol.InvoiceMsg, sender string) error {
 		return err
 	}
 	known := false
-	var channelID uint64
 	for _, meta := range metas {
 		if meta.PeerNpub == sender && meta.PeerAddress == merchant {
 			known = true
-			channelID = meta.Key.ChannelID
 			break
 		}
 	}
 	if !known {
 		return fmt.Errorf("channeld: invoice from unknown counterparty")
 	}
+
+	// An absent pin stays absent (PayInvoice picks any open channel with the
+	// merchant); a present pin must parse, carry its registry qualifier, and
+	// name a channel this wallet holds with the merchant — anything else is
+	// unpayable and rejected whole rather than silently re-pinned to an
+	// arbitrary first-match channel (the merchant would NACK the payment
+	// after the irrevocable journal write, poisoning a healthy channel).
+	var channelID uint64
+	var pinReg util.Address
+	var pinChain string
 	if msg.ChannelID != "" {
-		if pinned, err := strconv.ParseUint(msg.ChannelID, 10, 64); err == nil {
-			channelID = pinned
+		channelID, err = strconv.ParseUint(msg.ChannelID, 10, 64)
+		if err != nil || channelID == 0 {
+			return fmt.Errorf("channeld: bad invoice channel pin %q", msg.ChannelID)
+		}
+		if msg.Registry != "" {
+			if !util.IsHexAddress(msg.Registry) {
+				return fmt.Errorf("channeld: bad invoice registry %q", msg.Registry)
+			}
+			pinReg = util.HexToAddress(msg.Registry)
+		}
+		pinChain = msg.ChainID
+		found := false
+		for _, meta := range metas {
+			if meta.PeerNpub != sender || meta.PeerAddress != merchant ||
+				meta.Key.ChannelID != channelID {
+				continue
+			}
+			if pinReg != (util.Address{}) && meta.Key.Registry != pinReg {
+				continue
+			}
+			if pinChain != "" && meta.Key.ChainID != pinChain {
+				continue
+			}
+			found = true
+			break
+		}
+		if !found {
+			return fmt.Errorf("channeld: invoice pinned to channel %d, which is not a channel with this merchant", channelID)
 		}
 	}
 
@@ -282,6 +316,8 @@ func (n *Node) handleInvoice(msg protocol.InvoiceMsg, sender string) error {
 		Memo:      msg.Memo,
 		ExpiresAt: expires,
 		ChannelID: channelID,
+		Registry:  pinReg,
+		ChainID:   pinChain,
 		Merchant:  merchant,
 	}
 	if err := n.Store.CreateInvoice(inv); err != nil {
@@ -304,25 +340,38 @@ func (n *Node) PayInvoice(ctx context.Context, invoiceID string) error {
 	if time.Now().Unix() > inv.ExpiresAt {
 		return fmt.Errorf("channeld: invoice expired")
 	}
-	key, ok := n.channelWithMerchant(inv.ChannelID, inv.Merchant)
+	key, ok := n.channelWithMerchant(inv)
 	if !ok {
-		return fmt.Errorf("channeld: no channel with the invoice's merchant")
+		return fmt.Errorf("channeld: no open channel with the invoice's merchant")
 	}
 	return n.Pay(ctx, key, inv.AmountWei.BigInt(), inv.ID)
 }
 
-// channelWithMerchant resolves a channel id against the store, requiring the
-// counterparty to be the given merchant (a bare id alone is ambiguous across
-// coexisting registries).
-func (n *Node) channelWithMerchant(id uint64, merchant util.Address) (proofstore.ChannelKey, bool) {
+// channelWithMerchant resolves the invoice's pin — or, unpinned, any open
+// channel — against the store, requiring the counterparty to be the
+// invoice's merchant. A pin is matched with its registry/chain qualifier: a
+// bare id alone is ambiguous across coexisting registries.
+func (n *Node) channelWithMerchant(inv proofstore.Invoice) (proofstore.ChannelKey, bool) {
 	metas, err := n.Store.ListChannels()
 	if err != nil {
 		return proofstore.ChannelKey{}, false
 	}
 	for _, meta := range metas {
-		if meta.Key.ChannelID == id && meta.PeerAddress == merchant && meta.Status == proofstore.StatusOpen {
-			return meta.Key, true
+		if meta.PeerAddress != inv.Merchant || meta.Status != proofstore.StatusOpen {
+			continue
 		}
+		if inv.ChannelID != 0 {
+			if meta.Key.ChannelID != inv.ChannelID {
+				continue
+			}
+			if inv.Registry != (util.Address{}) && meta.Key.Registry != inv.Registry {
+				continue
+			}
+			if inv.ChainID != "" && meta.Key.ChainID != inv.ChainID {
+				continue
+			}
+		}
+		return meta.Key, true
 	}
 	return proofstore.ChannelKey{}, false
 }
