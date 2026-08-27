@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -62,6 +63,12 @@ type Node struct {
 	evmKey  *ecdsa.PrivateKey // retained for on-chain verbs (open/close/withdraw)
 	txmgrs  map[string]*watcher.TxManager
 	log     *slog.Logger
+
+	// publishBackup publishes the self-backup snapshot (swappable in tests).
+	publishBackup func(ctx context.Context) error
+	backupMu      sync.Mutex
+	backupRunning bool
+	backupDirty   bool
 }
 
 // TxManagerFor returns the shared per-chain transaction manager (nil when
@@ -121,6 +128,10 @@ func New(cfg Config, dataDir string, evmPriv *ecdsa.PrivateKey, backend Backend,
 
 	n.Pool = nostrmod.NewPool(nostrmod.GoNostrDialer, cfg.AllRelays(), selfPub, nostrmod.PoolConfig{})
 	n.Transmitter = nostrmod.NewTransmitter(store, n.Pool, nostrPriv)
+	n.publishBackup = func(ctx context.Context) error {
+		_, err := nostrmod.PublishBackup(ctx, n.Store, n.Pool, n.NostrPriv)
+		return err
+	}
 
 	if backend != nil {
 		n.txmgrs = make(map[string]*watcher.TxManager)
@@ -601,9 +612,7 @@ func (n *Node) sendDirect(ctx context.Context, peer string, kind int, payload an
 // catch-up: delegate the latest state of every channel).
 func (n *Node) afterCompletion(ctx context.Context, state *proofstore.SignedState) {
 	if n.Cfg.Backup.Enabled {
-		if _, err := nostrmod.PublishBackup(ctx, n.Store, n.Pool, n.NostrPriv); err != nil {
-			n.log.Error("self-backup", "err", err)
-		}
+		n.requestBackup(ctx)
 	}
 	if len(n.Cfg.Channels.Towers.Npubs) == 0 {
 		return
@@ -624,6 +633,39 @@ func (n *Node) afterCompletion(ctx context.Context, state *proofstore.SignedStat
 			n.delegate(latest)
 		}
 	}
+}
+
+// requestBackup runs the self-backup off the calling goroutine: the
+// snapshot marshals the whole store and round-trips the relays, and the
+// dispatcher must not sit behind that for every completed payment.
+// Completions arriving while a backup is in flight coalesce into a single
+// trailing run — the backup is a whole-store snapshot, so the last one
+// covers them all. Best-effort like the synchronous version was (errors
+// logged); tower delegation, the loss protection, stays on the queue.
+func (n *Node) requestBackup(ctx context.Context) {
+	n.backupMu.Lock()
+	if n.backupRunning {
+		n.backupDirty = true
+		n.backupMu.Unlock()
+		return
+	}
+	n.backupRunning = true
+	n.backupMu.Unlock()
+	go func() {
+		for {
+			if err := n.publishBackup(ctx); err != nil {
+				n.log.Error("self-backup", "err", err)
+			}
+			n.backupMu.Lock()
+			if !n.backupDirty {
+				n.backupRunning = false
+				n.backupMu.Unlock()
+				return
+			}
+			n.backupDirty = false
+			n.backupMu.Unlock()
+		}
+	}()
 }
 
 // delegate queues a 21906 for every configured tower; retransmission stops
