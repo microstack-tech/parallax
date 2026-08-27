@@ -64,13 +64,20 @@ func (n *Node) QRInvoice(inv proofstore.Invoice) (string, error) {
 	if inv.ChannelID == 0 {
 		return "", errors.New("channeld: QR invoices must pin a channel (the payer is offline)")
 	}
-	key, _, err := n.keyFor(qrenc.Envelope{
-		ChainID:   mustChainID(n),
-		Registry:  firstRegistry(n),
-		ChannelID: inv.ChannelID,
-	})
-	if err != nil {
-		return "", err
+	// The invoice's own pin qualifier names the deployment; records
+	// predating it re-resolve the bare id fail-closed. Never guess from the
+	// registries config — its map order pairs one deployment's chain id
+	// with another's address.
+	key := proofstore.ChannelKey{ChainID: inv.ChainID, Registry: inv.Registry, ChannelID: inv.ChannelID}
+	if inv.Registry == (util.Address{}) {
+		resolved, err := n.ChannelKeyByID(inv.ChannelID)
+		if err != nil {
+			return "", err
+		}
+		key = resolved
+	}
+	if _, err := n.Store.Meta(key); err != nil {
+		return "", fmt.Errorf("channeld: unknown channel %d on registry %s", key.ChannelID, key.Registry.Hex())
 	}
 	idBytes, err := hex.DecodeString(inv.ID)
 	if err != nil || len(idBytes) != 16 {
@@ -381,20 +388,3 @@ func env64(chainID string) uint64 {
 	return v
 }
 
-func mustChainID(n *Node) uint64 {
-	for _, entries := range n.Cfg.Registries {
-		if len(entries) > 0 {
-			return entries[0].ChainID
-		}
-	}
-	return 0
-}
-
-func firstRegistry(n *Node) util.Address {
-	for _, entries := range n.Cfg.Registries {
-		if len(entries) > 0 {
-			return util.HexToAddress(entries[0].Address)
-		}
-	}
-	return util.Address{}
-}
