@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ParallaxProtocol/parallax/v2/crypto"
@@ -128,5 +129,67 @@ func TestOutboundVerbsDeferredWhenHeadUnavailable(t *testing.T) {
 	}
 	if n, _ := alice.Store.OutboundLen(); n != 0 {
 		t.Fatalf("%d messages queued during an RPC outage", n)
+	}
+}
+
+// headCountingBackend counts HeaderByNumber calls.
+type headCountingBackend struct {
+	Backend
+	heads atomic.Int64
+}
+
+func (b *headCountingBackend) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
+	b.heads.Add(1)
+	return &types.Header{Number: big.NewInt(500)}, nil
+}
+
+// TestHeadFetchedOnlyWhenNeeded: handleRumor fetched the chain head for
+// EVERY inbound rumor, but only the proposal kinds (payment, coop-close,
+// withdraw) consult it. ACKs, NACKs, invoices, and tower receipts each cost
+// an RPC round trip per message for nothing — on a busy merchant that is
+// one wasted head query per payment completion.
+func TestHeadFetchedOnlyWhenNeeded(t *testing.T) {
+	h := newHub()
+	bob := newTestNode(t, h, nil)
+
+	cfg := DefaultConfig()
+	cfg.Registries = map[string][]RegistryEntry{
+		"v1": {{Address: e2eKey.Registry.Hex(), ChainID: 2110}},
+	}
+	cfg.Nostr.Relays = []string{"wss://hub"}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counting := &headCountingBackend{}
+	alice, err := New(cfg, t.TempDir(), key, counting, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { alice.Close() })
+	alice.Pool = newHubPool(h, alice.SelfPub)
+	alice.Transmitter = newHubTransmitter(alice)
+	linkChannel(t, alice, bob)
+	ctx := context.Background()
+
+	// An ACK for nothing and a NACK for nothing: neither branch reads the
+	// head, so neither may cost an RPC.
+	ack := protocol.AckMsg{V: 1, ChannelID: "1", Seq: "1", StateHash: util.Hash{}.Hex()}
+	_ = alice.handleRumor(ctx, encodeRumor(t, protocol.KindAck, &ack), bob.SelfPub)
+	nack := protocol.NackMsg{V: 1, ChannelID: "1", Re: "21902", Seq: "9", Reason: protocol.NackPolicy}
+	_ = alice.handleRumor(ctx, encodeRumor(t, protocol.KindNack, &nack), bob.SelfPub)
+	if n := counting.heads.Load(); n != 0 {
+		t.Fatalf("%d head fetches for rumors that never read the head", n)
+	}
+
+	// A payment proposal DOES consult the head (frozen check). The response
+	// send fails (no relay is running here) — only the head fetch matters.
+	prop, err := bob.Engine.ProposePayment(e2eKey, big.NewInt(1e9), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = alice.handleRumor(ctx, encodeRumor(t, protocol.KindProposal, prop), bob.SelfPub)
+	if n := counting.heads.Load(); n == 0 {
+		t.Fatal("proposal handled without a head view")
 	}
 }

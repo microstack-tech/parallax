@@ -264,14 +264,16 @@ func (n *Node) dispatchLoop(ctx context.Context) {
 }
 
 func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string) error {
-	nowBlock := n.headBlock(ctx)
+	// The head is fetched per branch, not up front: only the proposal kinds
+	// consult it, and an eager fetch costs every ACK, NACK, invoice, and
+	// tower message an RPC round trip for nothing.
 	switch rumor.Kind {
 	case protocol.KindProposal:
 		var msg protocol.ProposalMsg
 		if err := json.Unmarshal([]byte(rumor.Content), &msg); err != nil {
 			return err
 		}
-		res, err := n.Engine.HandleProposal(msg, sender, nowBlock, time.Now().Unix())
+		res, err := n.Engine.HandleProposal(msg, sender, n.headBlock(ctx), time.Now().Unix())
 		if err != nil {
 			return err
 		}
@@ -356,6 +358,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		// that would skip both checks and hand an authenticated peer a
 		// permanent-freeze grenade. The peer retransmits until a delivery
 		// finds a healthy RPC; genuinely offline nodes take the QR path.
+		nowBlock := n.headBlock(ctx)
 		if n.backend != nil && nowBlock == 0 {
 			return fmt.Errorf("head unavailable; deferring coop-close proposal for channel %s", msg.ChannelID)
 		}
@@ -403,6 +406,7 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 		// Same head requirement as coop-close proposals: the expiry check is
 		// meaningless at nowBlock 0, and a far-future pending withdraw blocks
 		// re-proposals until it expires.
+		nowBlock := n.headBlock(ctx)
 		if n.backend != nil && nowBlock == 0 {
 			return fmt.Errorf("head unavailable; deferring withdraw proposal for channel %s", msg.ChannelID)
 		}
