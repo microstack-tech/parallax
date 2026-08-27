@@ -523,11 +523,21 @@ func (e *Engine) HandleProposal(msg ProposalMsg, senderNpub string, nowBlock uin
 
 	// Check 5: the delta must pay an open, unexpired invoice (merchant
 	// auto-accept), unless push payments are enabled. No-op supersessions
-	// transfer nothing and need no invoice.
-	if !isNoOp && !e.cfg.PushPayments {
-		res := e.checkInvoice(key, msg.InvoiceID, delta, nowUnix, st.Seq)
-		if res != nil {
-			return Result{Nack: res}, nil
+	// transfer nothing and need no invoice. Push payments waive the invoice
+	// REQUIREMENT (no id, or an id this store never minted) — never the
+	// validation of a known invoice the proposal references: skipping it
+	// would let any delta flip the invoice to Paid below.
+	if !isNoOp {
+		enforce := !e.cfg.PushPayments
+		if !enforce && msg.InvoiceID != "" {
+			_, ierr := e.store.Invoice(msg.InvoiceID)
+			enforce = ierr == nil
+		}
+		if enforce {
+			res := e.checkInvoice(key, msg.InvoiceID, delta, nowUnix, st.Seq)
+			if res != nil {
+				return Result{Nack: res}, nil
+			}
 		}
 	}
 
