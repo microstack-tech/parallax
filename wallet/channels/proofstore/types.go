@@ -12,6 +12,9 @@ import (
 
 // U256 is a non-negative big integer that marshals to a decimal string, per
 // the wire convention (Part 2 §4): JSON numbers lose precision past 2^53.
+// Unmarshalling enforces the 256-bit width: a wider value cannot be a
+// uint256, and the EIP-712 encoder packs into a 32-byte word (FillBytes
+// panics past it).
 type U256 struct {
 	*big.Int
 }
@@ -43,7 +46,7 @@ func (u *U256) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	x, ok := new(big.Int).SetString(s, 10)
-	if !ok || x.Sign() < 0 {
+	if !ok || x.Sign() < 0 || x.BitLen() > 256 {
 		return fmt.Errorf("proofstore: invalid U256 %q", s)
 	}
 	u.Int = x
