@@ -42,7 +42,6 @@ var (
 	bucketChannels = []byte("channels")
 	bucketInvoices = []byte("invoices")
 	bucketTower    = []byte("towerdb")
-	bucketKeys     = []byte("keys")
 
 	// per-channel sub-buckets / keys
 	keyMeta          = []byte("meta")
@@ -70,7 +69,7 @@ func Open(path string) (*Store, error) {
 	db.NoSync = false
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketChannels, bucketInvoices, bucketTower, bucketKeys} {
+		for _, b := range [][]byte{bucketChannels, bucketInvoices, bucketTower} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}

@@ -26,10 +26,6 @@ func NewU256(x *big.Int) U256 {
 	return U256{new(big.Int).Set(x)}
 }
 
-func U256FromUint64(x uint64) U256 {
-	return U256{new(big.Int).SetUint64(x)}
-}
-
 func (u U256) MarshalJSON() ([]byte, error) {
 	if u.Int == nil {
 		return []byte(`"0"`), nil
@@ -112,7 +108,6 @@ type ChannelMeta struct {
 	OpenedAtBlock    uint64       `json:"openedAtBlock"`
 	FrozenUntilBlock uint64       `json:"frozenUntilBlock"` // coop-close freeze; 0 = unfrozen
 	Poisoned         bool         `json:"poisoned"`
-	Towers           []string     `json:"towers,omitempty"` // tower npubs
 
 	// PendingClose is the outstanding cooperative-close negotiation, kept so
 	// a restart can neither forget the freeze nor re-sign different
