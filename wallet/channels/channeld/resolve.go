@@ -67,3 +67,49 @@ func (n *Node) ParseChannelRef(ref string) (proofstore.ChannelKey, error) {
 	}
 	return key, nil
 }
+
+// ChannelSummary is one channel's operator-facing row: identity, roles,
+// latest seq, and the close balances at the current view. Shared by the
+// merchant daemon's API and the CLI listing.
+type ChannelSummary struct {
+	ChannelID uint64 `json:"channelId"`
+	Registry  string `json:"registry"`
+	ChainID   string `json:"chainId"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	Peer      string `json:"peer"`
+	Seq       uint64 `json:"seq"`
+	BalanceA  string `json:"balanceA"`
+	BalanceB  string `json:"balanceB"`
+	Poisoned  bool   `json:"poisoned,omitempty"`
+	FrozenTil uint64 `json:"frozenUntilBlock,omitempty"`
+}
+
+// ChannelSummaries renders every stored channel as a summary row.
+func (n *Node) ChannelSummaries() ([]ChannelSummary, error) {
+	metas, err := n.Store.ListChannels()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]ChannelSummary, 0, len(metas))
+	for _, meta := range metas {
+		row := ChannelSummary{
+			ChannelID: meta.Key.ChannelID,
+			Registry:  meta.Key.Registry.Hex(),
+			ChainID:   meta.Key.ChainID,
+			Role:      string(meta.Role),
+			Status:    string(meta.Status),
+			Peer:      meta.PeerAddress.Hex(),
+			Poisoned:  meta.Poisoned,
+			FrozenTil: meta.FrozenUntilBlock,
+		}
+		if latest, err := n.Store.LatestState(meta.Key); err == nil {
+			row.Seq = latest.Seq
+		}
+		if balA, balB, err := n.Engine.CloseBalances(meta.Key); err == nil {
+			row.BalanceA, row.BalanceB = balA.String(), balB.String()
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}

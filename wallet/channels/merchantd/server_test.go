@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ParallaxProtocol/parallax/v2/util"
+	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/channeld"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/chantest"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 )
@@ -135,7 +136,7 @@ func TestMerchantInvoicePaymentWebhook(t *testing.T) {
 
 	// Channel listing reflects the payment.
 	_, raw = api(t, ts, "GET", "/v1/channels", testToken, nil)
-	var channels []channelResponse
+	var channels []channeld.ChannelSummary
 	if err := json.Unmarshal(raw, &channels); err != nil {
 		t.Fatal(err)
 	}

@@ -351,36 +351,9 @@ func channelList(ctx *cli.Context) error {
 		}
 	}
 
-	metas, err := node.Store.ListChannels()
+	rows, err := node.ChannelSummaries()
 	if err != nil {
 		return err
-	}
-	type row struct {
-		Channel   uint64 `json:"channelId"`
-		Registry  string `json:"registry"`
-		Role      string `json:"role"`
-		Status    string `json:"status"`
-		Peer      string `json:"peer"`
-		Seq       uint64 `json:"seq"`
-		BalanceA  string `json:"balanceA"`
-		BalanceB  string `json:"balanceB"`
-		Poisoned  bool   `json:"poisoned,omitempty"`
-		FrozenTil uint64 `json:"frozenUntilBlock,omitempty"`
-	}
-	var rows []row
-	for _, meta := range metas {
-		r := row{
-			Channel: meta.Key.ChannelID, Registry: meta.Key.Registry.Hex(),
-			Role: string(meta.Role), Status: string(meta.Status),
-			Peer: meta.PeerAddress.Hex(), Poisoned: meta.Poisoned, FrozenTil: meta.FrozenUntilBlock,
-		}
-		if latest, err := node.Store.LatestState(meta.Key); err == nil {
-			r.Seq = latest.Seq
-		}
-		if balA, balB, err := node.Engine.CloseBalances(meta.Key); err == nil {
-			r.BalanceA, r.BalanceB = balA.String(), balB.String()
-		}
-		rows = append(rows, r)
 	}
 	if ctx.Bool(jsonFlag.Name) {
 		mustPrintJSON(rows)
@@ -388,7 +361,7 @@ func channelList(ctx *cli.Context) error {
 	}
 	for _, r := range rows {
 		fmt.Printf("channel %d  %s  role %s  status %s  seq %d  balA %s  balB %s  peer %s",
-			r.Channel, r.Registry, r.Role, r.Status, r.Seq, r.BalanceA, r.BalanceB, r.Peer)
+			r.ChannelID, r.Registry, r.Role, r.Status, r.Seq, r.BalanceA, r.BalanceB, r.Peer)
 		if r.Poisoned {
 			fmt.Printf("  POISONED")
 		}

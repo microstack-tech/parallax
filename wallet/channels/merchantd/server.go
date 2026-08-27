@@ -172,47 +172,13 @@ func (s *Server) getInvoice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-type channelResponse struct {
-	ChannelID uint64 `json:"channelId"`
-	Registry  string `json:"registry"`
-	ChainID   string `json:"chainId"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	Peer      string `json:"peer"`
-	Seq       uint64 `json:"seq"`
-	BalanceA  string `json:"balanceA"`
-	BalanceB  string `json:"balanceB"`
-	Poisoned  bool   `json:"poisoned,omitempty"`
-	FrozenTil uint64 `json:"frozenUntilBlock,omitempty"`
-}
-
 func (s *Server) listChannels(w http.ResponseWriter, r *http.Request) {
-	metas, err := s.node.Store.ListChannels()
+	rows, err := s.node.ChannelSummaries()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out := make([]channelResponse, 0, len(metas))
-	for _, meta := range metas {
-		row := channelResponse{
-			ChannelID: meta.Key.ChannelID,
-			Registry:  meta.Key.Registry.Hex(),
-			ChainID:   meta.Key.ChainID,
-			Role:      string(meta.Role),
-			Status:    string(meta.Status),
-			Peer:      meta.PeerAddress.Hex(),
-			Poisoned:  meta.Poisoned,
-			FrozenTil: meta.FrozenUntilBlock,
-		}
-		if latest, err := s.node.Store.LatestState(meta.Key); err == nil {
-			row.Seq = latest.Seq
-		}
-		if balA, balB, err := s.node.Engine.CloseBalances(meta.Key); err == nil {
-			row.BalanceA, row.BalanceB = balA.String(), balB.String()
-		}
-		out = append(out, row)
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, rows)
 }
 
 type closeRequest struct {
