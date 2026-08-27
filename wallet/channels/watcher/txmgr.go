@@ -266,16 +266,26 @@ func (m *TxManager) Tick(ctx context.Context, head uint64) {
 
 		if !p.noBump && head >= p.submittedAt+bumpAfterBlocks && p.bumps < maxBumps {
 			// Same nonce, 25% higher price: replaces the stuck transaction.
+			// The bump budget is consumed by a successful handoff to the
+			// RPC, never by the attempt — burning it on failed sends would
+			// let a long RPC outage exhaust maxBumps with only the original
+			// low-fee transaction in the mempool, halting escalation exactly
+			// when the recovered RPC needs it.
+			prev := new(big.Int).Set(p.gasPrice)
 			p.gasPrice.Add(p.gasPrice, new(big.Int).Div(new(big.Int).Mul(p.gasPrice, big.NewInt(bumpPercent)), big.NewInt(100)))
-			p.bumps++
 			if _, err := m.send(ctx, id, p, head); err != nil {
-				// "already known" / "underpriced" races are benign; anything
-				// else waits for the next tick.
-				if !benignResubmitError(err) {
+				// "already known" / "underpriced" races are benign (the
+				// price sticks so the next tick compounds another 25%);
+				// anything else rolls back and retries next tick.
+				if benignResubmitError(err) {
+					p.bumps++
+				} else {
+					p.gasPrice.Set(prev)
 					m.alarm("fee-bump for %s failed: %v", id, err)
 				}
 				continue
 			}
+			p.bumps++
 		}
 	}
 }

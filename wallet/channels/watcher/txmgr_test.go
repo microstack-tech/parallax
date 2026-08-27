@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"sync"
 	"testing"
@@ -322,5 +323,78 @@ func TestTxManagerDeadlineAlarm(t *testing.T) {
 	mgr.Tick(context.Background(), deadline-alarmBlocksBeforeDeadline+1)
 	if !alarmed {
 		t.Fatal("no alarm near deadline")
+	}
+}
+
+// erroringSendBackend fails SendTransaction outright while failing is set
+// (an RPC outage: nothing reaches the mempool), recording the gas price of
+// every send that goes through.
+type erroringSendBackend struct {
+	TxBackend
+	mu      sync.Mutex
+	failing bool
+	sent    []*big.Int
+}
+
+func (b *erroringSendBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	b.mu.Lock()
+	if b.failing {
+		b.mu.Unlock()
+		return errInjectedOutage
+	}
+	b.sent = append(b.sent, new(big.Int).Set(tx.GasPrice()))
+	b.mu.Unlock()
+	return b.TxBackend.SendTransaction(ctx, tx)
+}
+
+var errInjectedOutage = errors.New("injected rpc outage")
+
+// TestTxManagerBumpsSurviveRpcOutage: a fee bump must be consumed by a
+// successful handoff to the RPC, not by the attempt. Consuming the budget on
+// failed sends means a >20-block RPC outage exhausts all maxBumps with only
+// the original low-fee transaction in the mempool — and no escalation ever
+// happens once the RPC recovers, exactly when the stuck challenge needs it.
+func TestTxManagerBumpsSurviveRpcOutage(t *testing.T) {
+	e := setupSim(t)
+	erroring := &erroringSendBackend{TxBackend: e.backend}
+	mgr := NewTxManager(erroring, e.bobPriv, big.NewInt(1337))
+	mgr.Alarm = func(format string, args ...any) {}
+
+	contract, err := registry.NewChannelRegistry(e.regAddr, erroring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = mgr.Submit(context.Background(), "deposit:test", 10, 0,
+		func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			auth.Value = lax(1)
+			return contract.Deposit(auth, big.NewInt(1))
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The transaction never mines and the RPC goes down for well over
+	// maxBumps' worth of bump-eligible ticks.
+	erroring.mu.Lock()
+	erroring.failing = true
+	erroring.mu.Unlock()
+	for head := uint64(12); head < 12+2*(maxBumps+2); head += bumpAfterBlocks {
+		mgr.Tick(context.Background(), head)
+	}
+	erroring.mu.Lock()
+	erroring.failing = false
+	erroring.mu.Unlock()
+
+	// RPC is back: the escalation must resume.
+	mgr.Tick(context.Background(), 100)
+
+	erroring.mu.Lock()
+	defer erroring.mu.Unlock()
+	if len(erroring.sent) < 2 {
+		t.Fatalf("no fee bump reached the mempool after the outage: %d sends", len(erroring.sent))
+	}
+	last := erroring.sent[len(erroring.sent)-1]
+	if last.Cmp(erroring.sent[0]) <= 0 {
+		t.Fatalf("post-outage resubmission not escalated: first %s, last %s", erroring.sent[0], last)
 	}
 }
