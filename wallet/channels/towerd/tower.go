@@ -7,6 +7,7 @@ package towerd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -216,8 +217,13 @@ func (t *Tower) Tick(ctx context.Context) (uint64, error) {
 // react evaluates one closing channel against the delegation store.
 func (t *Tower) react(ctx context.Context, key proofstore.ChannelKey, head uint64) error {
 	deleg, err := t.store.Delegation(key)
-	if err != nil {
+	if errors.Is(err, proofstore.ErrNotFound) {
 		return nil // nobody delegated this channel: not our watch
+	}
+	if err != nil {
+		// A failing READ is not an absent delegation: swallowing it would
+		// advance the watermark past a close this tower never evaluated.
+		return err
 	}
 
 	onchain, err := t.contract.GetChannel(&bind.CallOpts{Context: ctx}, new(big.Int).SetUint64(key.ChannelID))
