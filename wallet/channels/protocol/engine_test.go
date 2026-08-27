@@ -396,7 +396,7 @@ func TestNackPoisonsAndSupersessionCures(t *testing.T) {
 	}
 
 	// Cure: the no-op supersession at seq 2 with unchanged amounts.
-	noop, err := alice.engine.ProposeNoOpSupersession(key)
+	noop, err := alice.engine.ProposeNoOpSupersession(key, nowBlock)
 	if err != nil {
 		t.Fatal(err)
 	}

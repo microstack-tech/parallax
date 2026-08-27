@@ -32,7 +32,7 @@ func (n *Node) Pay(ctx context.Context, key proofstore.ChannelKey, amountWei *bi
 // CureBySupersession queues the no-op supersession that voids outstanding
 // proposals on a poisoned channel (Part 2 §7.4 exit b).
 func (n *Node) CureBySupersession(ctx context.Context, key proofstore.ChannelKey) error {
-	prop, err := n.Engine.ProposeNoOpSupersession(key)
+	prop, err := n.Engine.ProposeNoOpSupersession(key, n.headBlock(ctx))
 	if err != nil {
 		return err
 	}

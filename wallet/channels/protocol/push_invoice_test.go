@@ -31,7 +31,7 @@ func TestPushPaymentsStillValidatesKnownInvoices(t *testing.T) {
 
 	// The push freedoms survive: cure the poisoned journal, then pay with no
 	// invoice at all, and with an id this merchant never minted.
-	super, err := alice.engine.ProposeNoOpSupersession(key)
+	super, err := alice.engine.ProposeNoOpSupersession(key, nowBlock)
 	if err != nil {
 		t.Fatal(err)
 	}

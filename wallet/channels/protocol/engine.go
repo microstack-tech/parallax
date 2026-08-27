@@ -245,12 +245,23 @@ func (e *Engine) ProposePayment(key proofstore.ChannelKey, amountWei *big.Int, i
 // ProposeNoOpSupersession builds the seq-space-cleaning proposal whose
 // amounts equal the latest complete state (Part 2 §7.4 cancel-by-
 // supersession). Requires an outstanding self-signed state to supersede.
-func (e *Engine) ProposeNoOpSupersession(key proofstore.ChannelKey) (*ProposalMsg, error) {
+func (e *Engine) ProposeNoOpSupersession(key proofstore.ChannelKey, nowBlock uint64) (*ProposalMsg, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	meta, err := e.store.Meta(key)
 	if err != nil {
 		return nil, ErrUnknownChannel
+	}
+	// The supersession signs and journals a NEW state, so it is bound by
+	// the same guards as ProposePayment: a frozen channel signs nothing
+	// (Part 1 §7.4) and a settled one has no seq space left — skipping
+	// them would journal one more irrevocable state the counterparty will
+	// never countersign.
+	if meta.Status != proofstore.StatusOpen {
+		return nil, ErrNotOpen
+	}
+	if frozen(meta, nowBlock) {
+		return nil, ErrFrozen
 	}
 	journal, err := e.store.SelfSigned(key)
 	if err != nil {
