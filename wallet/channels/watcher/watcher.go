@@ -15,6 +15,8 @@ import (
 	"math/big"
 	"strconv"
 
+	parallax "github.com/ParallaxProtocol/parallax/v2"
+
 	"github.com/ParallaxProtocol/parallax/v2/primitives/types"
 	"github.com/ParallaxProtocol/parallax/v2/script/abi/bind"
 	"github.com/ParallaxProtocol/parallax/v2/util"
@@ -53,6 +55,11 @@ type Watcher struct {
 	contract *registry.ChannelRegistry
 	txmgr    *TxManager
 
+	// Combined-scan topics: one eth_getLogs per channel per tick covers all
+	// six event kinds instead of six separate round trips.
+	scanTopics                                                               []util.Hash
+	evOpened, evDeposit, evWithdraw, evCloseStarted, evSettled, evCoopClosed util.Hash
+
 	// Alarm receives operator-grade alerts (stale close observed, challenge
 	// window nearly exhausted). Optional.
 	Alarm func(format string, args ...any)
@@ -73,6 +80,17 @@ func New(cfg Config, store *proofstore.Store, backend TxBackend, txmgr *TxManage
 		contract: contract,
 		txmgr:    txmgr,
 	}
+	abi, err := registry.ChannelRegistryMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	w.evOpened = abi.Events["ChannelOpened"].ID
+	w.evDeposit = abi.Events["ChannelDeposit"].ID
+	w.evWithdraw = abi.Events["ChannelWithdraw"].ID
+	w.evCloseStarted = abi.Events["CloseStarted"].ID
+	w.evSettled = abi.Events["Settled"].ID
+	w.evCoopClosed = abi.Events["CooperativeClosed"].ID
+	w.scanTopics = []util.Hash{w.evOpened, w.evDeposit, w.evWithdraw, w.evCloseStarted, w.evSettled, w.evCoopClosed}
 	if txmgr != nil && txmgr.Alarm == nil {
 		txmgr.Alarm = func(format string, args ...any) { w.alarm(format, args...) }
 	}
@@ -131,7 +149,10 @@ func (w *Watcher) Tick(ctx context.Context) (uint64, error) {
 
 // scanChannel advances the confirmed-log watermark, crediting funding
 // figures idempotently (cumulative totals are set, never added — a re-scan
-// recomputes, never patches).
+// recomputes, never patches). One combined query covers every event kind;
+// any retrieval or decode failure keeps the old watermark — advancing it
+// past an unread log would skip it forever, and for CloseStarted that is a
+// never-challenged stale close.
 func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, cutoff uint64) error {
 	dep, err := w.store.Deposits(meta.Key)
 	if err != nil {
@@ -144,22 +165,15 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 	if from > cutoff {
 		return nil
 	}
-	opts := &bind.FilterOpts{Context: ctx, Start: from, End: &cutoff}
-	id := []*big.Int{new(big.Int).SetUint64(meta.Key.ChannelID)}
-
-	// Every filter loop below must be followed by an Error() check: the
-	// generated iterators end silently on a mid-iteration failure (a log
-	// that fails to decode parks the error and Next() just returns false),
-	// and advancing the watermark past an unread log would skip it forever —
-	// for CloseStarted, that is a never-challenged stale close.
-	opened, err := w.contract.FilterChannelOpened(opts, id, nil, nil)
+	var chanTopic util.Hash
+	new(big.Int).SetUint64(meta.Key.ChannelID).FillBytes(chanTopic[:])
+	logs, err := w.backend.FilterLogs(ctx, parallax.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(from),
+		ToBlock:   new(big.Int).SetUint64(cutoff),
+		Addresses: []util.Address{w.cfg.Registry},
+		Topics:    [][]util.Hash{w.scanTopics, {chanTopic}},
+	})
 	if err != nil {
-		return err
-	}
-	for opened.Next() {
-		dep.DepositA = proofstore.NewU256(opened.Event.Deposit)
-	}
-	if err := opened.Error(); err != nil {
 		return err
 	}
 
@@ -172,85 +186,65 @@ func (w *Watcher) scanChannel(ctx context.Context, meta proofstore.ChannelMeta, 
 		return meta.Role == proofstore.RoleA
 	}
 
-	deposits, err := w.contract.FilterChannelDeposit(opts, id, nil)
-	if err != nil {
-		return err
-	}
-	for deposits.Next() {
-		ev := deposits.Event
-		if participantIsA(ev.Participant) {
-			dep.DepositA = proofstore.NewU256(ev.NewTotal)
-		} else {
-			dep.DepositB = proofstore.NewU256(ev.NewTotal)
+	for _, lg := range logs {
+		if lg.Removed || len(lg.Topics) == 0 {
+			continue
 		}
-	}
-	if err := deposits.Error(); err != nil {
-		return err
-	}
+		switch lg.Topics[0] {
+		case w.evOpened:
+			ev, err := w.contract.ParseChannelOpened(lg)
+			if err != nil {
+				return err
+			}
+			dep.DepositA = proofstore.NewU256(ev.Deposit)
 
-	withdraws, err := w.contract.FilterChannelWithdraw(opts, id, nil)
-	if err != nil {
-		return err
-	}
-	for withdraws.Next() {
-		ev := withdraws.Event
-		if participantIsA(ev.Participant) {
-			dep.WithdrawnA = proofstore.NewU256(ev.TotalWithdrawn)
-		} else {
-			dep.WithdrawnB = proofstore.NewU256(ev.TotalWithdrawn)
-		}
-	}
-	if err := withdraws.Error(); err != nil {
-		return err
-	}
+		case w.evDeposit:
+			ev, err := w.contract.ParseChannelDeposit(lg)
+			if err != nil {
+				return err
+			}
+			if participantIsA(ev.Participant) {
+				dep.DepositA = proofstore.NewU256(ev.NewTotal)
+			} else {
+				dep.DepositB = proofstore.NewU256(ev.NewTotal)
+			}
 
-	closes, err := w.contract.FilterCloseStarted(opts, id, nil)
-	if err != nil {
-		return err
-	}
-	for closes.Next() {
-		ev := closes.Event
-		if err := w.store.UpdateMeta(meta.Key, func(m *proofstore.ChannelMeta) {
-			m.Status = proofstore.StatusClosing
-		}); err != nil {
-			return err
-		}
-		// Always alert on a stale close, even when auto-challenge will
-		// succeed (Part 3 §13).
-		if latest, lerr := w.store.LatestState(meta.Key); lerr == nil && ev.Seq < latest.Seq {
-			w.alarm("stale CloseStarted on %s: on-chain seq %d < local %d (closer %s)",
-				meta.Key, ev.Seq, latest.Seq, ev.Closer.Hex())
-		}
-	}
-	if err := closes.Error(); err != nil {
-		return err
-	}
+		case w.evWithdraw:
+			ev, err := w.contract.ParseChannelWithdraw(lg)
+			if err != nil {
+				return err
+			}
+			if participantIsA(ev.Participant) {
+				dep.WithdrawnA = proofstore.NewU256(ev.TotalWithdrawn)
+			} else {
+				dep.WithdrawnB = proofstore.NewU256(ev.TotalWithdrawn)
+			}
 
-	settled, err := w.contract.FilterSettled(opts, id)
-	if err != nil {
-		return err
-	}
-	coop, err := w.contract.FilterCooperativeClosed(opts, id)
-	if err != nil {
-		return err
-	}
-	sawEnd := settled.Next()
-	if err := settled.Error(); err != nil {
-		return err
-	}
-	if !sawEnd {
-		sawEnd = coop.Next()
-		if err := coop.Error(); err != nil {
-			return err
-		}
-	}
-	if sawEnd {
-		if err := w.store.UpdateMeta(meta.Key, func(m *proofstore.ChannelMeta) {
-			m.Status = proofstore.StatusSettled
-			m.FrozenUntilBlock = 0
-			m.PendingClose = nil
-		}); err != nil {
-			return err
+		case w.evCloseStarted:
+			ev, err := w.contract.ParseCloseStarted(lg)
+			if err != nil {
+				return err
+			}
+			if err := w.store.UpdateMeta(meta.Key, func(m *proofstore.ChannelMeta) {
+				m.Status = proofstore.StatusClosing
+			}); err != nil {
+				return err
+			}
+			// Always alert on a stale close, even when auto-challenge will
+			// succeed (Part 3 §13).
+			if latest, lerr := w.store.LatestState(meta.Key); lerr == nil && ev.Seq < latest.Seq {
+				w.alarm("stale CloseStarted on %s: on-chain seq %d < local %d (closer %s)",
+					meta.Key, ev.Seq, latest.Seq, ev.Closer.Hex())
+			}
+
+		case w.evSettled, w.evCoopClosed:
+			if err := w.store.UpdateMeta(meta.Key, func(m *proofstore.ChannelMeta) {
+				m.Status = proofstore.StatusSettled
+				m.FrozenUntilBlock = 0
+				m.PendingClose = nil
+			}); err != nil {
+				return err
+			}
 		}
 	}
 

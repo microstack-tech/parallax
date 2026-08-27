@@ -93,3 +93,44 @@ func TestScanKeepsWatermarkOnIteratorError(t *testing.T) {
 		t.Fatalf("close skipped by the failed scan was never challenged: on-chain seq %d, want 5", onchain.ClosingSeq)
 	}
 }
+
+// countingFilterBackend counts FilterLogs queries.
+type countingFilterBackend struct {
+	TxBackend
+	filters atomic.Int64
+}
+
+func (b *countingFilterBackend) FilterLogs(ctx context.Context, q parallax.FilterQuery) ([]types.Log, error) {
+	b.filters.Add(1)
+	return b.TxBackend.FilterLogs(ctx, q)
+}
+
+// TestScanUsesOneFilterQueryPerChannel: scanChannel issued six separate
+// eth_getLogs round trips per channel per tick (opened, deposit, withdraw,
+// close-started, settled, coop-closed), all against the same block range
+// and channel-id topic. One combined query serves all six.
+func TestScanUsesOneFilterQueryPerChannel(t *testing.T) {
+	e := setupSim(t)
+	e.commit(3)
+
+	counting := &countingFilterBackend{TxBackend: e.backend}
+	w, err := New(Config{ChainID: "1337", Registry: e.regAddr, Confirmations: 3}, e.store, counting,
+		NewTxManager(counting, e.bobPriv, big.NewInt(1337)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := counting.filters.Load(); got != 1 {
+		t.Fatalf("%d filter queries for one channel's scan, want 1", got)
+	}
+	// The one query still credited the confirmed deposits.
+	dep, err := e.store.Deposits(e.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep.DepositA.BigInt().Cmp(lax(10)) != 0 || dep.DepositB.BigInt().Cmp(lax(5)) != 0 {
+		t.Fatalf("deposits not credited by the combined scan: %+v", dep)
+	}
+}
