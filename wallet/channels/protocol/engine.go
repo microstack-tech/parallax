@@ -626,8 +626,16 @@ func (e *Engine) checkInvoice(key proofstore.ChannelKey, invoiceID string, delta
 	if inv.AmountWei.BigInt().Cmp(delta) != 0 {
 		return nack(key, KindProposal, seq, NackPolicy, "amount does not match invoice")
 	}
-	if inv.ChannelID != 0 && inv.ChannelID != key.ChannelID {
-		return nack(key, KindProposal, seq, NackPolicy, "invoice pinned to another channel")
+	// The pin is compared as a qualified key: coexisting registries share
+	// bare ids, and honoring a pin on its same-id twin would mark the
+	// invoice paid on the wrong channel. Zero qualifiers (records predating
+	// them) fall back to the bare id.
+	if inv.ChannelID != 0 {
+		if inv.ChannelID != key.ChannelID ||
+			(inv.Registry != (util.Address{}) && inv.Registry != key.Registry) ||
+			(inv.ChainID != "" && inv.ChainID != key.ChainID) {
+			return nack(key, KindProposal, seq, NackPolicy, "invoice pinned to another channel")
+		}
 	}
 	return nil
 }

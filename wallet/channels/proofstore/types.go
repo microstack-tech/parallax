@@ -214,6 +214,12 @@ type Invoice struct {
 	Memo      string       `json:"memo,omitempty"`
 	ExpiresAt int64        `json:"expiresAt"` // unix
 	ChannelID uint64       `json:"channelId,omitempty"`
+	// Registry and ChainID qualify a nonzero ChannelID pin: the bare id is
+	// ambiguous across coexisting registries, which each number channels
+	// from 1. Zero values (records predating the qualifier) leave the pin
+	// enforced by bare id alone.
+	Registry util.Address `json:"registry,omitzero"`
+	ChainID  string       `json:"chainId,omitempty"`
 	Paid      bool         `json:"paid"`
 	PaidBy    *ChannelKey  `json:"paidBy,omitempty"`
 	PaidSeq   uint64       `json:"paidSeq,omitempty"`

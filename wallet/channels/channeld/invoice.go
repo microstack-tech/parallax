@@ -31,6 +31,7 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 	if ttl <= 0 {
 		ttl = DefaultInvoiceTTL
 	}
+	var pinned proofstore.ChannelKey
 	if channelID != 0 {
 		// A pin is a bare id, which coexisting registries both number from 1:
 		// resolve it fail-closed now, or the URI gets stamped with an
@@ -47,6 +48,7 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 		if meta.Status != proofstore.StatusOpen {
 			return proofstore.Invoice{}, "", fmt.Errorf("channeld: pinned channel %d is not open", channelID)
 		}
+		pinned = key
 	}
 	var idBytes [16]byte
 	if _, err := rand.Read(idBytes[:]); err != nil {
@@ -58,6 +60,8 @@ func (n *Node) CreateInvoice(amountWei *big.Int, memo string, ttl time.Duration,
 		Memo:      memo,
 		ExpiresAt: time.Now().Add(ttl).Unix(),
 		ChannelID: channelID,
+		Registry:  pinned.Registry,
+		ChainID:   pinned.ChainID,
 		Merchant:  n.Signer.Address(),
 	}
 	if err := n.Store.CreateInvoice(inv); err != nil {
@@ -90,9 +94,12 @@ func (n *Node) InvoiceURI(inv proofstore.Invoice) string {
 		// proposes on the wrong one and gets NACKed after the irrevocable
 		// journal write. The pin also names the authoritative registry.
 		q.Set("ch", strconv.FormatUint(inv.ChannelID, 10))
-		// CreateInvoice fails closed on ambiguous pins, so the bare id
-		// resolves to at most one channel — whose registry is authoritative.
-		if key, err := n.ChannelKeyByID(inv.ChannelID); err == nil {
+		// The invoice's own qualifier is authoritative; records predating it
+		// re-resolve the bare id (CreateInvoice fails closed on ambiguous
+		// pins, so it names at most one channel).
+		if inv.Registry != (util.Address{}) {
+			reg = strings.ToLower(inv.Registry.Hex())
+		} else if key, err := n.ChannelKeyByID(inv.ChannelID); err == nil {
 			reg = strings.ToLower(key.Registry.Hex())
 		}
 	}
@@ -203,6 +210,13 @@ func (n *Node) SendInvoice(key proofstore.ChannelKey, inv proofstore.Invoice) er
 	}
 	if inv.ChannelID != 0 {
 		msg.ChannelID = strconv.FormatUint(inv.ChannelID, 10)
+		// The message's Registry/ChainID must name the PIN's deployment, not
+		// the channel the invoice happens to travel over — the payer stores
+		// them as the pin qualifier.
+		if inv.Registry != (util.Address{}) {
+			msg.Registry = strings.ToLower(inv.Registry.Hex())
+			msg.ChainID = inv.ChainID
+		}
 	}
 	content, err := protocol.EncodePayload(msg)
 	if err != nil {
