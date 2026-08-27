@@ -430,11 +430,15 @@ func (n *Node) handleRumor(ctx context.Context, rumor nostr.Event, sender string
 			}
 			n.settleOutbound(protocol.KindWithdrawProposal, key, 0)
 			if n.backend != nil {
-				if err := n.SubmitWithdraw(ctx, ready); err != nil {
-					// Not loss-capable: retry on the next ack retransmission or
-					// re-propose after expiry.
-					n.log.Error("withdraw submission", "err", err)
-				}
+				// Off the dispatcher goroutine: the submission blocks until
+				// the transaction mines (same reasoning as submitCoopClose).
+				go func() {
+					if err := n.SubmitWithdraw(ctx, ready); err != nil {
+						// Not loss-capable: retry on the next ack
+						// retransmission or re-propose after expiry.
+						n.log.Error("withdraw submission", "err", err)
+					}
+				}()
 			}
 			return nil
 		}
@@ -662,11 +666,18 @@ func (n *Node) submitCoopClose(ctx context.Context, ready *protocol.CoopCloseRea
 	if n.backend == nil {
 		return // offline node: the counterparty submits, or the CLI does later
 	}
-	if err := n.SubmitCoopClose(ctx, ready); err != nil {
-		// Not loss-capable: the counterparty holds the same pair and the
-		// freeze holds until expiry either way.
-		n.log.Error("cooperative close submission", "err", err)
-	}
+	// Submission waits for the transaction to mine — at least a block, so
+	// >=10 minutes of wall clock — and runs on the dispatcher goroutine's
+	// call path: it must not hold up every other channel's inbound
+	// processing meanwhile (any counterparty could trigger that stall at
+	// will by proposing a close).
+	go func() {
+		if err := n.SubmitCoopClose(ctx, ready); err != nil {
+			// Not loss-capable: the counterparty holds the same pair and the
+			// freeze holds until expiry either way.
+			n.log.Error("cooperative close submission", "err", err)
+		}
+	}()
 }
 
 // channelsForPeer resolves a bare wire channel id against the store, scoped
