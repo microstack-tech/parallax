@@ -69,6 +69,14 @@ func (n *Node) enqueueProposal(key proofstore.ChannelKey, prop *protocol.Proposa
 // freezes immediately (Part 1 §7.4).
 func (n *Node) CoopClose(ctx context.Context, key proofstore.ChannelKey) error {
 	head := n.headBlock(ctx)
+	// Same head requirement as the inbound handler: an online node whose
+	// RPC is down would compute expiry = 0 + validity — a block far in the
+	// past — and sign itself into a nonsense close whose pending record
+	// blocks re-proposals. Fail closed; the caller retries. Nodes with no
+	// backend take the offline QR path, where nowBlock 0 is by design.
+	if n.backend != nil && head == 0 {
+		return fmt.Errorf("channeld: chain head unavailable; retry the cooperative close when the RPC recovers")
+	}
 	expiry := head + n.Cfg.Channels.CoopCloseValidityBlocks
 	prop, err := n.Engine.ProposeCoopClose(key, expiry, head)
 	if err != nil {
@@ -102,6 +110,10 @@ func (n *Node) CoopClose(ctx context.Context, key proofstore.ChannelKey) error {
 // countersignature (21912) arrives.
 func (n *Node) Withdraw(ctx context.Context, key proofstore.ChannelKey, amountWei *big.Int) error {
 	head := n.headBlock(ctx)
+	// Same fail-closed rule as CoopClose: expiry is meaningless at head 0.
+	if n.backend != nil && head == 0 {
+		return fmt.Errorf("channeld: chain head unavailable; retry the withdraw when the RPC recovers")
+	}
 	expiry := head + n.Cfg.Channels.WithdrawValidityBlocks
 	prop, err := n.Engine.ProposeWithdraw(key, amountWei, expiry, head)
 	if err != nil {

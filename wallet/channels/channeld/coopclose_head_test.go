@@ -78,3 +78,55 @@ func TestCoopCloseProposalDeferredWhenHeadUnavailable(t *testing.T) {
 		t.Fatalf("countersigned a far-future close during an RPC outage: frozen until block %d", meta.FrozenUntilBlock)
 	}
 }
+
+// TestOutboundVerbsDeferredWhenHeadUnavailable: the outbound verbs have the
+// same head requirement as the inbound handlers. An online node whose RPC is
+// down computed expiry = 0 + validity — a block number in the distant past —
+// and signed itself into a nonsense close (or withdraw voucher): the pending
+// record blocks re-proposals while the peer NACKs "expiry not in the future"
+// on every retransmission until it ages out.
+func TestOutboundVerbsDeferredWhenHeadUnavailable(t *testing.T) {
+	h := newHub()
+	bob := newTestNode(t, h, nil)
+
+	cfg := DefaultConfig()
+	cfg.Registries = map[string][]RegistryEntry{
+		"v1": {{Address: e2eKey.Registry.Hex(), ChainID: 2110}},
+	}
+	cfg.Nostr.Relays = []string{"wss://hub"}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, err := New(cfg, t.TempDir(), key, erroringBackend{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { alice.Close() })
+	alice.Pool = newHubPool(h, alice.SelfPub)
+	alice.Transmitter = newHubTransmitter(alice)
+	linkChannel(t, alice, bob)
+
+	ctx := context.Background()
+	if err := alice.CoopClose(ctx, e2eKey); err == nil {
+		t.Fatal("coop close signed with no head view")
+	}
+	meta, err := alice.Store.Meta(e2eKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.PendingClose != nil || meta.FrozenUntilBlock != 0 {
+		t.Fatalf("close signed during an RPC outage: frozen until block %d", meta.FrozenUntilBlock)
+	}
+
+	if err := alice.Withdraw(ctx, e2eKey, big.NewInt(1e9)); err == nil {
+		t.Fatal("withdraw signed with no head view")
+	}
+	meta, _ = alice.Store.Meta(e2eKey)
+	if meta.PendingWithdraw != nil {
+		t.Fatal("withdraw voucher signed during an RPC outage")
+	}
+	if n, _ := alice.Store.OutboundLen(); n != 0 {
+		t.Fatalf("%d messages queued during an RPC outage", n)
+	}
+}
