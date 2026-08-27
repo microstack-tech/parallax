@@ -264,17 +264,9 @@ func (t *Tower) react(ctx context.Context, key proofstore.ChannelKey, head uint6
 	}
 
 	t.alarm("challenging stale close on %s: delegated seq %d > on-chain %d", key, st.Seq, onchain.ClosingSeq)
-	proof := registry.ParallaxChannelRegistryBalanceProof{
-		ChannelId:       new(big.Int).SetUint64(key.ChannelID),
-		Seq:             st.Seq,
-		TransferredAtoB: st.TransferredAtoB.BigInt(),
-		TransferredBtoA: st.TransferredBtoA.BigInt(),
-		LocksRoot:       st.LocksRoot,
-		LockedAmount:    st.LockedAmount.BigInt(),
-	}
 	return t.txmgr.Submit(ctx, "towerchallenge:"+key.String(), head, deadline,
 		func(auth *bind.TransactOpts) (*types.Transaction, error) {
-			return t.contract.Challenge(auth, new(big.Int).SetUint64(key.ChannelID), proof, st.SigA, st.SigB)
+			return t.contract.Challenge(auth, new(big.Int).SetUint64(key.ChannelID), st.ContractProof(), st.SigA, st.SigB)
 		})
 }
 

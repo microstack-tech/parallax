@@ -287,17 +287,9 @@ func (w *Watcher) actOnChannel(ctx context.Context, key proofstore.ChannelKey, h
 	}
 
 	if latest.Seq > onchain.ClosingSeq && head <= deadline {
-		proof := registry.ParallaxChannelRegistryBalanceProof{
-			ChannelId:       new(big.Int).SetUint64(key.ChannelID),
-			Seq:             latest.Seq,
-			TransferredAtoB: latest.TransferredAtoB.BigInt(),
-			TransferredBtoA: latest.TransferredBtoA.BigInt(),
-			LocksRoot:       latest.LocksRoot,
-			LockedAmount:    latest.LockedAmount.BigInt(),
-		}
 		return w.txmgr.Submit(ctx, "challenge:"+key.String(), head, deadline,
 			func(auth *bind.TransactOpts) (*types.Transaction, error) {
-				return w.contract.Challenge(auth, new(big.Int).SetUint64(key.ChannelID), proof, latest.SigA, latest.SigB)
+				return w.contract.Challenge(auth, new(big.Int).SetUint64(key.ChannelID), latest.ContractProof(), latest.SigA, latest.SigB)
 			})
 	}
 	if latest.Seq <= onchain.ClosingSeq {

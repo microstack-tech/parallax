@@ -32,11 +32,7 @@ type CoopCloseReady struct {
 }
 
 func domainOf(key proofstore.ChannelKey) (registry.Domain, error) {
-	chainID, ok := new(big.Int).SetString(key.ChainID, 10)
-	if !ok {
-		return registry.Domain{}, fmt.Errorf("protocol: bad chain id %q", key.ChainID)
-	}
-	return registry.Domain{ChainID: chainID, Registry: key.Registry}, nil
+	return key.Domain()
 }
 
 // CloseBalances computes the explicit final balances from the latest

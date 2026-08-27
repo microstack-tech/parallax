@@ -14,7 +14,6 @@ import (
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/proofstore"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/protocol"
 	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/qrenc"
-	"github.com/ParallaxProtocol/parallax/v2/wallet/channels/registry"
 )
 
 // The QR path (Part 2 §11) carries the same EIP-712-signed objects as the
@@ -375,11 +374,10 @@ func qrStateToWire(key proofstore.ChannelKey, env qrenc.Envelope, proposer proof
 }
 
 func coopCloseDigestFor(key proofstore.ChannelKey, env qrenc.Envelope) (string, error) {
-	chainID, ok := new(big.Int).SetString(key.ChainID, 10)
-	if !ok {
-		return "", fmt.Errorf("channeld: bad chain id %q", key.ChainID)
+	d, err := key.Domain()
+	if err != nil {
+		return "", err
 	}
-	d := registry.Domain{ChainID: chainID, Registry: key.Registry}
 	return d.HashCooperativeClose(new(big.Int).SetUint64(key.ChannelID), env.BalA, env.BalB, env.Expiry).Hex(), nil
 }
 
@@ -387,4 +385,3 @@ func env64(chainID string) uint64 {
 	v, _ := strconv.ParseUint(chainID, 10, 64)
 	return v
 }
-

@@ -117,11 +117,7 @@ func (e *Engine) ProposeWithdraw(key proofstore.ChannelKey, amountWei *big.Int, 
 	if err != nil {
 		return nil, err
 	}
-	withdrawn := dep.WithdrawnA.BigInt()
-	if meta.Role == proofstore.RoleB {
-		withdrawn = dep.WithdrawnB.BigInt()
-	}
-	total := new(big.Int).Add(withdrawn, amountWei)
+	total := new(big.Int).Add(dep.WithdrawnOf(meta.Role).BigInt(), amountWei)
 	ent, err := e.entitlement(key, meta.Role)
 	if err != nil {
 		return nil, err
@@ -225,10 +221,7 @@ func (e *Engine) HandleWithdrawProposal(msg WithdrawProposalMsg, senderNpub stri
 		return Result{}, nil, err
 	}
 	prole := peerRole(meta.Role)
-	withdrawn := dep.WithdrawnA.BigInt()
-	if prole == proofstore.RoleB {
-		withdrawn = dep.WithdrawnB.BigInt()
-	}
+	withdrawn := dep.WithdrawnOf(prole).BigInt()
 	// The increase is measured against the outstanding countersigned voucher
 	// too, not just confirmed figures: totals are cumulative on-chain, so a
 	// lower re-proposal is useless to the peer, and refusing it keeps the
@@ -356,11 +349,7 @@ func (e *Engine) SweepWithdraw(key proofstore.ChannelKey, nowBlock uint64) error
 		if pw == nil {
 			return false
 		}
-		withdrawn := dep.WithdrawnA.BigInt()
-		if r == proofstore.RoleB {
-			withdrawn = dep.WithdrawnB.BigInt()
-		}
-		return nowBlock > pw.ExpiryBlock || withdrawn.Cmp(pw.TotalWithdrawn.BigInt()) >= 0
+		return nowBlock > pw.ExpiryBlock || dep.WithdrawnOf(r).BigInt().Cmp(pw.TotalWithdrawn.BigInt()) >= 0
 	}
 	own := done(meta.Role, meta.PendingWithdraw)
 	peer := done(peerRole(meta.Role), meta.PeerPendingWithdraw)

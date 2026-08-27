@@ -237,15 +237,7 @@ func (n *Node) UnilateralClose(ctx context.Context, key proofstore.ChannelKey, f
 		}
 		return contract.StartClose(auth,
 			new(big.Int).SetUint64(key.ChannelID),
-			registry.ParallaxChannelRegistryBalanceProof{
-				ChannelId:       new(big.Int).SetUint64(key.ChannelID),
-				Seq:             latest.Seq,
-				TransferredAtoB: latest.TransferredAtoB.BigInt(),
-				TransferredBtoA: latest.TransferredBtoA.BigInt(),
-				LocksRoot:       latest.LocksRoot,
-				LockedAmount:    latest.LockedAmount.BigInt(),
-			},
-			latest.SigA, latest.SigB)
+			latest.ContractProof(), latest.SigA, latest.SigB)
 	})
 	return err
 }

@@ -78,7 +78,11 @@ func (k ChannelKey) String() string {
 	return fmt.Sprintf("%s:%s:%d", k.ChainID, k.Registry.Hex(), k.ChannelID)
 }
 
-func (k ChannelKey) domain() (registry.Domain, error) {
+// Domain returns the channel's EIP-712 signing domain. Every digest
+// (payment state, withdraw, cooperative close) binds to it, and every
+// package computing one goes through here rather than assembling the
+// domain from parts.
+func (k ChannelKey) Domain() (registry.Domain, error) {
 	chainID, ok := new(big.Int).SetString(k.ChainID, 10)
 	if !ok {
 		return registry.Domain{}, fmt.Errorf("proofstore: invalid chain id %q", k.ChainID)
@@ -165,7 +169,7 @@ type SignedState struct {
 // mirror that is differentially tested against the contract. Two states are
 // "the same payload" iff their digests are equal.
 func (s *SignedState) Digest() (util.Hash, error) {
-	d, err := s.Key.domain()
+	d, err := s.Key.Domain()
 	if err != nil {
 		return util.Hash{}, err
 	}
@@ -177,6 +181,19 @@ func (s *SignedState) Digest() (util.Hash, error) {
 		LocksRoot:       s.LocksRoot,
 		LockedAmount:    s.LockedAmount.BigInt(),
 	}), nil
+}
+
+// ContractProof renders the state as the contract's BalanceProof argument
+// (startClose/challenge submissions).
+func (s *SignedState) ContractProof() registry.ParallaxChannelRegistryBalanceProof {
+	return registry.ParallaxChannelRegistryBalanceProof{
+		ChannelId:       new(big.Int).SetUint64(s.Key.ChannelID),
+		Seq:             s.Seq,
+		TransferredAtoB: s.TransferredAtoB.BigInt(),
+		TransferredBtoA: s.TransferredBtoA.BigInt(),
+		LocksRoot:       s.LocksRoot,
+		LockedAmount:    s.LockedAmount.BigInt(),
+	}
 }
 
 // Complete reports whether both signatures are present.
@@ -202,23 +219,31 @@ type Deposits struct {
 	LastScannedBlock uint64 `json:"lastScannedBlock"`
 }
 
+// WithdrawnOf returns the confirmed cumulative withdrawals for a role.
+func (d Deposits) WithdrawnOf(r Role) U256 {
+	if r == RoleA {
+		return d.WithdrawnA
+	}
+	return d.WithdrawnB
+}
+
 // Invoice is the merchant-mode invoice record (Part 2 §6.1).
 type Invoice struct {
-	ID        string       `json:"invoiceId"` // 16-byte hex
-	AmountWei U256         `json:"amount"`
-	Memo      string       `json:"memo,omitempty"`
-	ExpiresAt int64        `json:"expiresAt"` // unix
-	ChannelID uint64       `json:"channelId,omitempty"`
+	ID        string `json:"invoiceId"` // 16-byte hex
+	AmountWei U256   `json:"amount"`
+	Memo      string `json:"memo,omitempty"`
+	ExpiresAt int64  `json:"expiresAt"` // unix
+	ChannelID uint64 `json:"channelId,omitempty"`
 	// Registry and ChainID qualify a nonzero ChannelID pin: the bare id is
 	// ambiguous across coexisting registries, which each number channels
 	// from 1. Zero values (records predating the qualifier) leave the pin
 	// enforced by bare id alone.
 	Registry util.Address `json:"registry,omitzero"`
 	ChainID  string       `json:"chainId,omitempty"`
-	Paid      bool         `json:"paid"`
-	PaidBy    *ChannelKey  `json:"paidBy,omitempty"`
-	PaidSeq   uint64       `json:"paidSeq,omitempty"`
-	Merchant  util.Address `json:"evmAddress"`
+	Paid     bool         `json:"paid"`
+	PaidBy   *ChannelKey  `json:"paidBy,omitempty"`
+	PaidSeq  uint64       `json:"paidSeq,omitempty"`
+	Merchant util.Address `json:"evmAddress"`
 }
 
 // Delegation is a tower-mode record: the max-seq complete state a delegator
